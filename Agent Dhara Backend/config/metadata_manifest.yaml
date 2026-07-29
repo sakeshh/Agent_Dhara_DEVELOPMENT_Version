@@ -1,0 +1,58 @@
+# Optional governed metadata per dataset. Keys match dataset names (substring match supported in code).
+# See agent/metadata_registry.py for schema.
+version: "1.0"
+datasets:
+  customers:
+    primary_key: ["customer_id"]
+    columns:
+      customer_id:
+        meaning: "Unique identifier for a customer"
+        semantic_type: "id"
+      email:
+        meaning: "Customer email address"
+        semantic_type: "email"
+      phone:
+        meaning: "Customer phone number"
+        semantic_type: "phone"
+      gstin:
+        meaning: "Indian GST Identification Number"
+        semantic_type: "gstin"
+  orders:
+    primary_key: ["order_id"]
+    columns:
+      order_id:
+        meaning: "Unique identifier for an order"
+        semantic_type: "id"
+      customer_id:
+        meaning: "Customer identifier linking to customers dataset"
+        semantic_type: "id"
+      order_date:
+        meaning: "Date when order was placed"
+        semantic_type: "date"
+
+entities:
+  customer:
+    primary_key: ["customer_id"]
+    columns:
+      customer_id: "id"
+      email: "email"
+      phone: "phone"
+      gstin: "gstin"
+  order:
+    primary_key: ["order_id"]
+    columns:
+      order_id: "id"
+      customer_id: "id"
+      order_date: "date"
+
+relationships:
+  - from: "order.customer_id"
+    to: "customer.customer_id"
+    type: "many_to_one"
+
+target_model:
+  model_type: "star"
+  fact_entities:
+    - "order"
+  dimension_entities:
+    - "customer"

@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+main.py — Shim layer redirecting to agent.bootstrap and agent.service_layer.
+"""
+import os
+import sys
+
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
+
+from agent.bootstrap import cli_main
+
+# Re-export service layer functions for backward compatibility
+from agent.service_layer import (
+    to_json_safe,
+    load_config,
+    get_db_connection_cfg,
+    split_schema_table,
+    _quote_two_part_name_fallback,
+    print_schema_info_schema,
+    print_schema_top0,
+    _fmt_pct,
+    _endpoint_to_dataset,
+    _result_for_datasets,
+    _per_dataset_dir_name,
+    _source_root_to_folder_name,
+    _attach_run_metadata_and_suggestions,
+    _brief_issue_line,
+    _dtype_with_inference,
+    build_dq_scorecard,
+    build_cleaning_manifest,
+    build_markdown_report,
+    build_html_report,
+    engine_to_pf_dq,
+    _eval_completeness,
+    _eval_consistency,
+    _eval_validity,
+    _eval_anomalies,
+    _eval_semantic,
+    evaluate_dq_rules_inline,
+    get_azure_blob_connector_for_output,
+    get_azure_blob_connector_for_assessment,
+    _azure_blob_location_label,
+    load_all_assessment_blob_datasets,
+    upload_output_to_azure,
+    upload_data_to_azure,
+)
+
+from agent.bootstrap import (
+    _doctor_env_hint,
+    build_args,
+)
+
+def main():
+    cli_main()
+
+if __name__ == "__main__":
+    main()

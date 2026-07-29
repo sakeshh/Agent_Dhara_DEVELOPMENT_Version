@@ -1,0 +1,211 @@
+{
+  "weird_casing_issue": [
+    {
+      "id": "keep_as_is",
+      "label": "Keep as-is (skip in ETL)",
+      "action": "noop",
+      "recommended": false,
+      "description": "No transform; document in runbook."
+    },
+    {
+      "id": "opt_lowercase",
+      "label": "Convert to lowercase text",
+      "action": "lowercase",
+      "recommended": true,
+      "description": "Standardize string case to lowercase."
+    }
+  ],
+  "internal_whitespace": [
+    {
+      "id": "keep_as_is",
+      "label": "Keep as-is (skip in ETL)",
+      "action": "noop",
+      "recommended": true,
+      "description": "No transform; document in runbook."
+    }
+  ],
+  "duplicate_primary_key": [
+    {
+      "id": "keep_as_is",
+      "label": "Keep as-is (skip in ETL)",
+      "action": "noop",
+      "recommended": false,
+      "description": "No transform; document in runbook."
+    },
+    {
+      "id": "deduplicate_rows",
+      "label": "Deduplicate Rows",
+      "action": "deduplicate",
+      "recommended": true,
+      "description": "Remove duplicate rows based on the primary key column to ensure data integrity."
+    },
+    {
+      "id": "flag_duplicate_rows",
+      "label": "Flag Duplicate Rows",
+      "action": "flag_outliers",
+      "recommended": false,
+      "description": "Add a boolean audit column to flag duplicate rows for further review before deletion."
+    }
+  ],
+  "invalid_lookup_value": [
+    {
+      "id": "keep_as_is",
+      "label": "Keep as-is (skip in ETL)",
+      "action": "noop",
+      "recommended": false,
+      "description": "No transform; document in runbook."
+    },
+    {
+      "id": "cleanup_invalid_email",
+      "label": "Flag Invalid Email Addresses",
+      "action": "flag_outliers",
+      "recommended": true,
+      "description": "Add a boolean audit column to flag email addresses that are not in the allowed lookup list, allowing for manual review."
+    },
+    {
+      "id": "exclude_invalid_email",
+      "label": "Exclude Invalid Email Addresses from Output",
+      "action": "exclude_column",
+      "recommended": false,
+      "description": "Exclude the email column from the output to prevent invalid values from affecting downstream processes."
+    }
+  ],
+  "custom_rule_violation": [
+    {
+      "id": "keep_as_is",
+      "label": "Keep as-is (skip in ETL)",
+      "action": "noop",
+      "recommended": false,
+      "description": "No transform; document in runbook."
+    },
+    {
+      "id": "option_1",
+      "label": "Flag Outliers for Email Domain",
+      "action": "flag_outliers",
+      "recommended": true,
+      "description": "Add a boolean audit column to flag email addresses that do not end with @capgemini.com, allowing for manual review."
+    },
+    {
+      "id": "option_2",
+      "label": "Exclude Email Column from Output",
+      "action": "exclude_column",
+      "recommended": false,
+      "description": "Exclude the email column from the output dataset to prevent the use of invalid email addresses."
+    }
+  ],
+  "implausible_age": [
+    {
+      "id": "keep_as_is",
+      "label": "Keep as-is (skip in ETL)",
+      "action": "noop",
+      "recommended": false,
+      "description": "No transform; document in runbook."
+    },
+    {
+      "id": "flag_outliers_age",
+      "label": "Flag Outliers in Age",
+      "action": "flag_outliers",
+      "recommended": true,
+      "description": "Add a boolean audit column to flag the age values that are outside the plausible range [0, 150] for manual review."
+    },
+    {
+      "id": "fill_nulls_simple_age",
+      "label": "Fill Nulls in Age",
+      "action": "fill_nulls_simple",
+      "recommended": false,
+      "description": "Fill missing or implausible age values with a default value, such as the median age, after manual review."
+    }
+  ],
+  "date_clumping_jan1": [
+    {
+      "id": "keep_as_is",
+      "label": "Keep as-is (skip in ETL)",
+      "action": "noop",
+      "recommended": false,
+      "description": "No transform; document in runbook."
+    },
+    {
+      "id": "option_1",
+      "label": "Flag Outliers for OrderDate",
+      "action": "flag_outliers",
+      "recommended": true,
+      "description": "Add a boolean audit column to flag the outlier values in the OrderDate column that fall on January 1, indicating they may be default or placeholder dates."
+    },
+    {
+      "id": "option_2",
+      "label": "Zero to Null for OrderDate",
+      "action": "zero_to_null",
+      "recommended": false,
+      "description": "Replace any sentinel or placeholder values in the OrderDate column with NULL to clean the dataset."
+    }
+  ],
+  "weekend_date_anomaly": [
+    {
+      "id": "keep_as_is",
+      "label": "Keep as-is (skip in ETL)",
+      "action": "noop",
+      "recommended": false,
+      "description": "No transform; document in runbook."
+    },
+    {
+      "id": "option_1",
+      "label": "Flag Weekend Dates",
+      "action": "flag_outliers",
+      "recommended": true,
+      "description": "Add a boolean audit column to flag the dates that fall on weekends for further review."
+    },
+    {
+      "id": "option_2",
+      "label": "Exclude Weekend Dates from Output",
+      "action": "exclude_column",
+      "recommended": false,
+      "description": "Exclude the OrderDate column from the output to avoid using weekend dates in analysis."
+    }
+  ],
+  "metadata_manifest_mismatch": [
+    {
+      "id": "keep_as_is",
+      "label": "Keep as-is (skip in ETL)",
+      "action": "noop",
+      "recommended": false,
+      "description": "No transform; document in runbook."
+    },
+    {
+      "id": "option_1",
+      "label": "Flag Missing Primary Key",
+      "action": "flag_outliers",
+      "recommended": true,
+      "description": "Add a boolean audit column to flag rows where the primary key 'customer_id' is missing, allowing for easier identification and handling of these records."
+    },
+    {
+      "id": "option_2",
+      "label": "Fill Nulls for Customer ID",
+      "action": "fill_nulls_simple",
+      "recommended": false,
+      "description": "Fill missing 'customer_id' values with a default value to maintain dataset integrity, though this may not be advisable without understanding the context."
+    }
+  ],
+  "unknown_random_anomalous_issue": [
+    {
+      "id": "keep_as_is",
+      "label": "Keep as-is (skip in ETL)",
+      "action": "noop",
+      "recommended": true,
+      "description": "No transform; document in runbook."
+    },
+    {
+      "id": "option_1",
+      "label": "Flag Outliers in Customer Email",
+      "action": "flag_outliers",
+      "recommended": true,
+      "description": "Add a boolean audit column to flag anomalous customer email values that may indicate data quality issues."
+    },
+    {
+      "id": "option_2",
+      "label": "Exclude Customer Email from Output",
+      "action": "exclude_column",
+      "recommended": false,
+      "description": "Exclude the customer_email column from the output to prevent potential issues from affecting downstream processes."
+    }
+  ]
+}
