@@ -191,7 +191,12 @@ def _emit_outliers_spark(action: str, col: str, df: str, params: Dict[str, Any])
     # Applying them to a string/key column (e.g. product_id) raises a Spark
     # AnalysisException at runtime and crashes the entire notebook session.
     # For non-numeric columns: emit a cardinality/frequency-based rarity flag instead.
-    is_non_numeric = _is_business_key(col) or _is_categorical_col(col) or _is_name_field(col)
+    if _is_business_key(col):
+        return [
+            f"# Governance safety: Business identifier key '{col}' is excluded from outlier detection",
+        ]
+
+    is_non_numeric = _is_categorical_col(col) or _is_name_field(col)
     if is_non_numeric:
         freq_threshold = params.get("freq_threshold") or 2  # flag values appearing fewer than N times
         return [

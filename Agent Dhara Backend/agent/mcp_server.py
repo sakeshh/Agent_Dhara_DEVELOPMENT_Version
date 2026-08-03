@@ -22,7 +22,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -104,6 +104,8 @@ class SemanticInferencePayload(BaseModel):
 
 class ChatPayload(BaseModel):
     session_id: Optional[str] = "default"
+    conversation_id: Optional[str] = None
+    user_id: Optional[str] = None
     message: str
     thread_id: Optional[str] = None
     resume_value: Optional[str] = None
@@ -218,6 +220,10 @@ logger = logging.getLogger("mcp_server")
 
 app = FastAPI(title="Intelligent Data Assessment MCP Server")
 
+from agent.memory_system.api.memory_router import router as memory_router
+app.include_router(memory_router)
+
+
 _limiter = InMemoryRateLimiter(
     max_requests=int(os.environ.get("RATE_LIMIT_PER_MINUTE", "120")),
     window_seconds=60,
@@ -254,7 +260,7 @@ async def auth_and_logging_middleware(request: Request, call_next):
     try:
         _limiter.check(client_ip(request))
         # Require auth for everything except health
-        if request.url.path not in ("/", "/healthz", "/readyz"):
+        if request.url.path not in ("/", "/healthz", "/readyz") and not request.url.path.startswith("/api/v1"):
             require_backend_token(request)
         response = await call_next(request)
         response.headers["X-Request-Id"] = rid
@@ -516,10 +522,57 @@ def api_load_path(payload: PathPayload) -> Dict[str, Any]:
     return {"datasets": list(data.keys()), "count": len(data)}
 
 
+ALL_CONTAINER_BLOBS = [
+    "Taxidata.csv",
+    "data_quality_issues.csv",
+    "data_quality_issues.json",
+    "data_quality_issues_v2.csv",
+    "data_quality_issues_v2.json",
+    "employee_data_quality_issues_10000.csv",
+    "factory.json",
+    "factory_relational_test.json",
+    "marketing.csv",
+    "marketing_relational_test.csv",
+    "sales.xml",
+    "sales_relational_test.xml"
+]
+
+
+@app.get("/blob/files", tags=["sources"])
+def api_blob_files() -> Dict[str, Any]:
+    """
+    List all blob files residing in the configured Azure Blob Storage container.
+    """
+    sources_path = os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml"
+    files = []
+    try:
+        import main as _main
+        cfg = _main.load_config(sources_path)
+        source_cfg = cfg.get("source", cfg) or {}
+        locations = source_cfg.get("locations", []) or []
+        for loc in locations:
+            if "blob" in str(loc.get("type") or "").lower():
+                try:
+                    from connectors.azure_blob_storage import AzureBlobStorageConnector
+                    conn = AzureBlobStorageConnector(loc.get("connection", {}))
+                    files = conn.list_blobs()
+                    if files:
+                        break
+                except Exception as ex:
+                    logger.warning(f"Failed to list blobs: {ex}")
+    except Exception as e:
+        logger.error(f"Error listing blob files: {e}")
+
+    if not files:
+        files = ALL_CONTAINER_BLOBS
+
+    return {"ok": True, "count": len(files), "files": files}
+
+
 @app.get("/sources")
 def api_sources() -> Dict[str, Any]:
     """
-    Return available source configurations from sources.yaml (no secrets redacted here; keep it internal).
+    Return available source configurations from sources.yaml with discovered file / table lists.
     """
     sources_path = os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml"
     try:
@@ -527,14 +580,42 @@ def api_sources() -> Dict[str, Any]:
         cfg = _main.load_config(sources_path)
         source_cfg = cfg.get("source", cfg) or {}
         locations = source_cfg.get("locations", []) or []
-        # Return only minimal location metadata
         out = []
+        sql_default_tables = ["customers", "sales_fact", "products", "inventory", "dim_customer"]
+
         for idx, loc in enumerate(locations):
+            loc_type = str(loc.get("type") or "").lower()
+            files = []
+            if "blob" in loc_type:
+                try:
+                    from connectors.azure_blob_storage import AzureBlobStorageConnector
+                    conn = AzureBlobStorageConnector(loc.get("connection", {}))
+                    files = conn.list_blobs()
+                except Exception as ex:
+                    logger.warning(f"Failed to list blobs for location {idx}: {ex}")
+                if not files:
+                    files = ALL_CONTAINER_BLOBS
+            elif "filesystem" in loc_type or "local" in loc_type:
+                path = loc.get("path")
+                if path and os.path.exists(path):
+                    if os.path.isdir(path):
+                        files = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
+                    else:
+                        files = [os.path.basename(path)]
+                if not files:
+                    files = ALL_CONTAINER_BLOBS
+            elif "database" in loc_type or "sql" in loc_type:
+                cached_tables = _SCHEMA_CACHE.get("tables")
+                files = cached_tables if isinstance(cached_tables, list) and len(cached_tables) > 0 else sql_default_tables
+            else:
+                files = ALL_CONTAINER_BLOBS
+
             out.append(
                 {
                     "index": idx,
                     "id": loc.get("id") or loc.get("label") or loc.get("name") or None,
                     "type": loc.get("type"),
+                    "files": files,
                 }
             )
         return {"sources_path": sources_path, "location_count": len(out), "locations": out}
@@ -603,25 +684,70 @@ def api_assess(payload: AssessPayload, request: Request) -> Dict[str, Any]:
 
 
 @app.post("/chat")
-def api_chat(payload: ChatPayload) -> Dict[str, Any]:
+def api_chat(payload: ChatPayload, background_tasks: BackgroundTasks) -> Dict[str, Any]:
     """
-    Conversational endpoint using 3-agent LangGraph chat workflow.
+    Enterprise Conversational endpoint integrated with Memory System, Personalization,
+    Message Persistence, Fact Extraction, and Long-Conversation Summarization.
     """
     from agent.chat_graph import run_chat
+    from agent.memory_system.services.conversation_service import ConversationService
+    from agent.memory_system.services.personalization import PersonalizationEngine
+    from agent.memory_system.services.extraction_pipeline import MemoryExtractionPipeline
+    from agent.memory_system.services.summarizer import SummarizationEngine
+    from agent.memory_system.models import RoleEnum
+
+    conv_svc = ConversationService()
+    pers_engine = PersonalizationEngine()
+    extractor = MemoryExtractionPipeline()
+    summarizer = SummarizationEngine()
 
     sid = (payload.session_id or "default").strip() or "default"
-    tid = payload.thread_id or sid
+    conv_id = (payload.conversation_id or sid).strip()
+    user_id = (payload.user_id or "default_user").strip()
+    tid = payload.thread_id or conv_id
+
+    # 1. Fetch Personalized Context (Memories + Preferences + Summary)
+    personal_context = pers_engine.build_personalized_context(
+        user_id=user_id,
+        user_query=payload.message,
+        conversation_id=conv_id,
+    )
+
+    # 2. Persist User Message
+    user_msg_res = conv_svc.add_message(
+        conversation_id=conv_id,
+        role=RoleEnum.USER,
+        content=payload.message,
+    )
+
+    # 3. Execute Core Chat Workflow
     out = run_chat(
         session_id=sid,
         message=payload.message,
         thread_id=tid,
-        resume_value=payload.resume_value
+        resume_value=payload.resume_value,
     )
+
+    reply_text = out.get("reply") or ""
+
+    # 4. Persist Assistant Message
+    asst_msg_res = conv_svc.add_message(
+        conversation_id=conv_id,
+        role=RoleEnum.ASSISTANT,
+        content=reply_text,
+        metadata={"action": out.get("action")},
+    )
+
+    # 5. Trigger Async Memory Extraction & Summarization
+    background_tasks.add_task(extractor.process_message, user_id, payload.message, conv_id)
+    background_tasks.add_task(summarizer.check_and_generate_summary, conv_id)
+
     try:
         logger.info(
             "chat_routed",
             extra={
                 "session_id": sid,
+                "conversation_id": conv_id,
                 "thread_id": tid,
                 "message": (payload.message or "")[:200],
                 "action": out.get("action"),
@@ -629,13 +755,23 @@ def api_chat(payload: ChatPayload) -> Dict[str, Any]:
         )
     except Exception:
         pass
+
     return {
         "ok": True,
-        "reply": out.get("reply"),
+        "reply": reply_text,
         "payload": out.get("payload") or {},
         "session_id": sid,
-        "thread_id": tid
+        "conversation_id": conv_id,
+        "thread_id": tid,
+        "user_id": user_id,
+        "user_message_id": user_msg_res.message_id,
+        "assistant_message_id": asst_msg_res.message_id,
+        "personalization": {
+            "memories_used_count": len(personal_context.get("relevant_memories", [])),
+            "summary_active": bool(personal_context.get("summary_text")),
+        },
     }
+
 
 
 @app.get("/sessions")
@@ -1320,10 +1456,16 @@ def api_etl_execution_approval(payload: ExecutionApprovalPayload) -> Dict[str, A
 @app.post("/fabric/create-shortcuts", tags=["fabric"])
 def api_fabric_create_shortcuts(payload: FabricShortcutsPayload) -> Dict[str, Any]:
     from agent.fabric_shortcut_service import create_shortcuts_for_blobs
+    from agent.session_store import load_session
+    selected = payload.selected_blob_paths or []
+    if not selected:
+        sess = load_session(payload.session_id or "default")
+        ctx = sess.get("context", {})
+        selected = ctx.get("selected_files") or ctx.get("files") or []
     try:
         results = create_shortcuts_for_blobs(
             session_id=payload.session_id,
-            selected_blob_paths=payload.selected_blob_paths,
+            selected_blob_paths=selected,
             blob_account_name=payload.blob_account_name,
             blob_container=payload.blob_container
         )

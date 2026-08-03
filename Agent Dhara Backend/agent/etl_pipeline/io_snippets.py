@@ -271,11 +271,11 @@ def _parse_timestamp_safely(df, column_name: str):
   invalid_flag = f"is_invalid_{column_name}"
   df = df.withColumn(raw_col, F.trim(F.col(column_name).cast("string")))
   parsed = F.coalesce(
-    F.expr(f"try_to_timestamp(`{raw_col}`, 'yyyy-MM-dd HH:mm:ss')"),
-    F.expr(f"try_to_timestamp(`{raw_col}`, 'yyyy-MM-dd')"),
-    F.expr(f"try_to_timestamp(`{raw_col}`, 'MM/dd/yyyy')"),
-    F.expr(f"try_to_timestamp(`{raw_col}`, 'yyyy/MM/dd')"),
-    F.expr(f"try_to_timestamp(`{raw_col}`, 'dd/MM/yyyy')")
+    F.to_timestamp(F.col(raw_col), 'yyyy-MM-dd HH:mm:ss'),
+    F.to_timestamp(F.col(raw_col), 'yyyy-MM-dd'),
+    F.to_timestamp(F.col(raw_col), 'MM/dd/yyyy'),
+    F.to_timestamp(F.col(raw_col), 'yyyy/MM/dd'),
+    F.to_timestamp(F.col(raw_col), 'dd/MM/yyyy')
   )
   df = df.withColumn(invalid_flag, (F.col(raw_col).isNotNull() & (F.col(raw_col) != '') & parsed.isNull()).cast("boolean"))
   df = df.withColumn(column_name, parsed)

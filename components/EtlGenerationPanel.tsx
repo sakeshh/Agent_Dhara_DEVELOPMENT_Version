@@ -269,8 +269,14 @@ export default function EtlGenerationPanel({
     }
   };
 
+  const onCodeGeneratedRef = useRef(onCodeGenerated);
+  onCodeGeneratedRef.current = onCodeGenerated;
+
+  const onPlanChangeRef = useRef(onPlanChange);
+  onPlanChangeRef.current = onPlanChange;
+
   const emitCodeGenerated = (code: string, validationState?: boolean) => {
-    onCodeGenerated?.(code, {
+    onCodeGeneratedRef.current?.(code, {
       engine,
       sqlDialect,
       generationMode,
@@ -313,8 +319,8 @@ export default function EtlGenerationPanel({
       setPlanJson(JSON.stringify(plan, null, 2));
       setPlanRows(planToRows(plan));
     }
-    onPlanChange?.(plan);
-  }, [plan, onPlanChange]);
+    onPlanChangeRef.current?.(plan);
+  }, [plan]);
 
   useEffect(() => {
     let cancelled = false;
@@ -475,7 +481,8 @@ export default function EtlGenerationPanel({
     return () => {
       cancelled = true;
     };
-  }, [pipelineMode, sessionId, onCodeGenerated]);
+  }, [pipelineMode, sessionId]);
+
 
   const runPlan = async () => {
     if (!assessment) {

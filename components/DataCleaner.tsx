@@ -103,10 +103,22 @@ export default function DataCleaner({ sessionId, files, etlCode, assessmentData,
         if (job.status === 'succeeded') {
           activeExecResult = jobResultCandidate;
           if (activeExecResult && activeExecResult.ok === false) {
-            throw new Error(activeExecResult.message || activeExecResult.error || 'Remediation execution failed.');
+            const errMsg =
+              activeExecResult.error ||
+              activeExecResult.message ||
+              (Array.isArray(activeExecResult.validation_errors) && activeExecResult.validation_errors.length > 0
+                ? activeExecResult.validation_errors.join(' | ')
+                : null) ||
+              (Array.isArray(activeExecResult.details) && activeExecResult.details.length > 0
+                ? activeExecResult.details.map((d: any) => d.message || d.error || String(d)).join(' | ')
+                : null) ||
+              activeExecResult.post_execution_summary?.rollback_reason ||
+              'Remediation execution encountered errors.';
+            throw new Error(errMsg);
           }
           break;
-        } else if (job.status === 'failed') {
+        }
+ else if (job.status === 'failed') {
           throw new Error(job.error || 'Async execution job failed.');
         }
         await new Promise(resolve => setTimeout(resolve, 2000));

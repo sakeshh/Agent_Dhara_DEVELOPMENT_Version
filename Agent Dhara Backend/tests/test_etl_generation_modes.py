@@ -58,7 +58,7 @@ class TestSqlCodegenExecCall(unittest.TestCase):
 
     def test_full_mode_has_create_procedure(self):
         sql = self._get_sql("full")
-        self.assertIn("CREATE PROCEDURE", sql)
+        self.assertTrue("CREATE PROCEDURE" in sql or "CREATE OR ALTER PROCEDURE" in sql)
 
     def test_cleanse_only_mode_no_views(self):
         sql = self._get_sql("cleanse_only")
@@ -73,11 +73,12 @@ class TestSqlCodegenExecCall(unittest.TestCase):
         """Verify EXEC dbo.etl_main is in its own GO-separated batch (not inside a proc definition)."""
         sql = self._get_sql("full")
         batches = [b.strip() for b in sql.split("\nGO\n") if b.strip()]
-        exec_batches = [b for b in batches if "EXEC dbo.etl_main" in b and "CREATE PROCEDURE" not in b]
+        exec_batches = [b for b in batches if "EXEC dbo.etl_main" in b and "CREATE PROCEDURE" not in b and "CREATE OR ALTER PROCEDURE" not in b]
         self.assertTrue(
             len(exec_batches) >= 1,
             "EXEC dbo.etl_main must appear in a standalone GO batch, not inside a CREATE PROCEDURE block"
         )
+
 
 
 if __name__ == "__main__":

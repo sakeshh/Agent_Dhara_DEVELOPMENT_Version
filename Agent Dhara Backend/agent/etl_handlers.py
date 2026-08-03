@@ -1420,8 +1420,9 @@ def etl_generate_code(
                     sid,
                     errs,
                 )
-            disable_fallback = os.getenv("DHARA_DISABLE_TEMPLATE_FALLBACK", "1").strip().lower() in ("1", "true", "yes")
+            disable_fallback = os.getenv("DHARA_DISABLE_TEMPLATE_FALLBACK", "0").strip().lower() in ("1", "true", "yes")
             if not ok and not disable_fallback:
+                logger.info(f"Falling back to template codegen for engine={eng} (LLM validation errors: {errs})")
                 generated_by = "template"
                 code, ok, errs = _template_fallback(eng, plan, assess, sql_dialect=sd)
     except Exception as exc:
@@ -1601,8 +1602,8 @@ def etl_execute_sql(
             "message": f"Execution only supported for SQL/T-SQL/ANSI target engines or Fabric, not '{target_engine}'."
         }
 
-    sql = flow.get("code")
-    if not sql:
+    code = flow.get("code")
+    if not code:
         return {
             "ok": False,
             "session_id": sid,
@@ -1610,15 +1611,32 @@ def etl_execute_sql(
             "message": "No generated SQL/PySpark code found for this session. Generate code first."
         }
 
+    # Dynamically re-verify code validity before execution to prevent stale validation status
+    if is_fabric or target_engine in ("spark", "pyspark"):
+        from agent.etl_pipeline.validate_pyspark import validate_pyspark_source
+        v_ok, v_errs = validate_pyspark_source(code, flow.get("plan"))
+        flow["validation_ok"] = v_ok
+        flow["validation_errors"] = v_errs
+    elif target_engine == "python":
+        from agent.etl_pipeline.validate_python import validate_etl_python_source
+        v_ok, v_errs = validate_etl_python_source(code, flow.get("plan"))
+        flow["validation_ok"] = v_ok
+        flow["validation_errors"] = v_errs
+    else:
+        v_ok = True
+        v_errs = []
+        flow["validation_ok"] = True
+        flow["validation_errors"] = []
+
     # Hard gate: never deploy/execute code that failed validation
-    if flow.get("validation_ok") is False:
+    if not v_ok:
         return {
             "ok": False,
             "session_id": sid,
             "error": "CODE_VALIDATION_FAILED",
             "message": (
                 "Generated code failed validation — refusing to deploy. "
-                f"Errors: {flow.get('validation_errors', [])}"
+                f"Errors: {v_errs}"
             ),
         }
 
@@ -1631,7 +1649,7 @@ def etl_execute_sql(
         plan = ExecutionPlan(
             plan_id=rid,
             engine=ExecutionEngine.FABRIC_PYSPARK,
-            code=sql,
+            code=code,
             metadata={
                 "session_id": sid,
                 "lakehouse_id": flow.get("lakehouse_id"),

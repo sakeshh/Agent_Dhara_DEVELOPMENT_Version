@@ -60,10 +60,6 @@ def _code_cache_put(cache_key: str, value: Any) -> None:
         _CODE_CACHE.popitem(last=False)
 
 def _is_failure_cached(cache_key: str) -> str | None:
-    entry = _FAILURE_CACHE.get(cache_key)
-    if entry and time.time() < entry[1]:
-        _FAILURE_CACHE.move_to_end(cache_key)
-        return entry[0]  # return cached error
     return None
 
 def _write_failure_cache(cache_key: str, error: str, ttl_seconds: int = 30):
@@ -866,7 +862,7 @@ T-SQL REQUIREMENTS:
 - Idempotent T-SQL DDL (CRITICAL): NEVER use `CREATE TABLE IF NOT EXISTS` — that is MySQL/PostgreSQL syntax and is INVALID in T-SQL/SQL Server. For every infrastructure table (etl_log, etl_rejects, etl_watermark, clean tables, indexes, procedures), you MUST use the correct T-SQL idempotent guard pattern:
   - Tables: `IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TableName' AND schema_id = SCHEMA_ID('dbo')) CREATE TABLE dbo.TableName (...);`
   - Indexes: `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IndexName' AND object_id = OBJECT_ID('dbo.TableName')) CREATE NONCLUSTERED INDEX IndexName ON dbo.TableName (...);`
-  - Procedures: `IF OBJECT_ID('dbo.ProcName', 'P') IS NOT NULL DROP PROCEDURE dbo.ProcName; GO` followed by `CREATE PROCEDURE dbo.ProcName AS BEGIN ... END; GO`
+  - Procedures (SAFE & NON-DESTRUCTIVE): ALWAYS use `CREATE OR ALTER PROCEDURE dbo.ProcName AS BEGIN ... END; GO`. NEVER generate `DROP PROCEDURE` or `DROP TABLE`. `CREATE OR ALTER PROCEDURE` automatically creates or updates stored procedures safely without deleting existing tables or dropping objects.
   Each outer script DDL statement (infrastructure tables, staging tables, procedures, views) MUST be followed by a GO batch separator on its own line. NEVER output GO inside a stored procedure body.
 - Execution Logging & Log ID Bugfix: Output DDL to create a logging table named `dbo.etl_log` with columns `id INT IDENTITY(1,1) PRIMARY KEY`, `process_name VARCHAR(100) NOT NULL`, `start_time DATETIME NOT NULL`, `end_time DATETIME NULL`, `status VARCHAR(20) NOT NULL`, `error_message VARCHAR(MAX) NULL` using the T-SQL idempotent guard described above. 
   Inside each stored procedure's TRY block, you MUST first run the `INSERT INTO dbo.etl_log (process_name, start_time, status) VALUES ('...', GETDATE(), 'RUNNING');` statement. IMMEDIATELY AFTER this insert, define and set the batch run ID: `DECLARE @run_id INT = SCOPE_IDENTITY();`. NEVER declare `@run_id = SCOPE_IDENTITY();` before any insert statement has occurred in the procedure, as this returns NULL and breaks audit batch tracking. Wrap the block in a transaction. Commit on success and rollback on failure.

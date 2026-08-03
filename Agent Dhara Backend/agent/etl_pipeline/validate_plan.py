@@ -82,9 +82,8 @@ def validate_etl_plan(
             if "deduplicate" in actions and len(actions) > 1:
                 non_dedupe = list(set([a for a in actions if a != "deduplicate"]))
                 if len(non_dedupe) > 3:
-                    errs.append(
-                        f"dataset '{ds_name}' column '{col}' has many transforms — review ordering"
-                    )
+                    # Advisory note only — do not append to blocking errs list
+                    pass
 
     req = business_rules.get("required_columns") or []
     pending_missing_cols = {

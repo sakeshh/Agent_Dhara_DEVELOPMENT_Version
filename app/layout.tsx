@@ -1,15 +1,16 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({
+const plusJakartaSans = Plus_Jakarta_Sans({
   subsets: ["latin"],
-  variable: "--font-inter",
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-jakarta",
 });
 
 export const metadata: Metadata = {
-  title: "AGENT DHARA - Intelligent Data Assessment, Quality & Transformation",
-  description: "Modern SaaS platform for intelligent data transformation",
+  title: "Agent Dhara - Intelligent AI Workspace",
+  description: "Agent Dhara Conversational AI Platform",
 };
 
 export default function RootLayout({
@@ -19,7 +20,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="h-full">
-      <body className={`${inter.variable} antialiased h-full min-h-dvh`}>
+      <body className={`${plusJakartaSans.className} antialiased h-full min-h-dvh font-sans`}>
         {children}
       </body>
     </html>

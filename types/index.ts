@@ -1,8 +1,19 @@
+export interface AttachedFile {
+  id: string;
+  name: string;
+  type: 'image' | 'pdf' | 'file';
+  size: number;
+  dataUrl?: string;
+  extractedText?: string;
+}
+
 export interface Message {
   id: string;
   text: string;
   sender: 'user' | 'bot';
   timestamp: Date;
+  generationTimeMs?: number;
+  attachments?: AttachedFile[];
   /** Optional structured payload from backend, used for rich rendering (tables, metadata, etc.). */
   payload?: any;
   options?: Array<{

@@ -41,68 +41,13 @@ def _is_matching_dataset(a: str, b: str) -> bool:
 
 def _customize_code_for_dataset(pyspark_code: str, target_ds: str) -> str:
     """
-    Wraps all dfs assignments for non-target datasets in `if False:` blocks
-    using AST transformation to ensure 100% syntactic correctness.
+    Ensures complete, self-contained PySpark code is deployed to Fabric Notebooks,
+    setting DATASETS = [target_ds] so the notebook only reads and processes target_ds.
     """
-    try:
-        tree = ast.parse(pyspark_code)
-        
-        class DatasetFilterTransformer(ast.NodeTransformer):
-            def __init__(self, target: str):
-                self.target = target
-
-            def visit_Assign(self, node):
-                # Check if target is dfs['some_ds'] where some_ds != target
-                for target_node in node.targets:
-                    if isinstance(target_node, ast.Subscript):
-                        if isinstance(target_node.value, ast.Name) and target_node.value.id == "dfs":
-                            slice_val = None
-                            if isinstance(target_node.slice, ast.Constant):
-                                slice_val = target_node.slice.value
-                            elif isinstance(target_node.slice, ast.Index) and isinstance(target_node.slice.value, ast.Constant):
-                                slice_val = target_node.slice.value.value
-                            elif isinstance(target_node.slice, ast.String):
-                                slice_val = target_node.slice.s
-                                
-                            if slice_val and not _is_matching_dataset(slice_val, self.target):
-                                return ast.If(
-                                    test=ast.Constant(value=False),
-                                    body=[node],
-                                    orelse=[]
-                                )
-                return self.generic_visit(node)
-                
-        transformer = DatasetFilterTransformer(target_ds)
-        new_tree = transformer.visit(tree)
-        ast.fix_missing_locations(new_tree)
-        return ast.unparse(new_tree)
-    except Exception as e:
-        logger.warning(f"AST transformation failed, falling back to line-based matching: {e}")
-        # Fallback to line-based if AST parsing/unparsing fails
-        lines = pyspark_code.splitlines()
-        result = []
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            m = re.match(r'^(\s*)dfs\[[\"\']([^\"\']+)[\"\']\]\s*=', line)
-            if m and not _is_matching_dataset(m.group(2), target_ds):
-                block = [line]
-                indent = len(m.group(1))
-                i += 1
-                while i < len(lines):
-                    next_line = lines[i]
-                    if next_line.strip() == "" or (len(next_line) - len(next_line.lstrip())) > indent:
-                        block.append(next_line)
-                        i += 1
-                    else:
-                        break
-                result.append(f"{m.group(1)}if False:  # [Disabled: {m.group(2)}]")
-                for bl in block:
-                    result.append("    " + bl)
-            else:
-                result.append(line)
-                i += 1
-        return "\n".join(result)
+    ds_pattern = r"DATASETS\s*=\s*\[[\s\S]*?\]"
+    if re.search(ds_pattern, pyspark_code):
+        return re.sub(ds_pattern, f"DATASETS = [{target_ds!r}]", pyspark_code, count=1)
+    return pyspark_code
 
 
 def _extract_datasets_from_code(pyspark_code: str) -> List[str]:
@@ -191,6 +136,25 @@ def deploy_and_run_notebook(
             logger.warning(f"Could not resolve lakehouse name '{lh_id}' to a UUID. Proceeding with name.")
     
     datasets = _extract_datasets_from_code(pyspark_code)
+
+    # Filter datasets by selected_files if available in plan or session context
+    selected_files = []
+    if plan and isinstance(plan, dict):
+        selected_files = plan.get("selected_files") or plan.get("files") or []
+    if not selected_files and session_id:
+        from agent.session_store import load_session
+        try:
+            sess = load_session(session_id)
+            ctx = sess.get("context", {})
+            selected_files = ctx.get("selected_files") or ctx.get("files") or []
+        except Exception:
+            pass
+
+    if selected_files:
+        filtered_ds = [ds for ds in datasets if any(_is_matching_dataset(ds, s) for s in selected_files)]
+        if filtered_ds:
+            logger.info(f"Filtered notebooks to deploy using selected_files {selected_files}: {filtered_ds}")
+            datasets = filtered_ds
 
     logger.info(f"Deploying {len(datasets)} dataset notebook(s) to Fabric Workspace '{workspace_id}' (Lakehouse: {lh_id})")
     

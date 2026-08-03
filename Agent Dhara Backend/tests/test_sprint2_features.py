@@ -107,16 +107,17 @@ class TestSprint2Features(unittest.TestCase):
         
         # 1. Full Mode: should generate both clean and transform SPs, and main calls both
         sql_full = generate_sql_etl(plan, self.assessment, dialect="tsql")
-        self.assertIn("CREATE PROCEDURE dbo.etl_clean_Customers", sql_full)
-        self.assertIn("CREATE PROCEDURE dbo.etl_transform_Customers", sql_full)
+        self.assertTrue("CREATE PROCEDURE dbo.etl_clean_Customers" in sql_full or "CREATE OR ALTER PROCEDURE dbo.etl_clean_Customers" in sql_full)
+        self.assertTrue("CREATE PROCEDURE dbo.etl_transform_Customers" in sql_full or "CREATE OR ALTER PROCEDURE dbo.etl_transform_Customers" in sql_full)
         self.assertIn("EXEC dbo.etl_clean_Customers", sql_full)
         self.assertIn("EXEC dbo.etl_transform_Customers", sql_full)
         
         # 2. Cleanse Only Mode
         plan["generation_mode"] = "cleanse_only"
         sql_cleanse = generate_sql_etl(plan, self.assessment, dialect="tsql")
-        self.assertIn("CREATE PROCEDURE dbo.etl_clean_Customers", sql_cleanse)
+        self.assertTrue("CREATE PROCEDURE dbo.etl_clean_Customers" in sql_cleanse or "CREATE OR ALTER PROCEDURE dbo.etl_clean_Customers" in sql_cleanse)
         self.assertNotIn("CREATE PROCEDURE dbo.etl_transform_Customers", sql_cleanse)
+        self.assertNotIn("CREATE OR ALTER PROCEDURE dbo.etl_transform_Customers", sql_cleanse)
         self.assertIn("EXEC dbo.etl_clean_Customers", sql_cleanse)
         self.assertNotIn("EXEC dbo.etl_transform_Customers", sql_cleanse)
 
@@ -124,9 +125,11 @@ class TestSprint2Features(unittest.TestCase):
         plan["generation_mode"] = "transform_only"
         sql_transform = generate_sql_etl(plan, self.assessment, dialect="tsql")
         self.assertNotIn("CREATE PROCEDURE dbo.etl_clean_Customers", sql_transform)
-        self.assertIn("CREATE PROCEDURE dbo.etl_transform_Customers", sql_transform)
+        self.assertNotIn("CREATE OR ALTER PROCEDURE dbo.etl_clean_Customers", sql_transform)
+        self.assertTrue("CREATE PROCEDURE dbo.etl_transform_Customers" in sql_transform or "CREATE OR ALTER PROCEDURE dbo.etl_transform_Customers" in sql_transform)
         self.assertNotIn("EXEC dbo.etl_clean_Customers", sql_transform)
         self.assertIn("EXEC dbo.etl_transform_Customers", sql_transform)
+
 
 
 if __name__ == "__main__":

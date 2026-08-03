@@ -36,7 +36,7 @@ def test_sql_codegen_snapshot_tsql():
     sql = generate_sql_etl(plan, assessment, dialect="tsql")
     
     # Assert critical parts of generated T-SQL are present
-    assert "CREATE PROCEDURE dbo.etl_clean_sales" in sql
+    assert "CREATE PROCEDURE dbo.etl_clean_sales" in sql or "CREATE OR ALTER PROCEDURE dbo.etl_clean_sales" in sql
     assert "CREATE TABLE dbo.etl_log" in sql
     assert "CREATE TABLE dbo.etl_invalid_values" in sql
     assert "BEGIN TRY" in sql

@@ -134,36 +134,41 @@ export default function DatabaseSelector({ onSelect, onBack }: DatabaseSelectorP
         </div>
       </div>
 
-      {/* Choose one - Data source type options (matching chat choose box) */}
+      {/* Choose one - Data source type options */}
       <div>
-        <p className="text-sm font-medium text-black/70 mb-3">Choose one:</p>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-3">
+        <p className="text-base font-semibold text-black/80 mb-4">Choose one:</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {(['sql', 'blob', 'streams'] as const).map((id, idx) => {
             const option =
               id === 'sql'
-                ? SOURCE_TYPE_TO_CARD.database
+                ? { ...SOURCE_TYPE_TO_CARD.database, desc: 'Relational DBs (SQL Server, Azure SQL, PostgreSQL)' }
                 : id === 'blob'
-                  ? SOURCE_TYPE_TO_CARD.azure_blob
-                  : SOURCE_TYPE_TO_CARD.filesystem;
+                  ? { ...SOURCE_TYPE_TO_CARD.azure_blob, desc: 'Azure Blob Storage with optional Fabric OneLake shortcuts' }
+                  : { ...SOURCE_TYPE_TO_CARD.filesystem, desc: 'Local or network file stream sources' };
             const Icon = option.icon;
             const isSelected = selectedDataSource === id;
             return (
               <motion.button
                 key={id}
                 onClick={() => setSelectedDataSource(id)}
-                className={`flex items-center gap-3 p-4 text-sm font-medium text-left rounded-xl border transition-all ${
+                className={`flex flex-col items-start p-6 lg:p-8 text-left rounded-2xl border-2 transition-all ${
                   isSelected
-                    ? 'bg-[#0070AD]/15 border-[#0070AD]/50 text-zinc-900'
-                    : 'bg-white/85 border-black/10 text-black/70 hover:border-[#0070AD]/30 hover:bg-white'
+                    ? 'bg-[#0070AD]/10 border-[#0070AD] shadow-xl shadow-[#0070AD]/10 text-zinc-900 ring-2 ring-[#0070AD]/30'
+                    : 'bg-white/95 border-black/10 text-black/80 hover:border-[#0070AD]/40 hover:bg-white hover:shadow-lg'
                 }`}
-                initial={{ opacity: 0, y: 10 }}
+                initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.05 }}
+                transition={{ delay: idx * 0.06 }}
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
               >
-                <Icon className="text-xl text-[#0070AD]/80 flex-shrink-0" />
-                <span>{option.text}</span>
+                <div className={`w-14 h-14 rounded-xl flex items-center justify-center mb-4 transition-colors ${
+                  isSelected ? 'bg-[#0070AD] text-white shadow-md' : 'bg-[#0070AD]/10 text-[#0070AD]'
+                }`}>
+                  <Icon className="text-2xl lg:text-3xl" />
+                </div>
+                <span className="text-lg lg:text-xl font-bold text-zinc-900 mb-1">{option.text}</span>
+                <span className="text-xs text-black/60 font-normal leading-relaxed">{option.desc}</span>
               </motion.button>
             );
           })}
@@ -175,11 +180,11 @@ export default function DatabaseSelector({ onSelect, onBack }: DatabaseSelectorP
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="flex items-center gap-4"
+          className="flex items-center gap-4 pt-2"
         >
           <motion.button
             onClick={() => setSelectedDataSource(null)}
-            className="flex items-center gap-2 text-sm font-medium text-black/60 hover:text-black transition-colors"
+            className="flex items-center gap-2 text-sm font-semibold text-[#0070AD] hover:text-[#005c8f] transition-colors"
             whileHover={{ x: -2 }}
             whileTap={{ scale: 0.98 }}
           >
@@ -205,34 +210,34 @@ export default function DatabaseSelector({ onSelect, onBack }: DatabaseSelectorP
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="space-y-4"
+            className="space-y-6 pt-2"
           >
-            <p className="text-sm font-medium text-black/70">
+            <p className="text-base font-bold text-zinc-900">
               Select {selectedDataSource === 'sql' ? 'database' : selectedDataSource === 'blob' ? 'blob source' : 'filesystem source'}:
             </p>
             <div className="relative">
-              <FaSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-black/45" />
+              <FaSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-black/45 text-lg" />
               <input
                 type="text"
                 placeholder={`Search ${selectedDataSource} sources...`}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-12 pr-4 py-3 border border-black/10 rounded-xl focus:ring-2 focus:ring-[#0070AD]/25 focus:border-[#0070AD]/40 outline-none bg-white/90 text-zinc-900 placeholder-black/40"
+                className="w-full pl-12 pr-4 py-3.5 border border-black/15 rounded-xl focus:ring-2 focus:ring-[#0070AD]/25 focus:border-[#0070AD]/50 outline-none bg-white text-zinc-900 placeholder-black/40 text-sm font-medium shadow-sm"
               />
             </div>
             {loading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {[1, 2, 3, 4, 5, 6].map((i) => (
-                  <div key={i} className="h-32 bg-white/10 animate-pulse rounded-xl" />
+                  <div key={i} className="h-36 bg-white/40 animate-pulse rounded-2xl border border-black/5" />
                 ))}
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredLocations.map((item, index) => (
                   <motion.button
                     key={`${item.index}-${item.id ?? item.type ?? 'src'}`}
                     onClick={() => onSelect(`src:${selectedDataSource}:${item.index}`)}
-                    className="p-6 bg-white/85 border border-black/10 rounded-xl hover:border-[#0070AD]/30 hover:bg-white transition-all text-left group"
+                    className="p-6 bg-white border border-black/10 rounded-2xl hover:border-[#0070AD]/40 hover:shadow-xl hover:bg-white transition-all text-left group"
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.05 }}
@@ -240,11 +245,11 @@ export default function DatabaseSelector({ onSelect, onBack }: DatabaseSelectorP
                     whileTap={{ scale: 0.98 }}
                   >
                     <div className="flex items-start gap-4">
-                      <div className="p-3 bg-black/5 rounded-lg group-hover:bg-[#0070AD]/10 transition-colors">
-                        <FaDatabase className="text-2xl text-[#0070AD]/80" />
+                      <div className="p-3.5 bg-[#0070AD]/10 text-[#0070AD] rounded-xl group-hover:bg-[#0070AD] group-hover:text-white transition-colors shrink-0">
+                        <FaDatabase className="text-2xl lg:text-3xl" />
                       </div>
                       <div className="flex-1">
-                        <h3 className="font-semibold text-zinc-900 mb-1">
+                        <h3 className="text-base lg:text-lg font-bold text-zinc-900 mb-1">
                           {item.id ? String(item.id) : `Source #${item.index}`}
                         </h3>
                         <p className="text-sm text-black/60 capitalize">
@@ -259,7 +264,7 @@ export default function DatabaseSelector({ onSelect, onBack }: DatabaseSelectorP
             {filteredLocations.length === 0 && !loading && (
               <div className="text-center py-12">
                 <FaDatabase className="text-6xl text-black/30 mx-auto mb-4" />
-                <p className="text-black/60">No options found matching your search</p>
+                <p className="text-black/60 text-base font-medium">No options found matching your search</p>
               </div>
             )}
           </motion.div>
@@ -267,12 +272,13 @@ export default function DatabaseSelector({ onSelect, onBack }: DatabaseSelectorP
           <motion.p
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="text-sm text-black/60"
+            className="text-sm font-medium text-black/60 pt-2"
           >
             Select a data source type above to see available options.
           </motion.p>
         )}
       </AnimatePresence>
+
     </div>
   );
 }

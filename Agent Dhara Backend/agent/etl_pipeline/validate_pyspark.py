@@ -347,6 +347,15 @@ def _check_undefined_function_calls(tree: ast.AST) -> List[str]:
     return errs
 
 
+def _check_pyspark_antipatterns(source: str) -> List[str]:
+    errs: List[str] = []
+    if re.search(r'\.fillna\s*\(\s*\{[^}]*F\.lit', source) or re.search(r'\.fillna\s*\(\s*\{[^}]*None', source):
+        errs.append("Invalid PySpark fillna() usage: fillna() accepts primitive values, not F.lit() expressions — use withColumn + F.coalesce()")
+    if "try_to_timestamp" in source or "try_to_date" in source:
+        errs.append("Invalid PySpark expression: try_to_timestamp is not supported in F.expr() — use F.to_timestamp(F.col(...), format)")
+    return errs
+
+
 def validate_pyspark_source(
     source: str,
     plan: Dict[str, Any] | None = None,
@@ -394,6 +403,7 @@ def validate_pyspark_source(
 
     resolve_errs, resolve_warnings = _check_resolve_helper_defined(source)
     errs.extend(resolve_errs)
+    errs.extend(_check_pyspark_antipatterns(source))
     errs.extend(_check_dead_join_variables(source))
     errs.extend(_check_io_antipatterns(source, plan))
     errs.extend(_check_spark_session_import(source, tree))

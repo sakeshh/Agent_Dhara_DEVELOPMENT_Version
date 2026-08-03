@@ -39,4 +39,5 @@ def test_full_pipeline_flow_scenario(dirty_customer_df):
     # 5. Generate code
     sql = generate_sql_etl(plan, assessment, dialect="tsql")
     assert len(sql) > 0
-    assert "CREATE PROCEDURE dbo.etl_clean_customers" in sql
+    assert "CREATE PROCEDURE dbo.etl_clean_customers" in sql or "CREATE OR ALTER PROCEDURE dbo.etl_clean_customers" in sql
+

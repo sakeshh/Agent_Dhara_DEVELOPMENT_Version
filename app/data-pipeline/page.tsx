@@ -1,20 +1,23 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaDatabase, FaFileAlt, FaChartBar, FaCode, FaCheck, FaArrowLeft, FaDownload, FaEye, FaArrowRight, FaClipboardList, FaTags, FaExclamationTriangle, FaCheckCircle, FaCloudUploadAlt } from 'react-icons/fa';
-import { useRouter } from 'next/navigation';
+import { FaDatabase, FaFileAlt, FaChartBar, FaCode, FaCheck, FaArrowLeft, FaDownload, FaEye, FaArrowRight, FaClipboardList, FaTags, FaExclamationTriangle, FaCheckCircle, FaCloudUploadAlt, FaRobot } from 'react-icons/fa';
+import { useRouter, useSearchParams } from 'next/navigation';
 import AnimatedBackground from '@/components/AnimatedBackground';
-import DatabaseSelector from '@/components/DatabaseSelector';
-import FileSelector from '@/components/FileSelector';
+import DatabaseSelector from '@/components/datapipeline/DatabaseSelector';
+import FileSelector from '@/components/datapipeline/FileSelector';
 import DataAssessmentReport from '@/components/DataAssessmentReport';
 import EtlGenerationPanel from '@/components/EtlGenerationPanel';
-import DataCleaner from '@/components/DataCleaner';
+import DataCleaner from '@/components/datapipeline/DataCleaner';
 import Confetti from '@/components/Confetti';
+import IdeChatDrawer from '@/components/chat/IdeChatDrawer';
+
 import SemanticReviewPanel from '@/components/SemanticReviewPanel';
 import DQGateDashboard from '@/components/DQGateDashboard';
 import { DQGateResult } from '@/types/pipeline';
 import BusinessRequirementsPanel from '@/components/BusinessRequirementsPanel';
+
 
 interface ExecutionResult {
   ok: boolean;
@@ -55,7 +58,17 @@ function openHtmlReportInNewTab(html: string) {
 
 export default function DataPipelinePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (searchParams.get('chat') === 'open') {
+      setIsChatOpen(true);
+    }
+  }, [searchParams]);
+
   const [currentStep, setCurrentStep] = useState<Step>('database');
+
   const [selectedDatabase, setSelectedDatabase] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [availableFiles, setAvailableFiles] = useState<string[]>([]);
@@ -124,7 +137,22 @@ export default function DataPipelinePage() {
         if (job.status === 'succeeded') {
           jobResult = jobResultCandidate;
           if (jobResult && jobResult.ok === false && jobResult.stage !== 'approval_required') {
-            throw new Error(jobResult.message || jobResult.error || 'Remediation execution failed.');
+            const errorMsg =
+              jobResult.error ||
+              jobResult.message ||
+              (Array.isArray(jobResult.validation_errors) && jobResult.validation_errors.length > 0
+                ? jobResult.validation_errors.join(' | ')
+                : null) ||
+              (Array.isArray(jobResult.details) && jobResult.details.length > 0
+                ? jobResult.details.map((d: any) => d.message || d.error || String(d)).join(' | ')
+                : null) ||
+              jobResult.post_execution_summary?.rollback_reason ||
+              'Execution encountered errors during processing.';
+            
+            setExecutionError(errorMsg);
+            setExecResult(jobResult);
+            setApprovalRequired(false);
+            break;
           }
           break;
         } else if (job.status === 'failed') {
@@ -136,10 +164,11 @@ export default function DataPipelinePage() {
       if (jobResult?.stage === 'approval_required') {
         setApprovalRequired(true);
         setExecResult(jobResult);
-      } else {
+      } else if (jobResult?.ok) {
         setApprovalRequired(false);
         setExecResult(jobResult);
       }
+
     } catch (e: any) {
       setExecutionError(e.message || 'Execution failed');
     } finally {
@@ -340,18 +369,31 @@ export default function DataPipelinePage() {
     comment?: string;
   }>>([]);
 
-  const steps = [
-    { id: 'database', label: 'Database', icon: FaDatabase },
-    { id: 'files', label: 'Files', icon: FaFileAlt },
-    { id: 'fabric-setup', label: 'Fabric Setup', icon: FaCloudUploadAlt },
-    { id: 'business-requirements', label: 'Business Requirements', icon: FaClipboardList },
-    { id: 'assessment', label: 'Assessment', icon: FaChartBar },
-    { id: 'report', label: 'DQ Gate & Report', icon: FaChartBar },
-    { id: 'semantics', label: 'Semantics', icon: FaTags },
-    { id: 'requirements', label: 'Requirements', icon: FaClipboardList },
-    { id: 'etl', label: 'ETL Code', icon: FaCode },
-    { id: 'cleaning', label: 'Data Cleaning', icon: FaCheck },
-  ];
+  const isBlobSource = useMemo(() => {
+    if (!selectedDatabase) return false;
+    const s = selectedDatabase.toLowerCase();
+    return s.includes(':blob:') || s.includes('blob') || s.includes('azure_blob');
+  }, [selectedDatabase]);
+
+  const steps = useMemo(() => {
+    const base: Array<{ id: Step; label: string; icon: any }> = [
+      { id: 'database', label: 'Database', icon: FaDatabase },
+      { id: 'files', label: 'Files', icon: FaFileAlt },
+    ];
+    if (isBlobSource) {
+      base.push({ id: 'fabric-setup', label: 'Fabric Setup', icon: FaCloudUploadAlt });
+    }
+    base.push(
+      { id: 'business-requirements', label: 'Business Requirements', icon: FaClipboardList },
+      { id: 'assessment', label: 'Assessment', icon: FaChartBar },
+      { id: 'report', label: 'DQ Gate & Report', icon: FaChartBar },
+      { id: 'semantics', label: 'Semantics', icon: FaTags },
+      { id: 'requirements', label: 'Requirements', icon: FaClipboardList },
+      { id: 'etl', label: 'ETL Code', icon: FaCode },
+      { id: 'cleaning', label: 'Data Cleaning', icon: FaCheck }
+    );
+    return base;
+  }, [isBlobSource]);
 
   const handleDatabaseSelect = (database: string) => {
     setSelectedDatabase(database);
@@ -366,19 +408,25 @@ export default function DataPipelinePage() {
 
   const handleStartFabricSetup = () => {
     setDirection('forward');
-    setCurrentStep('fabric-setup');
+    if (isBlobSource) {
+      setCurrentStep('fabric-setup');
+    } else {
+      setCurrentStep('business-requirements');
+    }
   };
+
 
   async function handleCreateShortcuts() {
     setShortcutLoading(true);
     setShortcutError(null);
     try {
+      const filesToShortcut = selectedFiles.length > 0 ? selectedFiles : (assessmentData?.datasets ? Object.keys(assessmentData.datasets) : []);
       const res = await fetch('/api/fabric-shortcuts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: etlSessionId,
-          selected_blob_paths: selectedFiles
+          selected_blob_paths: filesToShortcut
         })
       });
       const data = await res.json();
@@ -456,15 +504,19 @@ export default function DataPipelinePage() {
     setCurrentStep('semantics');
   };
 
-  const handleETLGenerated = (
-    code: string,
-    meta?: { engine?: string; sqlDialect?: 'tsql' | 'ansi'; generationMode?: string }
-  ) => {
-    setEtlCode(code);
-    if (meta?.engine) setEtlExecutionEngine(meta.engine);
-    if (meta?.sqlDialect) setEtlExecutionDialect(meta.sqlDialect);
-    if (meta?.generationMode) setEtlGenerationMode(meta.generationMode);
-  };
+  const handleETLGenerated = useCallback(
+    (
+      code: string,
+      meta?: { engine?: string; sqlDialect?: 'tsql' | 'ansi'; generationMode?: string }
+    ) => {
+      setEtlCode(code);
+      if (meta?.engine) setEtlExecutionEngine(meta.engine);
+      if (meta?.sqlDialect) setEtlExecutionDialect(meta.sqlDialect);
+      if (meta?.generationMode) setEtlGenerationMode(meta.generationMode);
+    },
+    []
+  );
+
 
   const etlExecutionPath = etlExecutionEngine === 'spark' || etlExecutionEngine === 'pyspark'
     ? 'Microsoft Fabric'
@@ -504,118 +556,128 @@ export default function DataPipelinePage() {
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative z-10 border-b border-black/10 bg-white/75 backdrop-blur-sm"
+        className="relative z-10 border-b border-black/10 bg-white/80 backdrop-blur-md shadow-sm"
       >
-        <div className="w-full px-6 py-4 flex items-center justify-between">
-          <motion.button
-            whileHover={{ x: -4 }}
-            onClick={() => router.push('/chat')}
-            className="flex items-center gap-2 text-black/65 hover:text-black transition-colors"
-          >
-            <FaArrowLeft />
-            <span>Back to Chat</span>
-          </motion.button>
-          <h1 className="text-2xl font-bold text-zinc-900">
-            Data Pipeline Workflow
-          </h1>
-          <div className="w-20" />
+        <div className="w-full px-6 py-3.5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">
+              Data Pipeline Workflow
+            </h1>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setIsChatOpen(!isChatOpen)}
+              className="flex items-center gap-2.5 px-4 py-2 rounded-xl bg-[#0070AD] text-white text-sm font-semibold shadow-md hover:bg-[#005c8f] transition-all"
+            >
+              <FaRobot className="text-base" />
+              <span>{isChatOpen ? 'Close AI Assistant' : 'AI Assistant'}</span>
+              <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded font-mono">Ctrl+K</span>
+            </motion.button>
+          </div>
         </div>
       </motion.div>
 
+
       {/* Main Layout Grid */}
       <div className="relative z-10 w-full px-6 pt-4 pb-0">
-        <div className="flex flex-col lg:flex-row gap-8 items-start">
-          {/* Left Sidebar: Vertical Stepper */}
-          <div className="w-full lg:w-72 shrink-0 bg-white/70 backdrop-blur-xl rounded-2xl border border-black/10 p-6 shadow-[0_8px_32px_rgba(0,0,0,0.04)] overflow-y-auto h-[calc(100vh-85px)] options-scroll">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-black/45 mb-6 px-2">
-              Pipeline Steps
-            </h2>
-            <div className="relative flex flex-col space-y-6">
-              {steps.map((step, index) => {
-                const Icon = step.icon;
-                const isActive = currentStep === step.id;
-                const isStepCompleted = index < getCurrentStepIndex() || (step.id === 'assessment' && !!assessmentData);
-                const isCompleted = index < getCurrentStepIndex();
-                const isClickable = isActive || isCompleted || isStepCompleted;
-                
-                const statusText = (step.id === 'assessment' && assessmentData)
-                  ? 'Completed'
-                  : isActive
-                  ? 'In Progress'
-                  : isCompleted
-                  ? 'Completed'
-                  : 'Pending';
-                
-                return (
-                  <div key={step.id} id={`step-btn-${step.id}`} className="relative flex items-start">
-                    {/* Vertical Connector Line with Down Arrow */}
-                    {index < steps.length - 1 && (
-                      <div className="absolute left-8 top-14 h-[40px] w-2 -translate-x-1/2 flex flex-col items-center z-0">
-                        {/* Line */}
-                        <div className="w-0.5 flex-1 bg-black/10 relative overflow-hidden rounded-full">
-                          <motion.div
-                            className="absolute top-0 left-0 w-full bg-[#0070AD] origin-top"
-                            initial={{ scaleY: 0 }}
-                            animate={{ scaleY: isCompleted || isStepCompleted ? 1 : 0 }}
-                            transition={{ duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
-                            style={{ height: '100%', originY: 0 }}
-                          />
+        <div className={`flex flex-col lg:flex-row gap-8 items-start ${!selectedDatabase ? 'justify-center' : ''}`}>
+          {/* Left Sidebar: Vertical Stepper (Visible ONLY after a data source is selected) */}
+          {selectedDatabase && (
+            <div className="w-full lg:w-72 shrink-0 bg-white/70 backdrop-blur-xl rounded-2xl border border-black/10 p-6 shadow-[0_8px_32px_rgba(0,0,0,0.04)] overflow-y-auto h-[calc(100vh-85px)] options-scroll">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-black/45 mb-6 px-2">
+                Pipeline Steps
+              </h2>
+              <div className="relative flex flex-col space-y-6">
+                {steps.map((step, index) => {
+                  const Icon = step.icon;
+                  const isActive = currentStep === step.id;
+                  const isStepCompleted = index < getCurrentStepIndex() || (step.id === 'assessment' && !!assessmentData);
+                  const isCompleted = index < getCurrentStepIndex();
+                  const isClickable = isActive || isCompleted || isStepCompleted;
+                  
+                  const statusText = (step.id === 'assessment' && assessmentData)
+                    ? 'Completed'
+                    : isActive
+                    ? 'In Progress'
+                    : isCompleted
+                    ? 'Completed'
+                    : 'Pending';
+                  
+                  return (
+                    <div key={step.id} id={`step-btn-${step.id}`} className="relative flex items-start">
+                      {/* Vertical Connector Line with Down Arrow */}
+                      {index < steps.length - 1 && (
+                        <div className="absolute left-8 top-14 h-[40px] w-2 -translate-x-1/2 flex flex-col items-center z-0">
+                          {/* Line */}
+                          <div className="w-0.5 flex-1 bg-black/10 relative overflow-hidden rounded-full">
+                            <motion.div
+                              className="absolute top-0 left-0 w-full bg-[#0070AD] origin-top"
+                              initial={{ scaleY: 0 }}
+                              animate={{ scaleY: isCompleted || isStepCompleted ? 1 : 0 }}
+                              transition={{ duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
+                              style={{ height: '100%', originY: 0 }}
+                            />
+                          </div>
+                          {/* Down Arrow Head */}
+                          <svg 
+                            className={`w-2 h-2 -mt-[1px] ${isCompleted || isStepCompleted ? 'text-[#0070AD]' : 'text-black/20'} transition-colors duration-300`} 
+                            fill="currentColor" 
+                            viewBox="0 0 10 10"
+                          >
+                            <path d="M5 8L1 4h8z" />
+                          </svg>
                         </div>
-                        {/* Down Arrow Head */}
-                        <svg 
-                          className={`w-2 h-2 -mt-[1px] ${isCompleted || isStepCompleted ? 'text-[#0070AD]' : 'text-black/20'} transition-colors duration-300`} 
-                          fill="currentColor" 
-                          viewBox="0 0 10 10"
-                        >
-                          <path d="M5 8L1 4h8z" />
-                        </svg>
-                      </div>
-                    )}
+                      )}
 
-                    <motion.button
-                      type="button"
-                      onClick={() => isClickable && goToStep(step.id as Step)}
-                      disabled={!isClickable}
-                      className={`flex items-center gap-4 focus:outline-none focus:ring-2 focus:ring-[#0070AD]/25 focus:ring-offset-2 focus:ring-offset-white rounded-xl p-2 w-full text-left transition-all duration-200 ${
-                        isActive 
-                          ? 'bg-[#0070AD]/5 border border-[#0070AD]/10' 
-                          : 'border border-transparent hover:bg-black/[0.02]'
-                      } ${!isClickable ? 'cursor-default opacity-50' : 'cursor-pointer'}`}
-                    >
-                      <motion.div
-                        className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 z-10 ${
-                          isActive && statusText !== 'Completed'
-                            ? 'bg-[#0070AD] text-white shadow-[0_0_15px_rgba(0,112,173,0.3)]'
-                            : isStepCompleted || isCompleted
-                            ? 'bg-[#0070AD]/80 text-white hover:bg-[#0070AD]'
-                            : 'bg-black/5 text-black/45'
-                        }`}
-                        animate={isActive && statusText !== 'Completed' ? { scale: [1, 1.05, 1] } : {}}
-                        transition={{ duration: 0.5, repeat: isActive && statusText !== 'Completed' ? Infinity : 0, repeatDelay: 2 }}
-                        whileHover={isClickable ? { scale: 1.05 } : {}}
-                        whileTap={isClickable ? { scale: 0.98 } : {}}
+                      <motion.button
+                        type="button"
+                        onClick={() => isClickable && goToStep(step.id as Step)}
+                        disabled={!isClickable}
+                        className={`flex items-center gap-4 focus:outline-none focus:ring-2 focus:ring-[#0070AD]/25 focus:ring-offset-2 focus:ring-offset-white rounded-xl p-2 w-full text-left transition-all duration-200 ${
+                          isActive 
+                            ? 'bg-[#0070AD]/5 border border-[#0070AD]/10' 
+                            : 'border border-transparent hover:bg-black/[0.02]'
+                        } ${!isClickable ? 'cursor-default opacity-50' : 'cursor-pointer'}`}
                       >
-                        <Icon className="text-lg" />
-                      </motion.div>
-                      <div className="flex flex-col">
-                        <span className={`text-sm font-semibold transition-colors ${
-                          isActive ? 'text-zinc-900 font-bold' : isCompleted || isStepCompleted ? 'text-[#0070AD]' : 'text-black/45'
-                        }`}>
-                          {step.label}
-                        </span>
-                        <span className="text-[10px] text-black/35 font-medium mt-0.5">
-                          {statusText}
-                        </span>
-                      </div>
-                    </motion.button>
-                  </div>
-                );
-              })}
+                        <motion.div
+                          className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 z-10 ${
+                            isActive && statusText !== 'Completed'
+                              ? 'bg-[#0070AD] text-white shadow-[0_0_15px_rgba(0,112,173,0.3)]'
+                              : isStepCompleted || isCompleted
+                              ? 'bg-[#0070AD]/80 text-white hover:bg-[#0070AD]'
+                              : 'bg-black/5 text-black/45'
+                          }`}
+                          animate={isActive && statusText !== 'Completed' ? { scale: [1, 1.05, 1] } : {}}
+                          transition={{ duration: 0.5, repeat: isActive && statusText !== 'Completed' ? Infinity : 0, repeatDelay: 2 }}
+                          whileHover={isClickable ? { scale: 1.05 } : {}}
+                          whileTap={isClickable ? { scale: 0.98 } : {}}
+                        >
+                          <Icon className="text-lg" />
+                        </motion.div>
+                        <div className="flex flex-col">
+                          <span className={`text-sm font-semibold transition-colors ${
+                            isActive ? 'text-zinc-900 font-bold' : isCompleted || isStepCompleted ? 'text-[#0070AD]' : 'text-black/45'
+                          }`}>
+                            {step.label}
+                          </span>
+                          <span className="text-[10px] text-black/35 font-medium mt-0.5">
+                            {statusText}
+                          </span>
+                        </div>
+                      </motion.button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Right Column: Content Area */}
-          <div className="flex-1 w-full lg:max-w-[calc(100%-19rem)]">
+          <div className="w-full flex-1">
+
             <AnimatePresence mode="wait">
               <motion.div
                 key={currentStep}
@@ -1263,7 +1325,8 @@ export default function DataPipelinePage() {
                 userFeedback={userFeedback}
                 execResult={execResult}
                 onComplete={() => { setDirection('forward'); setCurrentStep('complete'); }}
-                onFeedback={(liked, comment) => handleFeedback('cleaning', liked, comment)}
+                onFeedback={(liked: boolean, comment?: string) => handleFeedback('cleaning', liked, comment)}
+
               />
             )}
 
@@ -1306,6 +1369,37 @@ export default function DataPipelinePage() {
           </div>
         </div>
       </div>
+
+      {/* IDE Collapsible & Resizable AI Assistant Panel */}
+      <IdeChatDrawer
+        isOpen={isChatOpen}
+        onToggle={() => setIsChatOpen(!isChatOpen)}
+        pipelineState={{
+          currentStep,
+          selectedDatabase,
+          selectedFiles,
+          assessmentData,
+          dqGate,
+          etlCode,
+          execResult,
+        }}
+        pipelineActions={{
+          onSelectDatabase: handleDatabaseSelect,
+          onSelectFiles: handleFilesSelect,
+          onRunAssessment: () => {
+            setDirection('forward');
+            setCurrentStep('assessment');
+          },
+          onGenerateEtl: () => {
+            setDirection('forward');
+            setCurrentStep('etl');
+          },
+          onExecuteRemediation: (approved = true, dryRun = false) => handleExecuteSQL(approved, dryRun),
+          onGoToStep: (stepId: any) => goToStep(stepId),
+        }}
+      />
     </div>
   );
 }
+
+
