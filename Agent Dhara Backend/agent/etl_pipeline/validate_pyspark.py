@@ -351,7 +351,9 @@ def _check_pyspark_antipatterns(source: str) -> List[str]:
     errs: List[str] = []
     if re.search(r'\.fillna\s*\(\s*\{[^}]*F\.lit', source) or re.search(r'\.fillna\s*\(\s*\{[^}]*None', source):
         errs.append("Invalid PySpark fillna() usage: fillna() accepts primitive values, not F.lit() expressions — use withColumn + F.coalesce()")
-    if "try_to_timestamp" in source or "try_to_date" in source:
+    # Strip comments first to prevent false-positives from explanatory texts
+    clean_source = re.sub(r'#.*$', '', source, flags=re.MULTILINE)
+    if re.search(r"F\.expr\s*\(\s*['\"].*?try_to_(?:timestamp|date)", clean_source, re.IGNORECASE):
         errs.append("Invalid PySpark expression: try_to_timestamp is not supported in F.expr() — use F.to_timestamp(F.col(...), format)")
     return errs
 
@@ -418,6 +420,7 @@ def validate_pyspark_source(
     errs.extend(_check_cleanse_governance_rules(source, plan))
     errs.extend(_check_literal_identity_comparison(tree))
     errs.extend(_check_undefined_function_calls(tree))
+    errs.extend(_check_dataframe_key_consistency(source))
 
     if plan:
         allowed = _plan_columns(plan)
@@ -541,13 +544,15 @@ def _check_cleanse_governance_rules(source: str, plan: Dict[str, Any] | None) ->
                         if "lower(" in line.replace(" ", "") or "F.lower" in line:
                             errs.append(f"Governance error: Business identifier key '{col_str}' must not be lowercased (trim only) in line: {line.strip()}")
 
-            # Check for numeric column rlike check
-            is_num_col = any(k in col_lower for k in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val"))
+            # Check for numeric column rlike check & string operations & hardcoded fill value for mean/median strategy
+            is_num_col = any(k in col_lower for k in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val", "production_qty", "revenue", "sales", "count", "num", "number", "rate", "ratio", "margin", "fee"))
             if is_num_col:
                 for line in lines:
-                    if col_str in line:
+                    if col_str in line and not line.strip().startswith("#"):
                         if "rlike" in line and not any(x in line for x in ("_raw_", "_valid_", "is_invalid_")):
                             errs.append(f"Governance error: Numeric column '{col_str}' must not be filtered using string rlike in line: {line.strip()}")
+                        if "lower(" in line.replace(" ", "") or "F.lower" in line or "upper(" in line.replace(" ", "") or "F.upper" in line:
+                            errs.append(f"Invalid string operation on numeric column {col_str}.")
                         # Ensure numeric aggregation on string column is cast to double first (case-insensitive check)
                         normalized_line = line.replace(" ", "").replace('"', "'").lower()
                         col_l = col_str.lower()
@@ -568,4 +573,54 @@ def _check_cleanse_governance_rules(source: str, plan: Dict[str, Any] | None) ->
                             if not (has_cast_in_line or has_cast_in_code):
                                 errs.append(f"Governance error: Numeric aggregation on string-encoded column '{col_str}' must cast to double first in line: {line.strip()}")
 
+            # Check for hardcoded numeric fill value when strategy is mean/median
+            action = str(s.get("action") or "").lower()
+            params = s.get("params") or {}
+            strat = params.get("fill_strategy") or ""
+            if action in ("fill_nulls_simple", "fill_or_drop") and strat in ("mean", "median"):
+                for line in lines:
+                    if col_str in line and not line.strip().startswith("#"):
+                        match_lit = re.search(r"F\.lit\(\s*[-+]?\d*\.?\d+\s*\)", line)
+                        match_fillna = re.search(r"fillna\(\s*\{[^}]*['\"]" + re.escape(col_str) + r"['\"]\s*:\s*[-+]?\d*\.?\d+\s*\}\s*\)", line)
+                        if match_lit or match_fillna:
+                            errs.append(f"Governance error: Column '{col_str}' has fill_strategy '{strat}' but uses hardcoded numeric fill value in line: {line.strip()}")
+
+    return errs
+
+
+def _check_dataframe_key_consistency(source: str) -> List[str]:
+    errs: List[str] = []
+    
+    # Extract loaded keys
+    # e.g., dfs["sales_relational_test"] = spark.read...
+    loaded_keys = set(re.findall(r"dfs\s*\[\s*['\"](.*?)['\"]\s*\]\s*=\s*(?:spark\.read|load_dataset|read_xml|read_csv|read_json|read_parquet|read_excel)", source))
+    
+    # If no keys were loaded using this pattern, check for general assignments to dfs
+    if not loaded_keys:
+        loaded_keys = set(re.findall(r"dfs\s*\[\s*['\"](.*?)['\"]\s*\]\s*=", source))
+        
+    if not loaded_keys:
+        return []
+        
+    # Extract keys used in transform functions
+    # e.g., transform_sales_relational_test(dfs["sales_relational_test.xml"]...)
+    transformed_keys = set(re.findall(r"transform_\w+\(\s*dfs\s*\[\s*['\"](.*?)['\"]\s*\]", source))
+    
+    # Extract keys written
+    # e.g., dfs["sales_relational_test.xml"].write...
+    written_keys = set(re.findall(r"dfs\s*\[\s*['\"](.*?)['\"]\s*\]\.write", source))
+    
+    for tk in transformed_keys:
+        if tk not in loaded_keys:
+            matching_loaded = [lk for lk in loaded_keys if lk in tk or tk in lk]
+            loaded_str = matching_loaded[0] if matching_loaded else (list(loaded_keys)[0] if loaded_keys else "none")
+            errs.append(f"Transform keys do not match loaded dataframe keys: {tk} was transformed but only {loaded_str} was loaded.")
+            
+    for wk in written_keys:
+        # Quarantine keys are written but not loaded, so allow keys ending with _quarantine or starting with joined_
+        if wk not in loaded_keys and not wk.endswith("_quarantine") and not wk.startswith("joined_"):
+            matching_loaded = [lk for lk in loaded_keys if lk in wk or wk in lk]
+            loaded_str = matching_loaded[0] if matching_loaded else (list(loaded_keys)[0] if loaded_keys else "none")
+            errs.append(f"Write keys do not match loaded dataframe keys: {wk} was written but only {loaded_str} was loaded.")
+            
     return errs

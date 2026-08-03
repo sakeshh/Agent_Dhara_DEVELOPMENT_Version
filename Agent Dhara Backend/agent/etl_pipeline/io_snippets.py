@@ -244,7 +244,7 @@ def _iqr_bounds(df, col: str, multiplier: float = 1.5):
 
 
 def pyspark_production_helpers() -> str:
-    return '''
+    return r'''
 def _normalize_column_names(df):
   """Strip whitespace and canonicalize column names to lowercase with duplicate checking."""
   norm_names = [c.strip().lower() for c in df.columns]
@@ -266,17 +266,44 @@ def _require_columns(df, required: list, label: str) -> None:
 
 
 def _parse_timestamp_safely(df, column_name: str):
-  """Parse common timestamp formats into a materialized timestamp column with invalid flag tracking."""
+  """Parse common timestamp formats into a materialized timestamp column with invalid flag tracking.
+  
+  ANSI-safe: values are parsed using try_to_timestamp (if available) or pre-filtered with a regex gate
+  before to_timestamp() to avoid SparkDateTimeException on malformed strings like '00/00/0000', 'TBD',
+  or empty sentinels.
+  """
   raw_col = f"_raw_{column_name}"
   invalid_flag = f"is_invalid_{column_name}"
   df = df.withColumn(raw_col, F.trim(F.col(column_name).cast("string")))
-  parsed = F.coalesce(
-    F.to_timestamp(F.col(raw_col), 'yyyy-MM-dd HH:mm:ss'),
-    F.to_timestamp(F.col(raw_col), 'yyyy-MM-dd'),
-    F.to_timestamp(F.col(raw_col), 'MM/dd/yyyy'),
-    F.to_timestamp(F.col(raw_col), 'yyyy/MM/dd'),
-    F.to_timestamp(F.col(raw_col), 'dd/MM/yyyy')
-  )
+
+  if hasattr(F, "try_to_timestamp"):
+    parsed = F.coalesce(
+      F.try_to_timestamp(F.col(raw_col), F.lit("yyyy-MM-dd HH:mm:ss")),
+      F.try_to_timestamp(F.col(raw_col), F.lit("yyyy-MM-dd")),
+      F.try_to_timestamp(F.col(raw_col), F.lit("MM/dd/yyyy")),
+      F.try_to_timestamp(F.col(raw_col), F.lit("yyyy/MM/dd")),
+      F.try_to_timestamp(F.col(raw_col), F.lit("dd/MM/yyyy")),
+      F.try_to_timestamp(F.col(raw_col))
+    )
+  else:
+    # Regex gate: only attempt parsing if value looks like a date/timestamp
+    _date_like = (
+      F.col(raw_col).rlike(r"^\d{4}-\d{2}-\d{2}") |           # yyyy-MM-dd[...]
+      F.col(raw_col).rlike(r"^\d{2}/\d{2}/\d{4}") |           # MM/dd/yyyy or dd/MM/yyyy
+      F.col(raw_col).rlike(r"^\d{4}/\d{2}/\d{2}")             # yyyy/MM/dd
+    )
+
+    parsed = F.when(
+      _date_like,
+      F.coalesce(
+        F.to_timestamp(F.col(raw_col), 'yyyy-MM-dd HH:mm:ss'),
+        F.to_timestamp(F.col(raw_col), 'yyyy-MM-dd'),
+        F.to_timestamp(F.col(raw_col), 'MM/dd/yyyy'),
+        F.to_timestamp(F.col(raw_col), 'yyyy/MM/dd'),
+        F.to_timestamp(F.col(raw_col), 'dd/MM/yyyy'),
+      )
+    ).otherwise(F.lit(None).cast("timestamp"))
+
   df = df.withColumn(invalid_flag, (F.col(raw_col).isNotNull() & (F.col(raw_col) != '') & parsed.isNull()).cast("boolean"))
   df = df.withColumn(column_name, parsed)
   return df.drop(raw_col)

@@ -12,6 +12,14 @@ def _safe(name: str) -> str:
     return (s or "ds").strip("_")
 
 
+def _canonical_id(name: str) -> str:
+    for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):
+        if name.lower().endswith(ext):
+            name = name[:-len(ext)]
+            break
+    return _safe(name)
+
+
 def emit_python_load_and_join(
     plan: Dict[str, Any],
     manifest: Dict[str, Any],
@@ -231,6 +239,13 @@ def _skip_joins_for_plan(plan: Dict[str, Any]) -> bool:
     pid = str(plan.get("plan_id") or "").strip().lower()
     if gen_mode == "cleanse_only" or pid.endswith("_cleanse"):
         return True
+    
+    # If explicit joins are defined in plan and mode is not cleanse_only, we must join
+    rel = plan.get("relationships") or {}
+    joins = rel.get("joins") or []
+    if joins and gen_mode != "cleanse_only":
+        return False
+
     steps: List[Dict[str, Any]] = []
     for block in (plan.get("datasets") or {}).values():
         steps.extend((block or {}).get("steps") or [])
@@ -248,14 +263,17 @@ def emit_pyspark_output_contract(plan: Dict[str, Any], manifest: Dict[str, Any])
     m_ds = (manifest or {}).get("datasets") or {}
     rel = plan.get("relationships") or {}
     for ds_name, ent in m_ds.items():
-        op = ent.get("output_path") or f"cleaned/{_safe(ds_name)}.parquet"
+        canon_id = _canonical_id(ds_name)
+        op = ent.get("output_path") or f"cleaned/{canon_id}.parquet"
         fmt = ent.get("format") or "?"
-        lines.append(f"#   {ds_name}: {fmt} -> {op}")
+        lines.append(f"#   {canon_id}: {fmt} -> {op}")
     joins = [j for j in (rel.get("joins") or []) if j.get("join_type") != "review"]
     if joins and not _skip_joins_for_plan(plan):
         for j in joins:
             p, c = j.get("parent_dataset"), j.get("child_dataset")
-            jname = f"joined_{_safe(p)}_{_safe(c)}"
+            p_canon = _canonical_id(p)
+            c_canon = _canonical_id(c)
+            jname = f"joined_{p_canon}_{c_canon}"
             lines.append(f"#   {jname}: parquet -> cleaned/{jname}.parquet")
     lines.append("OUTPUT_PATHS: dict = {}")
     lines.append("")
@@ -268,37 +286,40 @@ def emit_pyspark_write_outputs(plan: Dict[str, Any], manifest: Dict[str, Any]) -
     rel = plan.get("relationships") or {}
     lines.append("# Write cleaned per-dataset outputs (format matches manifest; XML -> parquet)")
     for ds_name, ent in m_ds.items():
-        op = ent.get("output_path") or f"cleaned/{_safe(ds_name)}.parquet"
+        canon_id = _canonical_id(ds_name)
+        op = ent.get("output_path") or f"cleaned/{canon_id}.parquet"
         wsnip = ent.get("write_snippet_pyspark") or (
             f'df.write.mode("overwrite").parquet(r"{op}")'
         )
         if wsnip.startswith("df."):
-            wsnip = f'dfs["{ds_name}"].' + wsnip[3:]
-        lines.append(f'if "{ds_name}" in dfs:')
+            wsnip = f'dfs["{canon_id}"].' + wsnip[3:]
+        wsnip = wsnip.replace(f'dfs["{ds_name}"]', f'dfs["{canon_id}"]').replace(f"dfs['{ds_name}']", f"dfs['{canon_id}']")
+        
+        lines.append(f'if "{canon_id}" in dfs:')
 
         # Fabric managed table writes use saveAsTable - resolve path only for blob/file writes.
         is_fabric_table = "saveAsTable(" in wsnip
         if is_fabric_table:
             # _out is the lakehouse path for audit; write target comes from saveAsTable table name.
-            table_name = ent.get("clean_table_name") or _safe(ds_name) + "_clean"
+            table_name = ent.get("clean_table_name") or canon_id + "_clean"
             lines.append(f"    _out = 'Tables/{table_name}'  # Fabric managed table (audit path)")
-            lines.append(f'    OUTPUT_PATHS[{ds_name!r}] = _out')
-            lines.append(f"    logger.info('Writing %s -> Fabric table %s', {ds_name!r}, {table_name!r})")
+            lines.append(f'    OUTPUT_PATHS[{canon_id!r}] = _out')
+            lines.append(f"    logger.info('Writing %s -> Fabric table %s', {canon_id!r}, {table_name!r})")
             lines.append(
-                f'    dfs["{ds_name}"].write.format("delta").mode("overwrite")'
+                f'    dfs["{canon_id}"].write.format("delta").mode("overwrite")'
                 f'.option("overwriteSchema", "true").saveAsTable("{table_name}")'
             )
         else:
             lines.append(f'    _out = _resolve_data_path("{op}")')
-            lines.append(f'    OUTPUT_PATHS[{ds_name!r}] = _out')
-            lines.append(f"    logger.info('Writing %s -> %s', {ds_name!r}, _out)")
+            lines.append(f'    OUTPUT_PATHS[{canon_id!r}] = _out')
+            lines.append(f"    logger.info('Writing %s -> %s', {canon_id!r}, _out)")
             if ".json(" in wsnip:
-                lines.append(f'    dfs["{ds_name}"].write.mode("overwrite").json(_out)')
+                lines.append(f'    dfs["{canon_id}"].write.mode("overwrite").json(_out)')
             elif ".parquet(" in wsnip:
-                lines.append(f'    dfs["{ds_name}"].write.mode("overwrite").parquet(_out)')
+                lines.append(f'    dfs["{canon_id}"].write.mode("overwrite").parquet(_out)')
             elif ".csv(" in wsnip:
                 lines.append(
-                    f'    dfs["{ds_name}"].write.mode("overwrite").option("header", "true").csv(_out)'
+                    f'    dfs["{canon_id}"].write.mode("overwrite").option("header", "true").csv(_out)'
                 )
             else:
                 for stmt in wsnip.split(";"):
@@ -306,14 +327,15 @@ def emit_pyspark_write_outputs(plan: Dict[str, Any], manifest: Dict[str, Any]) -
                     if stmt:
                         lines.append(f"    {stmt}")
 
-
     joins = [j for j in (rel.get("joins") or []) if j.get("join_type") != "review"]
     if joins and not _skip_joins_for_plan(plan):
         lines.append("")
         lines.append("# Write joined enrichment outputs")
         for j in joins:
             p, c = j.get("parent_dataset"), j.get("child_dataset")
-            jname = f"joined_{_safe(p)}_{_safe(c)}"
+            p_canon = _canonical_id(p)
+            c_canon = _canonical_id(c)
+            jname = f"joined_{p_canon}_{c_canon}"
             op = f"cleaned/{jname}.parquet"
             lines.append(f'if {jname!r} in dfs:')
             lines.append(f'    _out = _resolve_data_path("{op}")')
@@ -338,6 +360,7 @@ def emit_pyspark_load(plan: Dict[str, Any], manifest: Dict[str, Any]) -> List[st
 
     lines.append("# Load (connector manifest - use _resolve_data_path for blob/SQL)")
     for ds_name in load_order:
+        canon_id = _canonical_id(ds_name)
         ent = m_ds.get(ds_name) or {}
         snip = ent.get("read_snippet_pyspark")
         if not snip:
@@ -350,11 +373,13 @@ def emit_pyspark_load(plan: Dict[str, Any], manifest: Dict[str, Any]) -> List[st
                 mock_ent["format"] = infer_format_from_ext("." + ext, mock_ent.get("source_type", "blob_storage"))
             snip = pyspark_read_snippet(mock_ent)
         fmt = ent.get("format", "?")
-        lines.append(f'# {ds_name}: {ent.get("source_type")} ({fmt}) @ {ent.get("location")}')
-        lines.append(f'dfs["{ds_name}"] = {snip}')
+        if str(fmt).strip().lower() == "xml":
+            lines.append('# Requires spark-xml package / Fabric runtime support for com.databricks.spark.xml')
+        lines.append(f'# {canon_id}: {ent.get("source_type")} ({fmt}) @ {ent.get("location")}')
+        lines.append(f'dfs["{canon_id}"] = {snip}')
         if required:
             cols = [c for c in required if c]
-            lines.append(f'_require_columns(dfs["{ds_name}"], {cols!r}, "{ds_name}")')
+            lines.append(f'_require_columns(dfs["{canon_id}"], {cols!r}, "{canon_id}")')
     lines.append("")
     return lines
 
@@ -375,19 +400,21 @@ def emit_pyspark_joins(plan: Dict[str, Any]) -> List[str]:
     lines.append("# Joins (after per-dataset transforms; prefix right columns; write joined_* output)")
     for j in joins:
         p, c = j.get("parent_dataset"), j.get("child_dataset")
+        p_canon = _canonical_id(p)
+        c_canon = _canonical_id(c)
         pk, ck = j.get("parent_key"), j.get("child_key")
         how = j.get("join_type") or "left"
-        sfx = _safe(c)
-        jname = f"joined_{_safe(p)}_{_safe(c)}"
-        lines.append(f'if "{p}" in dfs and "{c}" in dfs:')
-        lines.append(f'    _warn_duplicate_keys(dfs["{p}"], {pk!r}, "{p}")')
-        lines.append(f'    _warn_duplicate_keys(dfs["{c}"], {ck!r}, "{c}")')
-        lines.append(f'    _right = _prefix_columns(dfs["{c}"], "{sfx}", [{ck!r}])')
+        sfx = c_canon
+        jname = f"joined_{p_canon}_{c_canon}"
+        lines.append(f'if "{p_canon}" in dfs and "{c_canon}" in dfs:')
+        lines.append(f'    _warn_duplicate_keys(dfs["{p_canon}"], {pk!r}, "{p_canon}")')
+        lines.append(f'    _warn_duplicate_keys(dfs["{c_canon}"], {ck!r}, "{c_canon}")')
+        lines.append(f'    _right = _prefix_columns(dfs["{c_canon}"], "{sfx}", [{ck!r}])')
         if pk == ck:
-            lines.append(f'    dfs[{jname!r}] = dfs["{p}"].join(_right, on={pk!r}, how="{how}")')
+            lines.append(f'    dfs[{jname!r}] = dfs["{p_canon}"].join(_right, on={pk!r}, how="{how}")')
         else:
             lines.append(
-                f'    dfs[{jname!r}] = dfs["{p}"].join(_right, '
+                f'    dfs[{jname!r}] = dfs["{p_canon}"].join(_right, '
                 f'F.col("{pk}") == F.col("{ck}"), how="{how}")'
             )
     lines.append("")

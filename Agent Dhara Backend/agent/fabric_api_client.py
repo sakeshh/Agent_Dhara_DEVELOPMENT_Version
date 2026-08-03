@@ -232,21 +232,38 @@ class FabricAPIClient:
             return r_id
 
         url = f"{self.base_url}/workspaces/{self.workspace_id}/items/{notebook_id}/jobs/instances?jobType=RunNotebook"
-        try:
-            # POST request to run notebook job
-            res = requests.post(url, headers=self._headers(), timeout=20)
-            res.raise_for_status()
-            
-            # The run job instance ID is typically returned in the headers Location or Response Body
-            # Fabric API v1 usually returns 202 Accepted with jobInstanceId in Location or headers
-            job_id = res.headers.get("Location", "").split("/")[-1] or res.json().get("id")
-            if not job_id:
-                # Fallback to look at response body
-                job_id = res.json().get("id") or "unknown-run"
-            return job_id
-        except Exception as e:
-            logger.exception(f"Failed to trigger notebook run for {notebook_id}: {e}")
-            raise RuntimeError(f"Failed to trigger notebook job in Fabric: {e}")
+        
+        import time
+        max_retries = 3
+        backoff = 2
+        for attempt in range(max_retries):
+            try:
+                # POST request to run notebook job
+                res = requests.post(url, headers=self._headers(), timeout=20)
+                res.raise_for_status()
+                
+                # The run job instance ID is typically returned in the headers Location or Response Body
+                # Fabric API v1 usually returns 202 Accepted with jobInstanceId in Location or headers
+                job_id = res.headers.get("Location", "").split("/")[-1] or res.json().get("id")
+                if not job_id:
+                    # Fallback to look at response body
+                    job_id = res.json().get("id") or "unknown-run"
+                return job_id
+            except Exception as e:
+                # If it's a 5xx server error, wait and retry
+                is_server_error = False
+                if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+                    if e.response.status_code >= 500:
+                        is_server_error = True
+                
+                if (is_server_error or "500" in str(e) or "503" in str(e)) and attempt < max_retries - 1:
+                    sleep_time = backoff ** attempt
+                    logger.warning(f"Fabric run trigger got server error (attempt {attempt + 1}/{max_retries}). Retrying in {sleep_time}s... Error: {e}")
+                    time.sleep(sleep_time)
+                    continue
+                
+                logger.exception(f"Failed to trigger notebook run for {notebook_id}: {e}")
+                raise RuntimeError(f"Failed to trigger notebook job in Fabric: {e}")
 
     def get_run_status(self, notebook_id: str, run_id: str) -> Dict[str, Any]:
         """

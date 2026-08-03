@@ -27,6 +27,14 @@ def _safe(name: str) -> str:
     return (s or "dataset").strip("_")
 
 
+def _canonical_id(name: str) -> str:
+    for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):
+        if name.lower().endswith(ext):
+            name = name[:-len(ext)]
+            break
+    return _safe(name)
+
+
 # Columns that are business keys / identifiers -- NEVER fill with computed values
 _BUSINESS_KEY_PATTERNS = (
     "id", "key", "code", "ref", "num", "no", "nbr",
@@ -71,6 +79,16 @@ def _is_numeric_dtype(dtype_str: str) -> bool:
     )
 
 
+def _looks_numeric_metric(col: str) -> bool:
+    c = str(col or "").lower()
+    _NUMERIC_NAME_HINTS = (
+        "amount", "budget", "qty", "quantity", "price", "cost",
+        "score", "total", "value", "revenue", "sales", "production_qty",
+        "rate", "ratio", "margin", "fee"
+    )
+    return any(k in c for k in _NUMERIC_NAME_HINTS)
+
+
 def _emit_fill_spark(col: str, df: str, params: Dict[str, Any]) -> List[str]:
     c = repr(str(col))
     strat = params.get("fill_strategy")
@@ -98,7 +116,7 @@ def _emit_fill_spark(col: str, df: str, params: Dict[str, Any]) -> List[str]:
     # IMPROVEMENT-4: Categorical columns must never be filled with a numeric literal.
     # A fill_value like 123 makes no sense for region/channel/location -- use 'unknown' instead.
     # PRODUCTION SAFETY: Also catches string-dtype columns that slipped past pattern matching.
-    if _is_categorical_col(col) or (is_string_col and strat in ("mean", "median")):
+    if (_is_categorical_col(col) or (is_string_col and strat in ("mean", "median"))) and not _looks_numeric_metric(col):
         safe_fval = fval
         if isinstance(fval, (int, float)) or (
             fval is not None and str(fval).strip().lstrip("-").replace(".", "", 1).isdigit()
@@ -118,12 +136,6 @@ def _emit_fill_spark(col: str, df: str, params: Dict[str, Any]) -> List[str]:
         ]
 
     if strat == "median":
-        if fval is not None:
-            return [
-                f"# IMPROVEMENT-3: Track imputed rows before filling.",
-                f"{df} = {df}.withColumn({impute_flag}, F.col({c}).isNull().cast('boolean'))",
-                f"{df} = {df}.withColumn({c}, F.coalesce(F.col({c}), F.lit({fval})))",
-            ]
         # PRODUCTION SAFETY: cast to double before percentile_approx for columns stored as string-typed numbers.
         # percentile_approx on a non-numeric Spark column raises AnalysisException at runtime.
         return [
@@ -135,12 +147,6 @@ def _emit_fill_spark(col: str, df: str, params: Dict[str, Any]) -> List[str]:
             f"    {df} = {df}.withColumn({c}, F.coalesce(F.col({c}).cast('double'), F.lit(_med)))",
         ]
     if strat == "mean":
-        if fval is not None:
-            return [
-                f"# IMPROVEMENT-3: Track imputed rows before filling.",
-                f"{df} = {df}.withColumn({impute_flag}, F.col({c}).isNull().cast('boolean'))",
-                f"{df} = {df}.withColumn({c}, F.coalesce(F.col({c}), F.lit({fval})))",
-            ]
         # PRODUCTION SAFETY: F.avg with .cast('double') prevents AnalysisException on string-stored numeric columns.
         return [
             f"# NOTE: F.avg triggers a Spark action (full scan). For large tables prefer percentile_approx.",
@@ -451,15 +457,23 @@ def _emit_spark(
             f'{df} = {df}.withColumn({c}, F.concat(F.lit("***"), F.substring(F.regexp_replace(F.col({c}).cast("string"), "\\\\D", ""), -4, 4)))',
         ]
     if act == "lowercase":
-        # GOVERNANCE: Do NOT lowercase business keys (sale_id, campaign_id) or name fields (customer_name).
+        # GOVERNANCE: Do NOT lowercase business keys (sale_id, campaign_id), name fields (customer_name), or numeric columns.
         # Lowercasing 'AB123' -> 'ab123' or 'John Smith' -> 'john smith' destroys semantic value.
-        if _is_name_field(col or "") or _is_business_key(col or ""):
+        is_num = any(k in str(col).lower() for k in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val", "production_qty", "revenue", "sales", "count", "num", "number", "rate", "ratio", "margin", "fee"))
+        if _is_name_field(col or "") or _is_business_key(col or "") or is_num:
             return [
-                f"# GOVERNANCE: '{col}' is a key/name field -- applying trim only (not lowercase).",
+                f"# GOVERNANCE: '{col}' is a key/name/numeric field -- applying trim only (not lowercase).",
                 f'{df} = {df}.withColumn({c}, F.trim(F.col({c}).cast("string")))',
             ]
         return [f'{df} = {df}.withColumn({c}, F.lower(F.col({c}).cast("string")))']
     if act == "uppercase":
+        # GOVERNANCE: Do NOT uppercase business keys, name fields, or numeric columns.
+        is_num = any(k in str(col).lower() for k in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val", "production_qty", "revenue", "sales", "count", "num", "number", "rate", "ratio", "margin", "fee"))
+        if _is_name_field(col or "") or _is_business_key(col or "") or is_num:
+            return [
+                f"# GOVERNANCE: '{col}' is a key/name/numeric field -- applying trim only (not uppercase).",
+                f'{df} = {df}.withColumn({c}, F.trim(F.col({c}).cast("string")))',
+            ]
         return [f'{df} = {df}.withColumn({c}, F.upper(F.col({c}).cast("string")))']
     if act in ("flag_outliers", "clip_or_flag", "clip_outliers", "cap_outliers"):
         return _emit_outliers_spark(act, col, df, params)
@@ -630,7 +644,40 @@ def _emit_valid_values_spark(df: str, ds_name: str, rules: Dict[str, Any]) -> Li
 
 
 def generate_pyspark_etl(plan: Dict[str, Any], assessment: Dict[str, Any]) -> str:
-    _ = assessment
+    # Pre-clean the plan datasets using governance rules before generating PySpark template code
+    from agent.etl_pipeline.llm_codegen import _consolidate_and_filter_datasets
+    
+    source_metadata: Dict[str, Any] = {}
+    sem_schema = plan.get("semantic_schema") or {}
+    for ds_name, meta in (assessment.get("datasets") or {}).items():
+        cols = meta.get("columns") or {}
+        source_metadata[ds_name] = {
+            "row_count": meta.get("row_count"),
+            "columns": {
+                col: {
+                    "dtype": cmeta.get("dtype") or cmeta.get("inferred_type"),
+                    "null_percentage": cmeta.get("null_percentage"),
+                    "semantic_type": (sem_schema.get(f"{ds_name}.{col}") or {}).get("semantic_type") or cmeta.get("semantic_type", "unknown"),
+                    "sub_type": (sem_schema.get(f"{ds_name}.{col}") or {}).get("sub_type") or cmeta.get("sub_type", "unknown"),
+                    "pii_level": (sem_schema.get(f"{ds_name}.{col}") or {}).get("pii_level") or "none",
+                }
+                for col, cmeta in cols.items()
+                if isinstance(cmeta, dict)
+            },
+        }
+    
+    strict = bool(
+        plan.get("strict_mode")
+        or plan.get("settings", {}).get("strict_mode", False)
+        or (plan.get("business_rules") or {}).get("strict_mode", False)
+    )
+    
+    import copy
+    plan = copy.deepcopy(plan)
+    plan["datasets"] = _consolidate_and_filter_datasets(
+        plan.get("datasets") or {}, source_metadata, plan.get("semantic_schema"), strict_mode=strict
+    )
+
     gen_mode = str(plan.get("generation_mode") or "full").lower().strip()
     if gen_mode == "cleanse_only":
         from agent.etl_pipeline.phase_classifier import split_plan_phases
@@ -706,7 +753,8 @@ def generate_pyspark_etl(plan: Dict[str, Any], assessment: Dict[str, Any]) -> st
         lines.append("")
 
     for ds_name, block in (plan.get("datasets") or {}).items():
-        fn = f"transform_{_safe(ds_name)}"
+        canon_id = _canonical_id(ds_name)
+        fn = f"transform_{canon_id}"
         # FIX-1: Collect only genuine schema columns for _require_columns.
         # Deduplicate steps use a composite column string like "factory_id, inspection_date"
         # which must be split into individual names, not passed as a single invalid column name.
@@ -734,13 +782,13 @@ def generate_pyspark_etl(plan: Dict[str, Any], assessment: Dict[str, Any]) -> st
         var = "out"
         lines.append(f"    {var} = df")
         if unique_cols:
-            lines.append(f"    _require_columns({var}, {repr(unique_cols)}, {repr(ds_name)})")
+            lines.append(f"    _require_columns({var}, {repr(unique_cols)}, {repr(canon_id)})")
         lines.append(f"    _src_cols = [F.coalesce(F.col(c).cast('string'), F.lit('<NULL>')) for c in {var}.columns if not c.startswith('_') and not c.startswith('is_')]")
         lines.append(f"    {var} = {var}.withColumn('_source_row_hash', F.xxhash64(*_src_cols))")
 
         # Manual review warnings in code (B3)
         for mr in plan.get("manual_review") or []:
-            if mr.get("dataset") == ds_name:
+            if mr.get("dataset") == ds_name or mr.get("dataset") == canon_id:
                 col = mr.get("column")
                 if col:
                     lines.append(f"    logger.warning('Column {col} requires manual review -- skipping automation')")
@@ -764,10 +812,10 @@ def generate_pyspark_etl(plan: Dict[str, Any], assessment: Dict[str, Any]) -> st
             lines.append(f"    # Step: {action} on {col}")
             for sl in _emit_spark(action, col, var, step_meta=st, plan=plan, ds_name=ds_name):
                 lines.append(f"    {sl}")
-        for sl in _emit_valid_values_spark(var, ds_name, rules):
+        for sl in _emit_valid_values_spark(var, canon_id, rules):
             lines.append(f"    {sl}")
         for col in rules.get("non_nullable") or []:
-            lines.append(f'    _warn_nulls_in_columns({var}, [{col!r}], "{ds_name}")')
+            lines.append(f'    _warn_nulls_in_columns({var}, [{col!r}], "{canon_id}")')
 
         # - Quarantine Split (Governance) -
         # Any flag columns emitted by parse_dates_safe, fill_nulls_flag, flag_domain_violation,
@@ -775,7 +823,6 @@ def generate_pyspark_etl(plan: Dict[str, Any], assessment: Dict[str, Any]) -> st
         #   - valid_records  (all flags False / NULL)
         #   - quarantine     (at least one flag True)
         # This ensures full auditability without silent data loss.
-        ds_safe = _safe(ds_name)
         lines.extend([
             f"    # - Quarantine Split -",
             f"    # Separate flagged (invalid/outlier) rows from clean records for governance.",
@@ -791,14 +838,22 @@ def generate_pyspark_etl(plan: Dict[str, Any], assessment: Dict[str, Any]) -> st
             f"        {var} = {var}.filter(~_any_flag)",
             f"        _quarantine_count = {var}_quarantine.count()",
             f"        if _quarantine_count > 0:",
-            f"            logger.warning('Quarantine: %d rows routed to {ds_safe}_quarantine table', _quarantine_count)",
+            f"            logger.warning('Quarantine: %d rows routed to {canon_id}_quarantine table', _quarantine_count)",
             f"            if all_dfs is not None:",
-            f"                all_dfs['{ds_name}_quarantine'] = {var}_quarantine",
+            f"                all_dfs['{canon_id}_quarantine'] = {var}_quarantine",
         ])
         lines.append(f"    return {var}")
         lines.append("")
 
-    lines.append("DATASETS = " + repr(list((plan.get("datasets") or {}).keys())))
+    canon_datasets = [_canonical_id(d) for d in (plan.get("datasets") or {})]
+    lines.append("DATASETS = " + repr(canon_datasets))
+    
+    manifest = plan.get("connector_manifest") or {}
+    m_ds = manifest.get("datasets") or {}
+    sources_dict = {}
+    for ds_name, ent in m_ds.items():
+        sources_dict[_canonical_id(ds_name)] = ent.get("location") or ds_name
+    lines.append("DATASET_SOURCES = " + repr(sources_dict))
     lines.append("")
 
     non_nullable = [str(c) for c in (rules.get("non_nullable") or []) if c]
@@ -807,15 +862,42 @@ def generate_pyspark_etl(plan: Dict[str, Any], assessment: Dict[str, Any]) -> st
             lines.append(sl)
         lines.append("def run_pipeline(spark):")
         lines.append("    dfs = {}")
-        for sl in emit_pyspark_load(plan, manifest):
-            lines.append(f"    {sl}")
+        lines.append("    def _canonical_id(name: str) -> str:")
+        lines.append('        for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):')
+        lines.append("            if name.lower().endswith(ext):")
+        lines.append("                name = name[:-len(ext)]")
+        lines.append("                break")
+        lines.append("        import re")
+        lines.append('        return re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")')
+        lines.append("")
+        lines.append("    active_canons = {_canonical_id(d) for d in DATASETS}")
+        
+        # Load block
+        load_lines = emit_pyspark_load(plan, manifest)
+        i_load = 0
+        while i_load < len(load_lines):
+            l_line = load_lines[i_load]
+            m_set = re.match(r'^\s*dfs\["([^"]+)"\]\s*=\s*(.*)$', l_line)
+            if m_set:
+                c_id = m_set.group(1)
+                expr = m_set.group(2)
+                lines.append(f'    if "{c_id}" in active_canons:')
+                lines.append(f'        dfs["{c_id}"] = {expr}')
+                if i_load + 1 < len(load_lines) and "_require_columns" in load_lines[i_load + 1]:
+                    lines.append(f'        {load_lines[i_load + 1].strip()}')
+                    i_load += 1
+            else:
+                if l_line.strip():
+                    lines.append(f"    {l_line}")
+            i_load += 1
         for ds_name in (plan.get("datasets") or {}):
-            fn = f"transform_{_safe(ds_name)}"
-            lines.append(f'    if "{ds_name}" in dfs:')
-            lines.append(f'        dfs["{ds_name}"] = {fn}(dfs["{ds_name}"], dfs)')
+            canon_id = _canonical_id(ds_name)
+            fn = f"transform_{canon_id}"
+            lines.append(f'    if "{canon_id}" in dfs:')
+            lines.append(f'        dfs["{canon_id}"] = {fn}(dfs["{canon_id}"], dfs)')
             if non_nullable:
-                lines.append(f'        _warn_nulls_in_columns(dfs["{ds_name}"], {non_nullable!r}, "{ds_name}")')
-            lines.append(f'        _log_row_count(dfs["{ds_name}"], "{ds_name}")')
+                lines.append(f'        _warn_nulls_in_columns(dfs["{canon_id}"], {non_nullable!r}, "{canon_id}")')
+            lines.append(f'        _log_row_count(dfs["{canon_id}"], "{canon_id}")')
         for sl in emit_pyspark_joins(plan):
             lines.append(f"    {sl}")
         for sl in emit_pyspark_write_outputs(plan, manifest):

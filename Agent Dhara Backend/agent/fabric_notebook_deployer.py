@@ -186,6 +186,9 @@ def deploy_and_run_notebook(
         
         # Step 1b: Trigger run
         try:
+            # Introduce a short 2-second sleep to let Fabric replica catalog synchronize the notebook write
+            import time
+            time.sleep(2)
             logger.info(f"Triggering Notebook job run for notebook ID '{notebook_id}' ({nb_name})...")
             run_id = client.trigger_notebook_run(notebook_id)
             

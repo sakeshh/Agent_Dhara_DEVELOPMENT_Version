@@ -5,6 +5,7 @@ for Python, SQL, PySpark, and Azure Data Factory.
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -60,7 +61,15 @@ def _code_cache_put(cache_key: str, value: Any) -> None:
         _CODE_CACHE.popitem(last=False)
 
 def _is_failure_cached(cache_key: str) -> str | None:
-    return None
+    item = _FAILURE_CACHE.get(cache_key)
+    if not item:
+        return None
+    error_msg, expiry_time = item
+    if time.time() > expiry_time:
+        _FAILURE_CACHE.pop(cache_key, None)
+        return None
+    _FAILURE_CACHE.move_to_end(cache_key)
+    return error_msg
 
 def _write_failure_cache(cache_key: str, error: str, ttl_seconds: int = 30):
     if cache_key in _FAILURE_CACHE:
@@ -161,7 +170,12 @@ def _inject_pyspark_fabric_ids(code: str) -> str:
     code = re.sub(
         r'ws_id\s*=\s*["\']["\']',
         f'ws_id = "{ws_id}"',
-        code
+        code,
+    )
+    code = re.sub(
+        r'lh_id\s*=\s*["\']["\']',
+        f'lh_id = "{lh_id}"',
+        code,
     )
     return code
 
@@ -309,30 +323,272 @@ def _fix_pyspark_numeric_rlike_filters(code: str) -> str:
     return "\n".join(new_lines)
 
 
+def _fix_pyspark_categorical_digit_filters(code: str) -> str:
+    """Remove or simplify digits-only regex filters on categorical columns to prevent validation failures."""
+    if not code:
+        return code
+    lines = code.splitlines()
+    new_lines = []
+    cat_keywords = ("region", "channel", "location", "category", "status", "country", "state", "city", "zone", "segment", "type", "machine", "site", "facility", "plant", "warehouse", "floor")
+    for line in lines:
+        if "rlike" in line and "withColumn" in line:
+            match = re.search(r"([a-zA-Z_][\w]*)\s*=\s*\1\.withColumn\(['\"]([a-zA-Z_][\w]*)['\"]\s*,\s*F\.when\(.*rlike.*(?:[0-9]|\\d).*otherwise", line)
+            if match:
+                df_var = match.group(1)
+                col = match.group(2)
+                col_lower = col.lower()
+                if any(k in col_lower for k in cat_keywords):
+                    indent = len(line) - len(line.lstrip())
+                    indent_str = line[:indent]
+                    # Rewrite to a simple trim and cast to string, avoiding the digit-only filter entirely
+                    line = f"{indent_str}{df_var} = {df_var}.withColumn({repr(col)}, F.trim(F.col({repr(col)})).cast('string'))"
+        new_lines.append(line)
+    return "\n".join(new_lines)
+
+
 def _fix_invalid_pyspark_dedup_window(code: str) -> str:
-    """Rewrite any deduplication window or step to use _flag_source_duplicates(df)."""
+    """Replace inline deduplication window code with the canonical _flag_source_duplicates(df) helper call."""
     if not code:
         return code
 
     lines = code.splitlines()
     new_lines = []
-    for line in lines:
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         stripped = line.strip()
+
+        # Replace comment-only deduplicate step markers
         if "# Step: deduplicate" in stripped:
             indent = len(line) - len(line.lstrip())
             indent_str = line[:indent]
-            new_lines.append(f"{indent_str}# Step: identify exact duplicate source rows (flagged with _is_duplicate_row, preserved without deletion)")
+            new_lines.append(f"{indent_str}# Step: identify exact duplicate source rows (flagged, rows preserved)")
             new_lines.append(f"{indent_str}df = _flag_source_duplicates(df)")
+            
+            # Peek ahead to skip the inline Window block if it is present immediately below
+            j = i + 1
+            while j < len(lines) and (not lines[j].strip() or lines[j].strip().startswith("#")):
+                j += 1
+            if j < len(lines) and "Window as _DedupWindow" in lines[j]:
+                k = j
+                while k < len(lines) and "_is_duplicate_row" not in lines[k]:
+                    k += 1
+                if k < len(lines):
+                    i = k + 1
+                    continue
+            i += 1
+            continue
+
+        # Replace the inline Window dedup block (4 lines, any indentation):
+        if (
+            "Window as _DedupWindow" in stripped
+            and i + 3 < len(lines)
+            and "_data_cols" in lines[i + 1]
+            and "_dup_w" in lines[i + 2]
+            and "_is_duplicate_row" in lines[i + 3]
+        ):
+            indent = len(line) - len(line.lstrip())
+            indent_str = line[:indent]
+            new_lines.append(f"{indent_str}df = _flag_source_duplicates(df)")
+            i += 4  # consume all 4 lines
+            continue
+
+        new_lines.append(line)
+        i += 1
+
+    return "\n".join(new_lines)
+
+
+def _deduplicate_repeated_dedup_calls(code: str) -> str:
+    if not code:
+        return code
+    return re.sub(
+        r"([ \t]*df\s*=\s*_flag_source_duplicates\(df\)\s*\n)+",
+        r"\1",
+        code
+    )
+
+
+
+def _fix_string_ops_on_numeric_cols(code: str) -> str:
+    """Remove F.lower() and F.upper() calls on numeric/metric column names.
+    
+    The LLM sometimes applies lowercase/uppercase to numeric columns (e.g. budget, production_qty)
+    because they arrive as strings before type casting. These ops are semantically wrong
+    and can produce unexpected string values before safe numeric conversion.
+    """
+    if not code:
+        return code
+    numeric_col_keywords = (
+        "amount", "budget", "qty", "quantity", "price", "cost",
+        "score", "total", "val", "production_qty", "revenue", "sales",
+        "count", "num", "number", "rate", "ratio", "margin", "fee",
+    )
+    lines = code.splitlines()
+    new_lines = []
+    for line in lines:
+        if ("F.lower(" in line or "F.upper(" in line) and "withColumn" in line:
+            match = re.search(r'withColumn\((["\'])([a-zA-Z_][\w]*)\1\s*,\s*F\.(lower|upper)\(', line)
+            if match:
+                col = match.group(2).lower()
+                if any(k in col for k in numeric_col_keywords):
+                    # Comment out the line — it is semantically wrong on a numeric column
+                    indent = len(line) - len(line.lstrip())
+                    new_lines.append(f"{line[:indent]}# [removed: string op on numeric column] {line.lstrip()}")
+                    continue
+        new_lines.append(line)
+    return "\n".join(new_lines)
+
+
+def _fix_string_fills_on_numeric_cols(code: str) -> str:
+    """Remove invalid string fill values (like 'unknown') on numeric/metric columns."""
+    if not code:
+        return code
+    numeric_col_keywords = (
+        "amount", "budget", "qty", "quantity", "price", "cost",
+        "score", "total", "val", "production_qty", "revenue", "sales",
+        "count", "num", "number", "rate", "ratio", "margin", "fee",
+    )
+    lines = code.splitlines()
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        
+        # 1. Match fillna with string values on numeric columns, e.g. .fillna({ 'production_qty': 'unknown' })
+        m_fillna = re.search(r"\.fillna\s*\(\s*\{(['\"])([a-zA-Z_][\w]*)\1\s*:\s*(['\"])([^'\"]+)\3\}\s*\)", stripped)
+        if m_fillna:
+            col = m_fillna.group(2)
+            val = m_fillna.group(4)
+            if any(k in col.lower() for k in numeric_col_keywords):
+                if not re.match(r"^-?(?:\d+(?:\.\d+)?|\.\d+)$", val):
+                    indent = len(line) - len(line.lstrip())
+                    new_lines.append(f"{line[:indent]}# [removed invalid string fill on numeric column] {stripped}")
+                    continue
+                    
+        # 2. Match coalesce with F.lit("unknown") on numeric columns
+        m_coalesce = re.search(r"F\.coalesce\s*\(\s*.*,\s*(?:F\.lit\s*\(\s*(['\"])([^'\"]+)\1\s*\)|(['\"])([^'\"]+)\3)\s*\)", stripped)
+        if m_coalesce:
+            m_assign = re.search(r"withColumn\s*\(\s*(['\"])([a-zA-Z_][\w]*)\1", stripped)
+            if m_assign:
+                col = m_assign.group(2)
+                val = m_coalesce.group(2) or m_coalesce.group(4)
+                if any(k in col.lower() for k in numeric_col_keywords):
+                    if not re.match(r"^-?(?:\d+(?:\.\d+)?|\.\d+)$", val):
+                        indent = len(line) - len(line.lstrip())
+                        new_lines.append(f"{line[:indent]}# [removed invalid string coalesce on numeric column] {stripped}")
+                        continue
+                        
+        new_lines.append(line)
+    return "\n".join(new_lines)
+
+
+def _filter_unrelated_transforms(code: str, plan: Dict[str, Any]) -> str:
+    """Filter out transform functions that are not defined in the plan datasets."""
+    if not code or not plan:
+        return code
+    
+    def _canonical_id(name: str) -> str:
+        for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):
+            if name.lower().endswith(ext):
+                name = name[:-len(ext)]
+                break
+        return re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")
+        
+    active_canons = {_canonical_id(ds) for ds in (plan.get("datasets") or {})}
+    
+    lines = code.splitlines()
+    new_lines = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m_fn = re.match(r"\s*def\s+(transform_(\w+))\s*\(", line)
+        if m_fn:
+            fn_name = m_fn.group(1)
+            ds_canon = m_fn.group(2)
+            if ds_canon not in active_canons:
+                # Skip this entire function!
+                j = i + 1
+                while j < len(lines):
+                    if lines[j].strip() and not lines[j].startswith(" ") and not lines[j].startswith("\t"):
+                        break
+                    j += 1
+                i = j
+                continue
+        new_lines.append(line)
+        i += 1
+        
+    return "\n".join(new_lines)
+
+
+def _fix_skipped_fill_comments(code: str) -> str:
+    """Replace '# skipped empty fillna' comment lines with an explicit is_missing_<col> flag.
+    
+    When the plan has a fill step but no fill value, the LLM emits a skip comment.
+    Instead, we inject an is_missing_<col> flag so downstream DQ auditing still has lineage.
+    """
+    if not code:
+        return code
+    # Match: # skipped empty fillna for df  (or similar variants)
+    _SKIP_PAT = re.compile(
+        r"# skipped (?:empty )?fillna\s+(?:for (?:df|\w+))?\s*$",
+        re.IGNORECASE,
+    )
+    # Try to extract the column from the preceding step comment
+    _STEP_COL_PAT = re.compile(r"# Step: (?:fill_or_drop|fill_nulls_simple)\s+on\s+\[([a-zA-Z_][\w]*)\]")
+    lines = code.splitlines()
+    new_lines = []
+    last_step_col: str | None = None
+    for line in lines:
+        stripped = line.strip()
+        step_m = _STEP_COL_PAT.search(stripped)
+        if step_m:
+            last_step_col = step_m.group(1)
+        if _SKIP_PAT.search(stripped) and last_step_col:
+            indent = len(line) - len(line.lstrip())
+            indent_str = line[:indent]
+            flag_col = f"is_missing_{last_step_col}"
+            # Only inject if the flag doesn't already exist
+            if flag_col not in code:
+                new_lines.append(f"{indent_str}# No fill value provided — flagging missingness for DQ lineage")
+                new_lines.append(
+                    f"{indent_str}df = df.withColumn({repr(flag_col)}, "
+                    f"F.col({repr(last_step_col)}).isNull() | "
+                    f"(F.trim(F.col({repr(last_step_col)}).cast('string')) == ''))"
+                )
+            else:
+                new_lines.append(f"{indent_str}# {flag_col} already present above — no fill value provided")
+            last_step_col = None
             continue
         new_lines.append(line)
-    code = "\n".join(new_lines)
+    return "\n".join(new_lines)
 
-    pattern = r"from pyspark\.sql import Window as _DedupWindow\n\s*_data_cols = \[.*?\]\n\s*_dup_w = _DedupWindow\.partitionBy\(.*?\)\.orderBy\(.*?\)\n\s*df = df\.withColumn\('_is_duplicate_row', \(F\.row_number\(\)\.over\(_dup_w\) > 1\)\.cast\('boolean'\)\)"
-    code = re.sub(pattern, "df = _flag_source_duplicates(df)", code)
 
-    pattern_w = r"(\w+)\s*=\s*Window\.orderBy\s*\(\s*F\.monotonically_increasing_id\(\)\s*\)"
-    code = re.sub(pattern_w, "df = _flag_source_duplicates(df)", code)
+def _fix_bare_run_pipeline_call(code: str) -> str:
+    """Replace bare 'run_pipeline(spark)' top-level calls with the safe try/except NameError wrapper.
+    
+    The LLM sometimes emits a bare 'run_pipeline(spark)' at the top level. On non-Fabric
+    (local PySpark) environments this crashes with NameError because 'spark' is not pre-injected.
+    """
+    if not code or "run_pipeline" not in code:
+        return code
 
+    _SAFE_WRAPPER = (
+        "# Fabric notebooks pre-inject 'spark'; fall back to creating one for local dev.\n"
+        "try:\n"
+        "    spark  # type: ignore[name-defined]\n"
+        "except NameError:\n"
+        "    from pyspark.sql import SparkSession\n"
+        '    spark = SparkSession.builder.appName("AgentDharaETL").getOrCreate()\n'
+        "run_pipeline(spark)"
+    )
+
+    # Replace a bare standalone 'run_pipeline(spark)' line that has no try/except guard above it
+    if "try:" not in code or "NameError" not in code:
+        code = re.sub(
+            r"(?m)^([ \t]*)run_pipeline\(spark\)\s*$",
+            _SAFE_WRAPPER,
+            code,
+        )
     return code
 
 
@@ -370,19 +626,27 @@ def _deduplicate_helper_functions(code: str) -> str:
 
 
 def _inject_transform_header_block(code: str, plan: Optional[Dict[str, Any]] = None) -> str:
+    """
+    Inject normalize/require/hash header lines immediately after the function def line.
+    Uses safe line-based insertion instead of character-position slicing to avoid
+    corrupting function bodies.
+    """
     if not code or not plan:
         return code
+
     datasets = plan.get("datasets") or {}
     _safe = lambda name: re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")
     ignored_keys = {"monotonically_increasing_id", "plan_id", "batch_id", "run_id", "job_id", "execution_id"}
 
+    # Build a lookup: fn_name -> header lines to inject
+    fn_headers: Dict[str, List[str]] = {}
     for ds_name, block in datasets.items():
         base_name = ds_name.split(".")[0]
         possible_names = [f"transform_{_safe(ds_name)}", f"transform_{_safe(base_name)}"]
         fn_name = next((n for n in possible_names if n in code), None)
         if not fn_name:
             continue
-            
+
         steps = (block or {}).get("steps") or []
         cols = []
         for st in steps:
@@ -392,37 +656,65 @@ def _inject_transform_header_block(code: str, plan: Optional[Dict[str, Any]] = N
                     sc = sc.strip()
                     if sc and not sc.startswith(("[", "_")) and sc not in cols:
                         cols.append(sc)
-                        
+
         if not cols:
             continue
 
-        key_cols = [c for c in cols if any(k in c.lower() for k in ("id", "key", "code", "ref", "num", "no", "nbr", "uuid", "guid", "sku", "ean", "isbn", "asin")) and c not in ignored_keys]
-        
-        header_lines = [
-            f"    df = _normalize_column_names(df)",
+        key_cols = [
+            c for c in cols
+            if any(k in c.lower() for k in ("id", "key", "code", "ref", "num", "no", "nbr", "uuid", "guid", "sku", "ean", "isbn", "asin"))
+            and c not in ignored_keys
+        ]
+
+        hdr: List[str] = [
+            "    df = _normalize_column_names(df)",
             f"    _require_columns(df, {repr(cols)}, {repr(ds_name)})",
-            f"    _src_cols = [F.coalesce(F.col(c).cast('string'), F.lit('<NULL>')) for c in df.columns if not c.startswith('_') and not c.startswith('is_')]",
-            f"    df = df.withColumn('_source_row_hash', F.xxhash64(*_src_cols))"
+            "    _src_cols = [F.coalesce(F.col(c).cast('string'), F.lit('<NULL>')) for c in df.columns if not c.startswith('_') and not c.startswith('is_')]",
+            "    df = df.withColumn('_source_row_hash', F.xxhash64(*_src_cols))",
         ]
         for k in sorted(key_cols):
             flag_col = f"is_missing_{k}"
-            header_lines.append(f"    df = df.withColumn({repr(flag_col)}, F.col({repr(k)}).isNull() | (F.trim(F.col({repr(k)})) == ''))")
+            hdr.append(f"    df = df.withColumn({repr(flag_col)}, F.col({repr(k)}).isNull() | (F.trim(F.col({repr(k)})) == ''))")
 
-        pattern = rf"(def {fn_name}\([^\)]*\)[^:]*:)"
-        match = re.search(pattern, code)
-        if match:
-            fn_pos = match.end()
-            body_sample = code[fn_pos:fn_pos+800]
-            cleaned_body = []
-            for line in body_sample.splitlines():
-                bs = line.strip()
-                if any(x in bs for x in ("_normalize_column_names(", "_require_columns(", "_source_row_hash", "_src_cols =", "is_missing_")):
-                    continue
-                cleaned_body.append(line)
-            
-            code = code[:fn_pos] + "\n" + "\n".join(header_lines) + "\n" + "\n".join(cleaned_body) + code[fn_pos+800:]
+        fn_headers[fn_name] = hdr
 
-    return code
+    if not fn_headers:
+        return code
+
+    # Line-based injection — safe for arbitrarily long function bodies
+    _SKIP_TOKENS = ("_normalize_column_names(", "_require_columns(", "_source_row_hash", "_src_cols =", "is_missing_")
+    output_lines: List[str] = []
+    lines = code.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        output_lines.append(line)
+
+        fn_match = re.match(r"\s*def\s+(transform_\w+)\s*\(", line)
+        if fn_match:
+            fn_name = fn_match.group(1)
+            if fn_name in fn_headers:
+                # Consume the colon-terminated signature (may span multiple lines)
+                while ":" not in line and i + 1 < len(lines):
+                    i += 1
+                    line = lines[i]
+                    output_lines.append(line)
+                # Inject header lines
+                for hdr_line in fn_headers[fn_name]:
+                    output_lines.append(hdr_line)
+                # Skip any pre-existing header injections in the next body lines
+                i += 1
+                while i < len(lines):
+                    stripped = lines[i].strip()
+                    if stripped and any(tok in stripped for tok in _SKIP_TOKENS):
+                        i += 1
+                        continue
+                    break
+                continue  # do not increment i again below
+
+        i += 1
+
+    return "\n".join(output_lines)
 
 
 def _fix_safe_numeric_casts_and_flags(code: str) -> str:
@@ -461,10 +753,13 @@ def _fix_safe_numeric_casts_and_flags(code: str) -> str:
                 skip_next_line = True
                 continue
 
-        # Convert simple cast('double') to safe regex-gated cast with missing & invalid flags
-        m = re.search(r"(\w+)\s*=\s*\1\.withColumn\(['\"]([a-zA-Z_][\w]*)['\"]\s*,\s*F\.col\(['\"]\2['\"]\)\.cast\(['\"]double['\"]\)\)", line)
+        # Convert simple cast('double') or other variations on numeric columns to safe regex-gated casts
+        m = re.search(
+            r"(\w+)\s*=\s*\1\.withColumn\((['\"])([a-zA-Z_][\w]*)\2\s*,\s*.*?(?:\bcast\()\s*(?:['\"](?:double|float|long|int|integer|decimal)['\"]|DoubleType|FloatType|LongType|IntegerType|DecimalType)(?:\(\))?\s*\)\s*\)",
+            line
+        )
         if m:
-            df_var, col = m.group(1), m.group(2)
+            df_var, quote_char, col = m.group(1), m.group(2), m.group(3)
             col_lower = col.lower()
             if any(k in col_lower for k in numeric_keywords):
                 flag_col = f"is_invalid_{col}"
@@ -509,7 +804,7 @@ def _fix_safe_date_parsing_and_flags(code: str) -> str:
                 indent = len(line) - len(line.lstrip())
                 indent_str = line[:indent]
                 if flag_col not in code:
-                    new_lines.append(f"{indent_str}# Safe timestamp parsing with try_to_timestamp & invalid flag for {col}")
+                    new_lines.append(f"{indent_str}# Safe timestamp parsing & invalid flag for {col}")
                     new_lines.append(f"{indent_str}{df_var} = _parse_timestamp_safely({df_var}, {repr(col)})")
                     continue
         new_lines.append(line)
@@ -519,7 +814,7 @@ def _fix_safe_date_parsing_and_flags(code: str) -> str:
 def _sanitize_html_entities_in_code(code: str) -> str:
     if not code:
         return code
-    return code.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").replace("&quot;", '"')
+    return html.unescape(code)
 
 
 def _fix_toplevel_pipeline_duplication(code: str) -> str:
@@ -551,8 +846,34 @@ def _fix_toplevel_pipeline_duplication(code: str) -> str:
     return "\n".join(new_lines)
 
 
+def _fix_numeric_aggregations_cast_double(code: str) -> str:
+    if not code:
+        return code
+    numeric_keywords = ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val", "production_qty", "revenue", "sales", "count", "num", "number", "rate", "ratio", "margin", "fee")
+    for col in numeric_keywords:
+        code = re.sub(
+            rf"F\.percentile_approx\(\s*(?:F\.col\(\s*(['\"]){re.escape(col)}\1\s*\)|(['\"]){re.escape(col)}\2)\s*,\s*([-+]?\d*\.?\d+)\s*\)",
+            f"F.percentile_approx(F.col({col!r}).cast('double'), \\3)",
+            code,
+            flags=re.IGNORECASE
+        )
+        code = re.sub(
+            rf"F\.avg\(\s*(?:F\.col\(\s*(['\"]){re.escape(col)}\1\s*\)|(['\"]){re.escape(col)}\2)\s*\)",
+            f"F.avg(F.col({col!r}).cast('double'))",
+            code,
+            flags=re.IGNORECASE
+        )
+        code = re.sub(
+            rf"F\.mean\(\s*(?:F\.col\(\s*(['\"]){re.escape(col)}\1\s*\)|(['\"]){re.escape(col)}\2)\s*\)",
+            f"F.mean(F.col({col!r}).cast('double'))",
+            code,
+            flags=re.IGNORECASE
+        )
+    return code
+
+
 def _fix_imputation_lineage_flags(code: str) -> str:
-    """Inject is_imputed_<col> boolean flag column before fillna calls."""
+    """Inject is_imputed_<col> boolean flag column before fillna calls, and rewrite invalid fillna(F.lit()) or fillna(None) calls."""
     if not code:
         return code
     lines = code.splitlines()
@@ -562,10 +883,17 @@ def _fix_imputation_lineage_flags(code: str) -> str:
         if m:
             df_var, quote, col, val = m.group(1), m.group(2), m.group(3), m.group(4).strip()
             flag_col = f"is_imputed_{col}"
+            indent = len(line) - len(line.lstrip())
+            indent_str = line[:indent]
+            
+            # Inject flag column if not already present
             if flag_col not in code:
-                indent = len(line) - len(line.lstrip())
-                indent_str = line[:indent]
                 new_lines.append(f"{indent_str}{df_var} = {df_var}.withColumn({repr(flag_col)}, F.col({repr(col)}).isNull().cast('boolean'))")
+            
+            # Rewrite bad fillna calls containing F.lit or None
+            if "F.lit" in val or val == "None":
+                new_lines.append(f"{indent_str}{df_var} = {df_var}.withColumn({repr(col)}, F.coalesce(F.col({repr(col)}), {val}))")
+                continue
         new_lines.append(line)
     return "\n".join(new_lines)
 
@@ -682,11 +1010,208 @@ def _inject_pyspark_helpers(code: str) -> str:
     return "".join(injected)
 
 
+def _enforce_plan_steps_in_code(code: str, plan: Dict[str, Any]) -> str:
+    if not code or not plan:
+        return code
+
+    def _canonical_id(name: str) -> str:
+        for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):
+            if name.lower().endswith(ext):
+                name = name[:-len(ext)]
+                break
+        return re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")
+
+    lines = code.splitlines()
+    
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        
+        m_fn = re.match(r"\s*def\s+(transform_(\w+))\s*\(", line)
+        if m_fn:
+            fn_name = m_fn.group(1)
+            ds_canon = m_fn.group(2)
+            
+            orig_ds_name = None
+            for ds_k in plan.get("datasets") or {}:
+                if _canonical_id(ds_k) == ds_canon:
+                    orig_ds_name = ds_k
+                    break
+            
+            if orig_ds_name:
+                body_lines = []
+                j = i + 1
+                while j < len(lines):
+                    if lines[j].strip() and not lines[j].startswith(" ") and not lines[j].startswith("\t"):
+                        break
+                    body_lines.append(lines[j])
+                    j += 1
+                
+                body_str = "\n".join(body_lines)
+                block = plan["datasets"][orig_ds_name]
+                steps = block.get("steps") or []
+                injections = []
+                
+                for st in steps:
+                    col = st.get("column")
+                    if not col:
+                        continue
+                    act = str(st.get("action") or "").lower()
+                    params = st.get("params") or {}
+                    
+                    if act in ("parse_dates", "parse_dates_safe"):
+                        if f"_parse_timestamp_safely" not in body_str or (f"'{col}'" not in body_str and f'"{col}"' not in body_str):
+                            injections.append(f"    # Step: parse_dates on [{col}] (Restored)")
+                            injections.append(f"    df = _parse_timestamp_safely(df, {repr(col)})")
+                            
+                    elif act in ("cast_type", "coerce_numeric"):
+                        is_key = any(k in str(col).lower() for k in ("id", "key", "code", "ref"))
+                        is_cat = any(k in str(col).lower() for k in ("region", "channel", "location", "category", "status", "country", "state", "city", "zone", "segment", "type"))
+                        if not (is_key or is_cat):
+                            if f"is_invalid_{col}" not in body_str:
+                                injections.append(f"    # Step: {act} on [{col}] (Restored)")
+                                injections.append(f"    _raw_{col} = F.trim(F.col({repr(col)}).cast('string'))")
+                                injections.append(f"    df = df.withColumn('is_missing_{col}', _raw_{col}.isNull() | (_raw_{col} == ''))")
+                                injections.append(f"    _valid_{col} = _raw_{col}.rlike(r'^-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)$')")
+                                injections.append(f"    df = df.withColumn('is_invalid_{col}', (~F.col('is_missing_{col}') & ~_valid_{col}).cast('boolean'))")
+                                injections.append(f"    df = df.withColumn({repr(col)}, F.when(_valid_{col}, _raw_{col}.cast('double')).otherwise(F.lit(None).cast('double')))")
+
+                    elif act in ("fill_nulls_simple", "fill_or_drop"):
+                        strat = params.get("fill_strategy") or ""
+                        if strat in ("mean", "median") and f"is_imputed_{col}" not in body_str:
+                            injections.append(f"    # Step: {act} on [{col}] (Restored)")
+                            injections.append(f"    df = df.withColumn('is_imputed_{col}', F.col({repr(col)}).isNull().cast('boolean'))")
+                            if strat == "median":
+                                injections.append(f"    _med_row_{col} = df.select(F.percentile_approx(F.col({repr(col)}).cast('double'), 0.5).alias('m')).first()")
+                                injections.append(f"    _med_{col} = _med_row_{col}['m'] if (_med_row_{col} and _med_row_{col}['m'] is not None) else None")
+                                injections.append(f"    if _med_{col} is not None:")
+                                injections.append(f"        df = df.withColumn({repr(col)}, F.coalesce(F.col({repr(col)}).cast('double'), F.lit(_med_{col})))")
+                            else:
+                                injections.append(f"    _avg_row_{col} = df.select(F.avg(F.col({repr(col)}).cast('double')).alias('m')).first()")
+                                injections.append(f"    _avg_{col} = _avg_row_{col}['m'] if (_avg_row_{col} and _avg_row_{col}['m'] is not None) else None")
+                                injections.append(f"    if _avg_{col} is not None:")
+                                injections.append(f"        df = df.withColumn({repr(col)}, F.coalesce(F.col({repr(col)}).cast('double'), F.lit(_avg_{col})))")
+                        elif strat == "value" and params.get("fill_value") is not None and f"is_imputed_{col}" not in body_str:
+                            injections.append(f"    # Step: {act} on [{col}] (Restored)")
+                            injections.append(f"    df = df.withColumn('is_imputed_{col}', F.col({repr(col)}).isNull().cast('boolean'))")
+                            injections.append(f"    df = df.fillna({{ {repr(col)}: {repr(params.get('fill_value'))} }})")
+
+                    elif act == "lowercase":
+                        is_num = any(k in str(col).lower() for k in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val", "production_qty", "revenue", "sales", "count", "num", "number", "rate", "ratio", "margin", "fee"))
+                        is_key = any(k in str(col).lower() for k in ("id", "key", "code", "ref"))
+                        if not is_num and not is_key and (f"'{col}'" not in body_str and f'"{col}"' not in body_str or "lower" not in body_str):
+                            injections.append(f"    # Step: lowercase on [{col}] (Restored)")
+                            injections.append(f"    df = df.withColumn({repr(col)}, F.lower(F.col({repr(col)}).cast('string')))")
+                            
+                    elif act == "uppercase":
+                        is_num = any(k in str(col).lower() for k in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val", "production_qty", "revenue", "sales", "count", "num", "number", "rate", "ratio", "margin", "fee"))
+                        is_key = any(k in str(col).lower() for k in ("id", "key", "code", "ref"))
+                        if not is_num and not is_key and (f"'{col}'" not in body_str and f'"{col}"' not in body_str or "upper" not in body_str):
+                            injections.append(f"    # Step: uppercase on [{col}] (Restored)")
+                            injections.append(f"    df = df.withColumn({repr(col)}, F.upper(F.col({repr(col)}).cast('string')))")
+                            
+                    elif act == "trim":
+                        if f"'{col}'" not in body_str and f'"{col}"' not in body_str or "trim" not in body_str:
+                            injections.append(f"    # Step: trim on [{col}] (Restored)")
+                            injections.append(f"    df = df.withColumn({repr(col)}, F.trim(F.col({repr(col)}).cast('string')))")
+
+                    elif act == "nullify_punctuation":
+                        is_num = any(k in str(col).lower() for k in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val", "production_qty", "revenue", "sales", "count", "num", "number", "rate", "ratio", "margin", "fee"))
+                        if is_num:
+                            if f"cast('double')" not in body_str and f"cast(\"double\")" not in body_str:
+                                injections.append(f"    # Step: nullify_punctuation on [{col}] (Restored)")
+                                injections.append(f"    df = df.withColumn({repr(col)}, F.col({repr(col)}).cast('double'))")
+                        else:
+                            if f"rlike('[a-zA-Z0-9]')" not in body_str:
+                                injections.append(f"    # Step: nullify_punctuation on [{col}] (Restored)")
+                                injections.append(f"    df = df.withColumn({repr(col)}, F.when(~F.col({repr(col)}).cast('string').rlike('[a-zA-Z0-9]'), F.lit(None)).otherwise(F.col({repr(col)})))")
+
+                if injections:
+                    hash_found = False
+                    for idx, bl in enumerate(body_lines):
+                        if "_source_row_hash" in bl:
+                            body_lines = body_lines[:idx+1] + injections + body_lines[idx+1:]
+                            hash_found = True
+                            break
+                    if not hash_found:
+                        body_lines = injections + body_lines
+                    
+                    lines[i+1 : j] = body_lines
+                    i = i + len(body_lines) + 1
+                    continue
+                else:
+                    i = j
+                    continue
+
+        i += 1
+
+    return "\n".join(lines)
+
+
+def _remove_row_count_logging_from_transforms(code: str) -> str:
+    if not code:
+        return code
+    lines = code.splitlines()
+    new_lines = []
+    in_transform = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("def transform_"):
+            in_transform = True
+        elif stripped.startswith("def ") or (stripped.startswith("class ") and in_transform):
+            if not stripped.startswith("def transform_"):
+                in_transform = False
+        
+        if in_transform and "_log_row_count(" in line:
+            indent = len(line) - len(line.lstrip())
+            new_lines.append(f"{line[:indent]}# [removed redundant row count log] {line.lstrip()}")
+            continue
+        
+        new_lines.append(line)
+    return "\n".join(new_lines)
+
+
+def _ensure_non_empty_functions(code: str) -> str:
+    if not code:
+        return code
+    lines = code.splitlines()
+    out = []
+    i = 0
+    while i < len(lines):
+        out.append(lines[i])
+        if re.match(r"^\s*def\s+\w+\(.*\)\s*:\s*$", lines[i]):
+            indent = len(lines[i]) - len(lines[i].lstrip())
+            body_indent = " " * (indent + 4)
+
+            # Look ahead for next meaningful line
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+
+            if j >= len(lines) or len(lines[j]) - len(lines[j].lstrip()) <= indent:
+                out.append(f"{body_indent}pass")
+        i += 1
+    return "\n".join(out)
+
+
+def _debug_lines(code: str, center: int, radius: int = 8) -> str:
+    lines = code.splitlines()
+    start = max(0, center - radius - 1)
+    end = min(len(lines), center + radius)
+    return "\n".join(
+        f"{idx+1:04d}: {lines[idx]}" for idx in range(start, end)
+    )
+
+
 def _inject_pyspark_run_pipeline(code: str, plan: Dict[str, Any]) -> str:
     if not code:
         return code
-    if "def run_pipeline" in code or "run_pipeline(spark)" in code:
-        return code
+
+    # Strip any LLM-generated run_pipeline block, try/except blocks, or run_pipeline calls at the end
+    # to guarantee we always use our robust, deterministic template code.
+    code = re.split(r"^def\s+run_pipeline\b", code, maxsplit=1, flags=re.MULTILINE)[0].rstrip()
+    code = re.split(r"^run_pipeline\s*\(", code, maxsplit=1, flags=re.MULTILINE)[0].rstrip()
+    code = re.split(r"^try:\s*\n\s*spark\b", code, maxsplit=1, flags=re.MULTILINE)[0].rstrip()
 
     from agent.etl_pipeline.join_emitters import (
         emit_pyspark_output_contract,
@@ -709,7 +1234,12 @@ def _inject_pyspark_run_pipeline(code: str, plan: Dict[str, Any]) -> str:
 
     lines = [code.strip(), ""]
     
-    _safe = lambda name: re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")
+    def _canonical_id(name: str) -> str:
+        for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):
+            if name.lower().endswith(ext):
+                name = name[:-len(ext)]
+                break
+        return re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")
 
     non_nullable = [str(c) for c in (rules.get("non_nullable") or []) if c]
     if manifest.get("datasets") or rel.get("joins"):
@@ -717,15 +1247,43 @@ def _inject_pyspark_run_pipeline(code: str, plan: Dict[str, Any]) -> str:
             lines.append(sl)
         lines.append("def run_pipeline(spark):")
         lines.append("    dfs = {}")
-        for sl in emit_pyspark_load(plan, manifest):
-            lines.append(f"    {sl}")
+        lines.append("    def _canonical_id(name: str) -> str:")
+        lines.append('        for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):')
+        lines.append("            if name.lower().endswith(ext):")
+        lines.append("                name = name[:-len(ext)]")
+        lines.append("                break")
+        lines.append("        import re")
+        lines.append('        return re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")')
+        lines.append("")
+        lines.append("    active_canons = {_canonical_id(d) for d in DATASETS}")
+        
+        # Load block
+        load_lines = emit_pyspark_load(plan, manifest)
+        i_load = 0
+        while i_load < len(load_lines):
+            l_line = load_lines[i_load]
+            m_set = re.match(r'^\s*dfs\["([^"]+)"\]\s*=\s*(.*)$', l_line)
+            if m_set:
+                c_id = m_set.group(1)
+                expr = m_set.group(2)
+                lines.append(f'    if "{c_id}" in active_canons:')
+                lines.append(f'        dfs["{c_id}"] = {expr}')
+                if i_load + 1 < len(load_lines) and "_require_columns" in load_lines[i_load + 1]:
+                    lines.append(f'        {load_lines[i_load + 1].strip()}')
+                    i_load += 1
+            else:
+                if l_line.strip():
+                    lines.append(f"    {l_line}")
+            i_load += 1
+            
         for ds_name in (plan.get("datasets") or {}):
-            fn = f"transform_{_safe(ds_name)}"
-            lines.append(f'    if "{ds_name}" in dfs:')
-            lines.append(f'        dfs["{ds_name}"] = {fn}(dfs["{ds_name}"], dfs)')
+            canon_id = _canonical_id(ds_name)
+            fn = f"transform_{canon_id}"
+            lines.append(f'    if "{canon_id}" in dfs:')
+            lines.append(f'        dfs["{canon_id}"] = {fn}(dfs["{canon_id}"], dfs)')
             if non_nullable:
-                lines.append(f'        _warn_nulls_in_columns(dfs["{ds_name}"], {non_nullable!r}, "{ds_name}")')
-            lines.append(f'        _log_row_count(dfs["{ds_name}"], "{ds_name}")')
+                lines.append(f'        _warn_nulls_in_columns(dfs["{canon_id}"], {non_nullable!r}, "{canon_id}")')
+            lines.append(f'        _log_row_count(dfs["{canon_id}"], "{canon_id}")')
         for sl in emit_pyspark_joins(plan):
             lines.append(f"    {sl}")
         for sl in emit_pyspark_write_outputs(plan, manifest):
@@ -975,6 +1533,12 @@ PYSPARK REQUIREMENTS:
 - EXPLICIT STEP ANNOTATIONS: Include a comment line `# Step: <action> on [<column>]` before every transformation step so step action reflection validation succeeds.
 - NO INVENTED DEFAULTS: NEVER invent fill values (e.g. 'unknown@example.com', 0) unless fill_value is explicitly provided in the step params. If no fill_value is given in the step params, DO NOT generate any fillna or coalesce code for that column (keep the original column as-is). NEVER emit fillna(None) or fillna({{'col': None}}) as it is invalid PySpark.
 - DYNAMIC MEAN/MEDIAN IMPUTATION: NEVER hardcode static values for mean or median imputation (e.g. mean_id = 4993.0656). ALWAYS compute them dynamically from the DataFrame using Spark aggregations (e.g. `_avg_row = df.select(F.avg(F.col(c).cast('double')).alias('m')).first()`).
+- MEDIAN/MEAN IMPUTATION RULE: For every mean or median imputation on a numeric column (like amount, budget, qty), always cast the aggregation input to double inside the selector:
+    Correct:
+    `_median_row = df.select(F.percentile_approx(F.col("amount").cast("double"), 0.5).alias("m")).first()`
+    Incorrect:
+    `_median_row = df.select(F.percentile_approx(F.col("amount"), 0.5).alias("m")).first()`
+- NEVER USE fillna WITH F.lit(): fillna() only accepts primitive values (numbers, strings). If using F.lit() or a dynamic variable, use `withColumn` and `F.coalesce` instead (e.g. `df = df.withColumn("amount", F.coalesce(F.col("amount"), F.lit(median_amount).cast("double")))`).
 - NO AVG/MEDIAN ON STRING COLUMNS: NEVER call `F.avg()`, `avg()`, `F.mean()`, `mean()`, `percentile_approx()`, or `F.percentile_approx()` on a string/text/categorical column. If the column dtype is 'string', 'object', or the column name matches location, region, channel, machine_name, status, category, site, facility, or similar text-categorical patterns, use `df.withColumn(col, F.coalesce(F.col(col), F.lit('unknown')))` instead of any numeric aggregation. For numeric-typed columns that are stored as string (e.g. production_qty, amount, budget), YOU MUST ALWAYS ADD `.cast('double')` before calling percentile_approx or F.avg: `F.percentile_approx(F.col(c).cast('double'), 0.5)` and `F.avg(F.col(c).cast('double'))`. Failing to cast double first crashes Spark with an AnalysisException.
 - NO RLIKE ON NUMERIC COLUMNS: NEVER use `.rlike()` or `rlike` to check, clean, or nullify numeric columns (columns containing 'amount', 'budget', 'qty', 'quantity', 'price', 'cost', 'score', 'total', 'val'). To nullify or coerce non-numeric string values in numeric columns, cast the column to double (`F.col(col).cast('double')`) which automatically converts non-numeric strings to NULL. Do not filter with regex pattern `rlike` on numeric columns.
 - SAFE .first() ACCESS: ALWAYS use `_row['m'] if (_row and _row['m'] is not None) else None` pattern when accessing `.first()` results. NEVER use `_row['m'] if _row else None` as this will incorrectly return None when the row exists but the aggregation result is None (e.g. all-null column).
@@ -1212,11 +1776,14 @@ def _consolidate_and_filter_datasets(
                 is_key = any(k in col_lower for k in ("id", "key", "code", "ref", "num", "no", "nbr", "uuid", "guid", "sku", "ean", "isbn", "asin"))
                 is_cat = any(k in col_lower for k in ("region", "channel", "location", "category", "status", "country", "state", "city", "zone", "segment", "type"))
 
-                # A. Convert lowercase on business keys to trim
-                if is_key and action == "lowercase":
-                    logger.info(f"[Step Filter] Converted '{action}' on business key '{col}' to 'trim'")
-                    step["action"] = "trim"
-                    action = "trim"
+                # A. Convert lowercase/uppercase on business keys/metric/date/metadata columns to trim
+                if col and action in ("lowercase", "uppercase"):
+                    col_meta = columns_meta.get(col) or {}
+                    col_class = _classify_column(col, col_meta, sem_schema, ds_name)
+                    if is_key or col_class in ("metric", "date", "metadata") or _is_numeric_column(col, col_meta):
+                        logger.info(f"[Step Filter] Converted '{action}' on column '{col}' (class={col_class}) to 'trim'")
+                        step["action"] = "trim"
+                        action = "trim"
 
                 # B. Convert numeric cast/coerce on categorical text columns to string cast (keep action intact for reflection audit)
                 if is_cat and action in ("coerce_type", "cast", "cast_type", "coerce_numeric"):
@@ -1241,17 +1808,22 @@ def _consolidate_and_filter_datasets(
                         step["params"].pop("value", None)
                         step["params"].pop("fill_value", None)
 
-                # D. Convert numeric fill values on categorical columns to 'unknown' (checks top-level & nested params)
-                if is_cat and action in ("fill_nulls_simple", "fill_or_drop"):
+                # D. Convert mean/median strategies and numeric fill values on categorical/string columns to value = 'unknown'
+                if (is_cat or not _is_numeric_column(col, columns_meta.get(col) or {})) and action in ("fill_nulls_simple", "fill_or_drop"):
                     params = step.get("params") or {}
+                    strat = params.get("fill_strategy") or step.get("strategy") or ""
                     fval = step.get("value") if "value" in step else step.get("fill_value")
                     if fval is None:
                         fval = params.get("fill_value") if "fill_value" in params else params.get("value")
-                    if isinstance(fval, (int, float)) or (fval is not None and str(fval).strip().lstrip("-").replace(".", "", 1).isdigit()):
-                        logger.info(f"[Step Filter] Converted numeric fill value '{fval}' on categorical column '{col}' to 'unknown'")
+                    
+                    if strat in ("mean", "median") or isinstance(fval, (int, float)) or (fval is not None and str(fval).strip().lstrip("-").replace(".", "", 1).isdigit()):
+                        logger.info(f"[Step Filter] Converted fill step on categorical/string column '{col}' to strategy='value', value='unknown'")
+                        step["strategy"] = "value"
                         step["value"] = "unknown"
                         step["fill_value"] = "unknown"
                         if "params" in step and isinstance(step["params"], dict):
+                            step["params"]["fill_strategy"] = "value"
+                            step["params"]["strategy"] = "value"
                             step["params"]["fill_value"] = "unknown"
                             step["params"]["value"] = "unknown"
 
@@ -1765,7 +2337,7 @@ def _call_llm(
                 ],
                 temperature=0,
                 max_tokens=max_tokens,
-                timeout=120,
+                timeout=LLM_REQUEST_TIMEOUT or 120,
             )
             break
         except (RateLimitError, APITimeoutError) as e:
@@ -1782,10 +2354,17 @@ def _call_llm(
         raise LLMInfraError(f"LLM request failed entirely. Last error: {last_err}")
 
     choice = response.choices[0]
-    text = _strip_markdown_fences(choice.message.content or "")
+    raw_content = choice.message.content or ""
+    text = _strip_markdown_fences(raw_content)
+    logger.info(
+        "[LLM Response Debug] Raw length: %d, Stripped length: %d, finish_reason: %s",
+        len(raw_content), len(text), choice.finish_reason,
+    )
     if choice.finish_reason == "length":
         raise LLMInfraError("LLM response truncated (finish_reason=length) — plan/payload too large for available tokens.")
-        
+    if choice.finish_reason == "content_filter":
+        raise LLMInfraError("LLM response blocked by content filter (finish_reason=content_filter) — adjust the prompt or payload.")
+
     return text
 
 
@@ -1821,6 +2400,25 @@ def _build_retry_context(code: str, errors: List[str]) -> str:
         m = re.search(r"line (\d+)", e, re.IGNORECASE)
         if m:
             error_lines.add(int(m.group(1)))
+            
+    extra_hints = []
+    if errors:
+        err_str = " ".join(errors).lower()
+        if "must cast to double first" in err_str:
+            extra_hints.append(
+                "CRITICAL FIX: Any percentile_approx, avg, mean, or median calculation must use "
+                "F.col(column).cast('double') inside the aggregation to prevent Spark schema issues."
+            )
+        if "fillna() usage" in err_str or "fillna() accepts primitive values" in err_str:
+            extra_hints.append(
+                "CRITICAL FIX: NEVER pass F.lit() expressions or Python None directly to fillna(). "
+                "fillna() only accepts primitive literals (like numbers or strings). If you must fill "
+                "with dynamic values, use F.coalesce(F.col(column), F.lit(value).cast('double'))."
+            )
+
+    hints_prefix = ""
+    if extra_hints:
+        hints_prefix = "CRITICAL INSTRUCTIONS FOR RETRY:\n" + "\n".join(f"- {h}" for h in extra_hints) + "\n\n"
     
     if error_lines:
         excerpt_lines = []
@@ -1829,10 +2427,10 @@ def _build_retry_context(code: str, errors: List[str]) -> str:
             end = min(len(lines), ln + 10)
             excerpt_lines.append(f"... (lines {start + 1}-{end}) ...")
             excerpt_lines.extend(lines[start:end])
-        return "\n".join(excerpt_lines[:150])
+        return hints_prefix + "\n".join(excerpt_lines[:150])
     else:
         error_msg = "; ".join(errors) if isinstance(errors, list) else str(errors)
-        return f"[FULL REWRITE REQUESTED]\nPrevious attempt failed with: {error_msg}\nGenerate a completely new implementation."
+        return hints_prefix + f"[FULL REWRITE REQUESTED]\nPrevious attempt failed with: {error_msg}\nGenerate a completely new implementation."
 
 
 _RETRY_BUDGET: Dict[str, int] = {
@@ -2011,6 +2609,8 @@ def _generate_etl_with_llm_impl(
                 fix_errors=fix_errors or None,
                 previous_output=prev,
             )
+            if code:
+                code = _sanitize_html_entities_in_code(code)
         except (LLMInfraError, ConnectorConfigError) as exc:
             last_error = str(exc)
             _write_failure_cache(cache_key, last_error)
@@ -2029,24 +2629,63 @@ def _generate_etl_with_llm_impl(
             _write_failure_cache(cache_key, code)
             return None, code
 
+        # Guard: LLM returned empty/whitespace response — treat as payload-too-large and retry
+        if not code or not code.strip():
+            logger.warning(
+                "[Codegen Debug] LLM returned empty response on attempt %d — retrying with trimmer payload",
+                attempt + 1,
+            )
+            if attempt < max_retries:
+                fix_errors = []
+                continue
+            return None, "LLM returned empty response after all retries — payload may be too large"
+
         # Auto-inject missing PySpark module-level imports and Fabric IDs before validation
         if engine_key == "pyspark":
+            logger.info("[Codegen] Starting post-processing. LLM code length: %d", len(code))
+            # Unescape HTML entities FIRST so all downstream processors see clean < > & characters
+            code = _sanitize_html_entities_in_code(code)
             code = _inject_pyspark_imports(code)
             code = _inject_pyspark_fabric_ids(code)
             code = _inject_pyspark_datasets_decl(code, plan)
             code = _inject_transform_header_block(code, plan)
             code = _inject_pyspark_helpers(code)
+            # Remove any transform functions for datasets that are not active in the plan
+            code = _filter_unrelated_transforms(code, plan)
+            # Enforce all required plan steps are implemented (restores any missed/dropped steps)
+            code = _enforce_plan_steps_in_code(code, plan)
+            # Remove string ops (lowercase/upper) on numeric metric columns — semantically wrong
+            code = _fix_string_ops_on_numeric_cols(code)
+            # Remove invalid string fillna/coalesce (like 'unknown') on numeric columns
+            code = _fix_string_fills_on_numeric_cols(code)
+            # Convert '# skipped empty fillna' placeholders into real is_missing_ flags
+            code = _fix_skipped_fill_comments(code)
             code = _fix_safe_numeric_casts_and_flags(code)
             code = _fix_safe_date_parsing_and_flags(code)
             code = _fix_toplevel_pipeline_duplication(code)
-            code = _fix_mismatched_transform_calls(code)
             code = _fix_unsafe_pyspark_first_calls(code)
             code = _fix_pyspark_none_literals(code)
             code = _fix_pyspark_numeric_rlike_filters(code)
+            code = _fix_pyspark_categorical_digit_filters(code)
+            # Replace inline Window dedup blocks with canonical _flag_source_duplicates helper
+            code = _fix_invalid_pyspark_dedup_window(code)
+            # Collapse any duplicate helper calls generated by post-processors
+            code = _deduplicate_repeated_dedup_calls(code)
+            # Fix dynamic aggregation casts before imputation checks
+            code = _fix_numeric_aggregations_cast_double(code)
             code = _fix_imputation_lineage_flags(code)
             code = _inject_pyspark_run_pipeline(code, plan)
-            code = _sanitize_html_entities_in_code(code)
+            # Ensure any LLM-generated bare run_pipeline(spark) call has the try/except wrapper
+            code = _fix_bare_run_pipeline_call(code)
+            code = _fix_mismatched_transform_calls(code)
+            # Remove any row count logging from inside transform functions (only allow in run_pipeline)
+            code = _remove_row_count_logging_from_transforms(code)
             code = _deduplicate_helper_functions(code)
+            # Ensure no functions are empty (prevents Python syntax errors)
+            code = _ensure_non_empty_functions(code)
+            # Re-sanitize HTML entities to ensure template output doesn't contain any
+            code = _sanitize_html_entities_in_code(code)
+            logger.info("[Codegen] Post-processing complete. Final code length: %d", len(code) if code else 0)
         
         # Run local validation loop
         rules = plan.get("business_rules") or {}
@@ -2079,6 +2718,13 @@ def _generate_etl_with_llm_impl(
                 return code, None
             if attempt < max_retries:
                 logger.info(f"[Retry Debug] Attempt {attempt + 1} code failed validation with errors: {errs}. Code snippet:\n{code[:1200]}")
+                # Print code lines surrounding any syntax errors to help diagnostics
+                for err in errs:
+                    if "syntax:" in str(err).lower():
+                        m_line = re.search(r"line (\d+)", str(err))
+                        if m_line:
+                            center_line = int(m_line.group(1))
+                            logger.error(f"SYNTAX ERROR DETAILS (around line {center_line}):\n{_debug_lines(code, center_line)}")
                 fix_errors = errs
                 continue
             # After max retries, return with validation warnings prepended
