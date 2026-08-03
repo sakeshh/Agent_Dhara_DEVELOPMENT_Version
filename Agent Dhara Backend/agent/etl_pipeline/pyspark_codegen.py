@@ -28,10 +28,6 @@ def _safe(name: str) -> str:
 
 
 def _canonical_id(name: str) -> str:
-    for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):
-        if name.lower().endswith(ext):
-            name = name[:-len(ext)]
-            break
     return _safe(name)
 
 
@@ -863,10 +859,6 @@ def generate_pyspark_etl(plan: Dict[str, Any], assessment: Dict[str, Any]) -> st
         lines.append("def run_pipeline(spark):")
         lines.append("    dfs = {}")
         lines.append("    def _canonical_id(name: str) -> str:")
-        lines.append('        for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):')
-        lines.append("            if name.lower().endswith(ext):")
-        lines.append("                name = name[:-len(ext)]")
-        lines.append("                break")
         lines.append("        import re")
         lines.append('        return re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")')
         lines.append("")

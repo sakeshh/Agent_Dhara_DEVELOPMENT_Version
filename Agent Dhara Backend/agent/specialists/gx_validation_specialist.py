@@ -794,15 +794,68 @@ def run_gx_validation(
                                 if ratio >= threshold:
                                     near_dups.append((row_indices[i], row_indices[j], ratio / 100.0))
                         if near_dups:
+                            # Connected-component clustering using DFS
+                            adj = {}
+                            for a, b, s in near_dups:
+                                adj.setdefault(a, []).append(b)
+                                adj.setdefault(b, []).append(a)
+                            
+                            visited = set()
+                            clusters = []
+                            for node in adj:
+                                if node not in visited:
+                                    component = []
+                                    queue = [node]
+                                    visited.add(node)
+                                    while queue:
+                                        curr = queue.pop()
+                                        component.append(curr)
+                                        for neighbor in adj[curr]:
+                                            if neighbor not in visited:
+                                                visited.add(neighbor)
+                                                queue.append(neighbor)
+                                    clusters.append(component)
+                            
+                            cluster_count = len(clusters)
+                            distinct_rows_involved = len(visited)
+                            cluster_sizes = [len(c) for c in clusters]
+                            largest_cluster = max(cluster_sizes) if cluster_sizes else 0
+                            
+                            # Median cluster size
+                            if cluster_sizes:
+                                cluster_sizes.sort()
+                                mid = len(cluster_sizes) // 2
+                                if len(cluster_sizes) % 2 == 1:
+                                    median_cluster = float(cluster_sizes[mid])
+                                else:
+                                    median_cluster = float(cluster_sizes[mid - 1] + cluster_sizes[mid]) / 2.0
+                            else:
+                                median_cluster = 0.0
+                                
+                            # Exact duplicate subset (pairs)
+                            exact_dup_pairs = 0
+                            for a, b, s in near_dups:
+                                idx_a = row_indices.index(a)
+                                idx_b = row_indices.index(b)
+                                if row_strings[idx_a] == row_strings[idx_b]:
+                                    exact_dup_pairs += 1
+                                    
+                            details_msg = (
+                                f"Found {len(near_dups)} near-duplicate pair(s) (similarity >= {threshold/100:.2f}). "
+                                f"Clustering: {cluster_count} cluster(s) involving {distinct_rows_involved} distinct row(s) "
+                                f"(largest: {largest_cluster}, median: {median_cluster:.1f}, exact duplicate pairs subset: {exact_dup_pairs})."
+                            )
+                            
                             results_processed.append({
                                 "expectation": "near_duplicate_rows",
                                 "column": "[Row-level]",
                                 "success": False,
-                                "details": f"Found {len(near_dups)} pair(s) of near-duplicate rows withsimilarity >= {threshold/100:.2f}",
+                                "details": details_msg,
                                 "unexpected_count": len(near_dups),
                                 "unexpected_index_list": [a for a, b, s in near_dups],
                                 "unexpected_values": [{"row_index_a": int(a), "row_index_b": int(b), "similarity": float(s)} for a, b, s in near_dups[:10]]
                             })
+
 
                 # 6. Multivariate Outliers (sklearn IsolationForest)
                 num_cols = [c for c in validation_df.columns if pd.api.types.is_numeric_dtype(validation_df[c]) and not c.lower().endswith("id")]

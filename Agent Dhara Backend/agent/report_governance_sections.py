@@ -12,23 +12,28 @@ def render_governance_markdown(result: Dict[str, Any]) -> str:
     if not isinstance(result, dict):
         return ""
 
+    lines.append("## Semantic & governance")
     sem = result.get("semantic_context") or {}
-    if sem.get("by_dataset"):
-        lines.append("## Semantic & governance")
-        lines.append(f"- Overall semantic confidence: **{sem.get('overall_semantic_confidence')}**")
-        if sem.get("contract"):
-            lines.append("- Validated semantic contract: **present** (`semantic_context.contract`)")
-        gov = result.get("governance") or {}
-        if gov:
-            lines.append(
-                f"- Manifest v{gov.get('manifest_version')} · schema `{gov.get('schema_hash')}` · rules `{gov.get('rules_hash')}` · glossary `{gov.get('glossary_hash')}`"
-            )
-        lines.append("")
+    lines.append(f"- Overall semantic confidence: **{sem.get('overall_semantic_confidence', 'N/A')}**")
+    if sem.get("contract"):
+        lines.append("- Validated semantic contract: **present** (`semantic_context.contract`)")
+    gov = result.get("governance") or {}
+    if gov:
+        lines.append(
+            f"- Manifest v{gov.get('manifest_version', '2.0.0')} · schema `{gov.get('schema_hash', 'N/A')}` · rules `{gov.get('rules_hash', 'N/A')}` · glossary `{gov.get('glossary_hash', 'N/A')}`"
+        )
+    lines.append("")
 
     da = result.get("drift_analysis") or {}
     if da.get("per_dataset"):
         lines.append("### Drift analysis (rollup)")
         lines.append(f"- Drift score (100=stable): **{da.get('drift_score')}** · worst: **{da.get('worst_severity')}** · signals: {da.get('total_signal_count')}")
+        lines.append("")
+    else:
+        lines.append("### Drift analysis (rollup)")
+        lines.append("- **Drift status:** NOT EVALUATED")
+        lines.append("- **Reason:** No compatible previous assessment baseline was provided.")
+        lines.append("- **Baseline run ID:** None")
         lines.append("")
 
     ra = result.get("reconciliation_analysis") or {}
@@ -106,24 +111,24 @@ def render_governance_html(result: Dict[str, Any]) -> str:
     if not isinstance(result, dict):
         return ""
     parts: List[str] = ['<section id="governance" class="datasets-section">', "<h2>Governance & drift</h2>"]
+    parts.append("<p class=\"section-lead\">Semantic contract, drift rollup, reconciliation, and optional DuckDB preview.</p>")
 
     sem = result.get("semantic_context") or {}
-    if sem.get("by_dataset"):
-        parts.append("<p class=\"section-lead\">Semantic contract, drift rollup, reconciliation, and optional DuckDB preview.</p>")
+    if sem:
         parts.append(
-            f"<p><strong>Semantic confidence (overall):</strong> {html_module.escape(str(sem.get('overall_semantic_confidence')))}</p>"
+            f"<p><strong>Semantic confidence (overall):</strong> {html_module.escape(str(sem.get('overall_semantic_confidence', 'N/A')))}</p>"
         )
-        gov = result.get("governance") or {}
-        if gov:
-            parts.append(
-                "<p class=\"muted\">Manifest v"
-                + html_module.escape(str(gov.get("manifest_version")))
-                + " · schema "
-                + html_module.escape(str(gov.get("schema_hash")))
-                + " · rules "
-                + html_module.escape(str(gov.get("rules_hash")))
-                + "</p>"
-            )
+    gov = result.get("governance") or {}
+    if gov:
+        parts.append(
+            "<p class=\"muted\">Manifest v"
+            + html_module.escape(str(gov.get("manifest_version", "2.0.0")))
+            + " · schema "
+            + html_module.escape(str(gov.get("schema_hash", "N/A")))
+            + " · rules "
+            + html_module.escape(str(gov.get("rules_hash", "N/A")))
+            + "</p>"
+        )
 
     da = result.get("drift_analysis") or {}
     if da.get("per_dataset"):
@@ -145,6 +150,15 @@ def render_governance_html(result: Dict[str, Any]) -> str:
                     + f" ({row.get('signal_count')} signals)</li>"
                 )
         parts.append("</ul>")
+    else:
+        parts.append("<h3>Drift analysis</h3>")
+        parts.append(
+            "<div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; font-size: 0.88rem; color: #475569;'>"
+            "<strong>Drift status:</strong> NOT EVALUATED<br/>"
+            "<strong>Reason:</strong> No compatible previous assessment baseline was provided.<br/>"
+            "<strong>Baseline run ID:</strong> None"
+            "</div>"
+        )
 
     ra = result.get("reconciliation_analysis") or {}
     if ra.get("by_dataset"):

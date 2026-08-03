@@ -1,6 +1,9 @@
 # Data quality thresholds (used by assessment engine when loaded).
 # Adjust per environment (e.g. stricter in prod, looser in dev).
 
+platform:
+  target: fabric_spark_sql
+
 severity:
   # Null/placeholder: above this fraction of rows → high severity
   null_pct_high: 0.25
@@ -62,12 +65,63 @@ domain_rules:
       min: 1
       severity: "medium"
 
-# Relationship inference: by default only key-like columns are used.
+# Relationship registry configuration
 relationships:
-  include_non_key_columns: false
-  orphan_only_if_same_dataset: true
-  same_dataset_min_id_overlap_ratio: 0.90
-  same_dataset_max_rowcount_diff_ratio: 0.10
+  enforcement_mode: declared_only
+
+  discovery:
+    enabled: true
+    minimum_overlap_count: 10
+    minimum_overlap_ratio: 0.10
+    suffixes: ["_id", "_key", "_code", "_sku"]
+    emit_as: advisory
+
+  readiness:
+    ready_threshold: 70
+    blocked_threshold: 35
+
+  declared:
+    - name: factory_marketing_factory
+      parent:
+        dataset: factory_relational_test.json
+        columns: [factory_id]
+      child:
+        dataset: marketing_relational_test.csv
+        columns: [factory_id]
+      severity: high
+      gating: true
+      normalization:
+        trim: true
+        casefold: false
+        null_tokens: ["", "N/A", "UNKNOWN", "none", "null", "unknown"]
+
+    - name: factory_sales_product
+      parent:
+        dataset: factory_relational_test.json
+        columns: [product_id]
+      child:
+        dataset: sales_relational_test.xml
+        columns: [product_id]
+      severity: high
+      gating: true
+      normalization:
+        trim: true
+        casefold: false
+        null_tokens: ["", "N/A", "UNKNOWN", "none", "null", "unknown"]
+
+    - name: marketing_sales_campaign
+      parent:
+        dataset: marketing_relational_test.csv
+        columns: [campaign_id]
+      child:
+        dataset: sales_relational_test.xml
+        columns: [campaign_id]
+      severity: high
+      gating: true
+      normalization:
+        trim: true
+        casefold: false
+        null_tokens: ["", "N/A", "UNKNOWN", "none", "null", "unknown"]
 
 # Duplicate detection (same schema + high ID overlap).
 duplicate_detection:
@@ -233,3 +287,16 @@ formula_rules:
   - assertion: "OrderAmount >= 0"
     severity: "high"
     message: "OrderAmount must be non-negative."
+
+# Source & destination context for remediation engines
+source:
+  type: blob_files
+
+remediation:
+  primary_engine: pyspark
+  output_format: delta
+  preserve_raw: true
+  quarantine_invalid_rows: true
+
+downstream:
+  sql_target: null

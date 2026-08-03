@@ -1,0 +1,6 @@
+source:
+  name: test_data
+  locations:
+    - type: filesystem
+      id: local_test_data
+      path: local_test_data

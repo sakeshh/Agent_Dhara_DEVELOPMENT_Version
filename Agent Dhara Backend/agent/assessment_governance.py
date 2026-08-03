@@ -146,6 +146,7 @@ def enrich_assessment_with_governance(
     gov.update(
         {
             "manifest_version": str(manifest.get("version") or "0"),
+            "manifest_schema_version": "2.0.0",
             "manifest_hash": m_hash,
             "glossary_hash": gloss_hash,
             "schema_hash": schema_h,

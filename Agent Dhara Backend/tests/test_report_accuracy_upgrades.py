@@ -344,6 +344,78 @@ class TestReportAccuracyUpgrades(unittest.TestCase):
         self.assertIn("id_type_drift_across_datasets", html_report)
         self.assertIn("Align ID types to match across all sources.", html_report)
 
+    def test_cross_artifact_metrics_validation(self):
+        from scripts.production_sign_off import validate_cross_artifact_metrics
+        from pathlib import Path
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rep_json_path = os.path.join(tmpdir, "report.json")
+            man_json_path = os.path.join(tmpdir, "cleaning_manifest.json")
+            rep_md_path = os.path.join(tmpdir, "report.md")
+            rep_html_path = os.path.join(tmpdir, "report.html")
+
+            # Setup mock report.json content
+            rep_data = {
+                "datasets": {
+                    "sales": {
+                        "row_count": 1000
+                    }
+                },
+                "relationships": [],
+                "data_quality_issues": {
+                    "datasets": {
+                        "sales": {
+                            "summary": {"dq_score_0_100": 60.0}
+                        }
+                    }
+                },
+                "governance": {
+                    "overall_dq_score": 60.0,
+                    "verdict": "NEEDS_WORK"
+                }
+            }
+            with open(rep_json_path, "w", encoding="utf-8") as f:
+                json.dump(rep_data, f)
+
+            # Setup mock manifest content
+            man_data = {
+                "manifest_version": "2.0.0",
+                "generated_at": "2026-08-03T12:00:00",
+                "verdict": "NEEDS_WORK",
+                "overall_dq_score": 60.0,
+                "datasets": {
+                    "sales": {"dq_score": 60.0}
+                }
+            }
+            with open(man_json_path, "w", encoding="utf-8") as f:
+                json.dump(man_data, f)
+
+            # Setup mock MD content
+            md_content = (
+                "## Overall DQ Score: **60.0/100** (Readiness Verdict: **NEEDS_WORK**)\n"
+                "- **sales**: Score: **60.0/100**\n"
+            )
+            with open(rep_md_path, "w", encoding="utf-8") as f:
+                f.write(md_content)
+
+            # Setup mock HTML content
+            html_content = (
+                "<html>\n"
+                "<div class='score-num'>60.0</div>\n"
+                "<div class='verdict-box'>Verdict: NEEDS_WORK</div>\n"
+                "</html>\n"
+            )
+            with open(rep_html_path, "w", encoding="utf-8") as f:
+                f.write(html_content)
+
+            # Patch script path constants
+            with patch("scripts.production_sign_off.REPORT_JSON", Path(rep_json_path)), \
+                 patch("scripts.production_sign_off.MANIFEST_JSON", Path(man_json_path)), \
+                 patch("scripts.production_sign_off.REPORT_MD", Path(rep_md_path)), \
+                 patch("scripts.production_sign_off.REPORT_HTML", Path(rep_html_path)):
+                
+                self.assertTrue(validate_cross_artifact_metrics())
+
 if __name__ == "__main__":
     unittest.main()
 

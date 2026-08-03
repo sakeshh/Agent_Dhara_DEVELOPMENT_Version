@@ -7,15 +7,21 @@ _DEFAULT_REC = (
 
 DQ_ISSUE_RECOMMENDATIONS: Dict[str, str] = {
     "nulls": "Check if missing values are expected (nullable column); enforce NOT NULL constraint if critical, or backfill from defaults.",
-    "duplicate_primary_key": "Identify source of duplicate key generation; enforce UNIQUE constraint in database; apply deduplication filter in ETL.",
-    "duplicate_rows": "Identify why source system outputs exact duplicate records; select a system-of-record/tie-breaker and filter duplicates.",
+    "duplicate_primary_key": "Duplicates detected on key column. Technical deduplication is possible (keep_first / keep_last / keep_most_complete). However, a survivorship policy (which record wins on conflict) must be defined by domain owners before automated removal. Do NOT blindly drop records.",
+    "duplicate_rows": "Exact duplicate physical records detected. Technical deduplication is possible. However, two identical transaction rows may represent distinct real-world events if no unique identifier or timestamp exists. A survivorship policy must be defined by domain owners.",
+    "exact_duplicate_rows": "Exact duplicate physical records detected. Technical deduplication is possible (keep_first / keep_last / keep_most_complete). HOWEVER: two identical transaction rows may represent distinct real-world events if no unique identifier or timestamp exists. A survivorship policy must be defined by domain owners. Do NOT blindly drop without a declared ingestion rule.",
+    "declared_key_violation": "Duplicates detected on a declared key column. A survivorship policy must be defined by domain owners before automated removal. Do NOT blindly drop records.",
+    "candidate_key_violation": "Duplicates detected on an inferred candidate key column. A survivorship policy must be defined by domain owners before automated removal.",
     "orphan_foreign_key_rows": "Investigate parent-child referential integrity; check if parent records were deleted without cascading or if child was mis-keyed.",
     "whitespace": "Apply trim/strip operations in ETL to remove leading and trailing space; enforce validation on input.",
     "invalid_email": "Correct formatting errors if minor, or reject record and request re-entry; add regex validation on email input.",
     "invalid_phone": "Standardize phone format (e.g. E.164); check for missing country codes or area codes.",
     "invalid_numeric": "Cast column values to float/int; investigate why non-numeric characters are present in numeric fields.",
     "mixed_types": "Enforce a single schema data type (e.g. string or numeric) in ETL and handle formatting exceptions gracefully.",
-    "negative_values": "Add constraint (e.g. >= 0) to database table; clamp negative values to zero or reject rows if physically impossible.",
+    "negative_values": "Preserve the raw value. Quarantine the record, nullify the clean companion value, or correct it from an authoritative source under an approved policy.",
+    "declared_non_negative_rule_violation": "Preserve the raw value. Quarantine the record, nullify the clean companion value, or correct it from an authoritative source under an approved policy.",
+    "negative_values_review_required": "Preserve the raw value. Quarantine the record, nullify the clean companion value, or correct it from an authoritative source under an approved policy.",
+    "negative_values_in_non_negative_measure": "Preserve the raw value. Quarantine the record, nullify the clean companion value, or correct it from an authoritative source under an approved policy.",
     "dominant_value_skew": "Investigate if this column has high constant behavior; consider normalizing or grouping low-frequency values.",
     "numeric_outliers_iqr": "Investigate values beyond 1.5x IQR; check if they represent extreme cases, fraud, or data entry errors.",
     "skewed_distribution": "Apply log transform for analytics or stratify reporting; check for contamination.",
@@ -27,6 +33,7 @@ DQ_ISSUE_RECOMMENDATIONS: Dict[str, str] = {
     "empty_string_values": "Normalize empty string to NULL for consistent SQL semantics.",
     "control_characters_in_text": "Strip non-printable chars in ETL; fix export encoding (UTF-8).",
     "mixed_scalar_types": "Standardize to a single scalar type in ETL (e.g. cast all IDs to string or integer) and enforce it at ingest.",
+    "invalid_date_format": "Accepted formats: [\"yyyy-MM-dd\"]. Rule source: declared. Configuration version: 2026.08.1. Sentinel values: [\"1900-01-01\", \"9999-12-31\"]. Standardize format using standard date parsing companion functions.",
     "case_inconsistency": "Normalize case in ETL (e.g. UPPER/LOWER) and consider adding a canonical mapping table for display.",
     "name_format_inconsistency": "Normalize name presentation (trim, collapse spaces, title-case) in staging; preserve raw in an audit column if needed.",
     "mixed_phone_formats": "Normalize phones to a single canonical format (prefer E.164) and validate length/country rules at capture time.",
@@ -71,60 +78,51 @@ DQ_ISSUE_RECOMMENDATIONS: Dict[str, str] = {
     "near_duplicate_rows": "Rows that are identical except for one or two fields may be erroneous duplicates; deduplicate or merge.",
 }
 
+FIXABILITY_TIERS: Dict[str, str] = {
+    "AUTO_FIXABLE":          "Deterministic safe transform; no human review required.",
+    "CONDITIONALLY_FIXABLE": "Technically automatable; requires a declared policy first.",
+    "HUMAN_REVIEW_REQUIRED": "Quarantine and escalate; domain expert must decide.",
+    "ROOT_CAUSE_ONLY":       "Fix at source system; pipeline cannot remediate.",
+}
+
 FIXABILITY_BY_ISSUE_TYPE: Dict[str, str] = {
-    # deterministic transforms
-    "whitespace": "FIXABLE",
-    "empty_string_values": "FIXABLE",
-    "case_inconsistency": "FIXABLE",
-    "mixed_scalar_types": "FIXABLE",
-    "integer_stored_as_float": "FIXABLE",
-    "control_characters_in_text": "FIXABLE",
-    "nested_structure": "FIXABLE",
-    "internal_whitespace": "FIXABLE",
-    "non_ascii_characters": "FIXABLE",
-    "html_tags_in_text": "FIXABLE",
-    "boolean_inconsistency": "FIXABLE",
-    "all_caps_values": "FIXABLE",
-    "duplicate_insensitive_values": "FIXABLE",
-    "id_type_drift_across_datasets": "FIXABLE",
-    # complex / requires domain decision
-    "invalid_email": "NOT_FIXABLE",
-    "invalid_phone": "COMPLEX",
-    "mixed_phone_formats": "COMPLEX",
-    "invalid_numeric": "COMPLEX",
-    "mixed_types": "COMPLEX",
-    "negative_values": "COMPLEX",
-    "out_of_range": "COMPLEX",
-    "numeric_outliers_iqr": "COMPLEX",
-    "numeric_outliers_zscore": "COMPLEX",
-    "dominant_value_skew": "COMPLEX",
-    "name_format_inconsistency": "COMPLEX",
-    "systematic_placeholder": "COMPLEX",
-    "sentinel_numeric_value": "FIXABLE",
-    "punctuation_only_value": "COMPLEX",
-    "round_number_anomaly": "COMPLEX",
-    "date_clumping_jan1": "COMPLEX",
-    "date_clumping_month_end": "COMPLEX",
-    "invalid_url": "COMPLEX",
-    "leading_zeros_on_numeric_id": "COMPLEX",
-    "string_length_outlier": "COMPLEX",
-    "numeric_precision_anomaly": "COMPLEX",
-    "impossible_date": "COMPLEX",
-    "weekend_date_anomaly": "COMPLEX",
-    "mixed_date_formats": "COMPLEX",
-    "implausible_age": "COMPLEX",
-    "implausible_percentage": "COMPLEX",
-    "string_with_only_digits_in_text_column": "COMPLEX",
-    "repeated_token_in_string": "COMPLEX",
-    "near_duplicate_rows": "COMPLEX",
-    "low_variance_numeric": "COMPLEX",
-    "timezone_inconsistency": "COMPLEX",
-    # cannot be auto-repaired without authoritative source
-    "duplicate_primary_key": "NOT_FIXABLE",
-    "duplicate_rows": "COMPLEX",
-    "orphan_foreign_key_rows": "NOT_FIXABLE",
-    "orphan_foreign_key": "NOT_FIXABLE",
-    "invalid_uuid": "NOT_FIXABLE",
-    "high_null_ratio_in_key_column": "NOT_FIXABLE",
-    "duplicate_representation_candidate": "COMPLEX",
+    # AUTO_FIXABLE - safe deterministic transforms (deliberately minimal)
+    "whitespace":                        "AUTO_FIXABLE",
+    "empty_string_values":               "AUTO_FIXABLE",
+
+    # Everything else is conditional or stricter
+    "internal_whitespace":               "CONDITIONALLY_FIXABLE",  # "New York" must not be collapsed
+    "html_tags_in_text":                 "CONDITIONALLY_FIXABLE",  # only safe on declared plain-text cols
+    "integer_stored_as_float":           "CONDITIONALLY_FIXABLE",  # only safe if field declared integral
+    "id_type_drift_across_datasets":     "CONDITIONALLY_FIXABLE",  # leading zeros, precision risks
+    "case_inconsistency":                "CONDITIONALLY_FIXABLE",  # corrupts IDs/acronyms
+    "boolean_inconsistency":             "CONDITIONALLY_FIXABLE",
+    "all_caps_values":                   "CONDITIONALLY_FIXABLE",
+    "duplicate_insensitive_values":      "CONDITIONALLY_FIXABLE",
+    "mixed_scalar_types":                "CONDITIONALLY_FIXABLE",
+    "invalid_numeric":                   "CONDITIONALLY_FIXABLE",
+    "invalid_date_format":               "CONDITIONALLY_FIXABLE",
+    "placeholder_detected":              "CONDITIONALLY_FIXABLE",
+    "sentinel_numeric_value":            "CONDITIONALLY_FIXABLE",
+
+    # exact_duplicate_rows: CONDITIONALLY_FIXABLE
+    "exact_duplicate_rows":              "CONDITIONALLY_FIXABLE",
+    "declared_key_violation":            "CONDITIONALLY_FIXABLE",
+    "candidate_key_violation":           "CONDITIONALLY_FIXABLE",
+    "duplicate_primary_key":             "CONDITIONALLY_FIXABLE",  # backward compat alias
+
+    "nulls":                             "HUMAN_REVIEW_REQUIRED",
+    "declared_key_high_null_ratio":      "HUMAN_REVIEW_REQUIRED",
+    "declared_key_null_violation":       "HUMAN_REVIEW_REQUIRED",
+    "suspected_key_high_null_ratio":     "HUMAN_REVIEW_REQUIRED",
+
+    "orphan_foreign_key_rows":           "HUMAN_REVIEW_REQUIRED",
+    "invalid_email":                     "HUMAN_REVIEW_REQUIRED",
+    "negative_values_review_required":   "HUMAN_REVIEW_REQUIRED",
+    "negative_values_in_non_negative_measure": "HUMAN_REVIEW_REQUIRED",
+    "near_duplicate_rows":               "HUMAN_REVIEW_REQUIRED",
+
+    "orphan_foreign_key":                "ROOT_CAUSE_ONLY",
+    "invalid_uuid":                      "ROOT_CAUSE_ONLY",
+    "duplicate_representation_candidate":"ROOT_CAUSE_ONLY",
 }

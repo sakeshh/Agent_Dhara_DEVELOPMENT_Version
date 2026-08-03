@@ -13,10 +13,6 @@ def _safe(name: str) -> str:
 
 
 def _canonical_id(name: str) -> str:
-    for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):
-        if name.lower().endswith(ext):
-            name = name[:-len(ext)]
-            break
     return _safe(name)
 
 

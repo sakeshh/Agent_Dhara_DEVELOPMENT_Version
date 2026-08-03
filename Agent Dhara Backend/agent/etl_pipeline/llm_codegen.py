@@ -488,10 +488,6 @@ def _filter_unrelated_transforms(code: str, plan: Dict[str, Any]) -> str:
         return code
     
     def _canonical_id(name: str) -> str:
-        for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):
-            if name.lower().endswith(ext):
-                name = name[:-len(ext)]
-                break
         return re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")
         
     active_canons = {_canonical_id(ds) for ds in (plan.get("datasets") or {})}
@@ -1015,10 +1011,6 @@ def _enforce_plan_steps_in_code(code: str, plan: Dict[str, Any]) -> str:
         return code
 
     def _canonical_id(name: str) -> str:
-        for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):
-            if name.lower().endswith(ext):
-                name = name[:-len(ext)]
-                break
         return re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")
 
     lines = code.splitlines()
@@ -1235,10 +1227,6 @@ def _inject_pyspark_run_pipeline(code: str, plan: Dict[str, Any]) -> str:
     lines = [code.strip(), ""]
     
     def _canonical_id(name: str) -> str:
-        for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):
-            if name.lower().endswith(ext):
-                name = name[:-len(ext)]
-                break
         return re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")
 
     non_nullable = [str(c) for c in (rules.get("non_nullable") or []) if c]
@@ -1248,11 +1236,7 @@ def _inject_pyspark_run_pipeline(code: str, plan: Dict[str, Any]) -> str:
         lines.append("def run_pipeline(spark):")
         lines.append("    dfs = {}")
         lines.append("    def _canonical_id(name: str) -> str:")
-        lines.append('        for ext in (".xml", ".json", ".csv", ".tsv", ".parquet", ".xlsx", ".xls"):')
-        lines.append("            if name.lower().endswith(ext):")
-        lines.append("                name = name[:-len(ext)]")
-        lines.append("                break")
-        lines.append("        import re")
+        lines.append('        import re')
         lines.append('        return re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")')
         lines.append("")
         lines.append("    active_canons = {_canonical_id(d) for d in DATASETS}")

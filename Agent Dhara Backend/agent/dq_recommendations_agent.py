@@ -55,6 +55,209 @@ JSON schema:
 
 def _fallback(dq: Dict[str, Any]) -> DQRecommendations:
     # Minimal safe fallback: promote existing per-issue recommendation fields if present.
+    try:
+        from agent.profiling.assessment_orchestrator import load_thresholds
+        thresholds = load_thresholds()
+    except Exception:
+        thresholds = {}
+    platform_target = thresholds.get("platform", {}).get("target", "fabric_spark_sql")
+
+    from agent.profiling.sql_dialect_adapter import get_remediation_sql
+
+def get_pandas_code(col: Optional[str], issue_type: str, related_ds: Optional[str] = None, related_col: Optional[str] = None) -> str:
+    col_safe = col or "column_name"
+    itype = issue_type.lower()
+    
+    if "numeric" in itype or "mixed" in itype:
+        return (
+            f"import pandas as pd\n"
+            f"import numpy as np\n"
+            f"raw = df['{col_safe}']\n"
+            f"clean = pd.to_numeric(raw, errors='coerce')\n"
+            f"df['{col_safe}_raw'] = raw\n"
+            f"df['{col_safe}_clean'] = clean\n"
+            f"df['{col_safe}_validation_status'] = np.select(\n"
+            f"    condlist=[\n"
+            f"        raw.isna(),\n"
+            f"        raw.astype(str).str.strip() == '',\n"
+            f"        clean.isna()\n"
+            f"    ],\n"
+            f"    choicelist=['source_null', 'empty', 'invalid_numeric'],\n"
+            f"    default='valid'\n"
+            f")"
+        )
+        
+    elif "whitespace" in itype:
+        # Safer nullable string conversion: preserves pandas nullable NA
+        return f"df['{col_safe}'] = df['{col_safe}'].astype('string').str.strip()"
+        
+    elif "date" in itype:
+        return (
+            f"import pandas as pd\n"
+            f"import numpy as np\n"
+            f"raw = df['{col_safe}']\n"
+            f"parsed = pd.to_datetime(raw, format='%Y-%m-%d', errors='coerce')\n"
+            f"df['{col_safe}_clean'] = parsed\n"
+            f"df['{col_safe}_validation_status'] = np.select(\n"
+            f"    condlist=[raw.isna(), parsed.isna()],\n"
+            f"    choicelist=['source_null', 'invalid_date'],\n"
+            f"    default='valid'\n"
+            f")"
+        )
+
+    elif "placeholder" in itype or "punctuation" in itype:
+        return (
+            f"placeholder_tokens = ['???', 'n/a', 'unknown', 'tbd', 'not available']\n"
+            f"normalized = df['{col_safe}'].astype(str).str.strip().str.lower()\n"
+            f"df['{col_safe}_clean'] = df['{col_safe}'].where(~normalized.isin(placeholder_tokens), None)"
+        )
+
+    elif "orphan" in itype or "relationship" in itype:
+        p_ds_safe = (related_ds or "parent_dataset").replace(".", "_").replace("-", "_")
+        p_col_safe = related_col or "parent_column"
+        return (
+            f"# Quarantine the child rows. Remove only under approved retention & remediation policy.\n"
+            f"parent_keys = set({p_ds_safe}_df['{p_col_safe}'].dropna().unique())\n"
+            f"orphan_{col_safe}_rows = df[~df['{col_safe}'].isin(parent_keys)]\n"
+            f"valid_{col_safe}_rows = df[df['{col_safe}'].isin(parent_keys)]"
+        )
+
+    elif "null" in itype or "violation" in itype:
+        if "suspected" in itype:
+            return (
+                f"# Profile and review these rows. Do not quarantine automatically until key is declared mandatory.\n"
+                f"view_uniques = df['{col_safe}'].value_counts()"
+            )
+        # Check if this column is a declared/suspected key
+        is_key = col_safe.lower().endswith(("_id", "_key", "_code")) or col_safe.lower() == "id" or "key" in itype
+        if is_key:
+            # Key nulls must be quarantined rather than forward-filled
+            return (
+                f"invalid_key_rows = df[df['{col_safe}'].isna()].copy()\n"
+                f"valid_rows = df[df['{col_safe}'].notna()].copy()"
+            )
+        else:
+            # Ordinary nulls must be preserved by default unless imputation policy is declared
+            return (
+                f"# Preserve as null, quarantine if required, or impute only under a declared field-specific policy.\n"
+                f"# Apply only the field-specific imputation function approved by the data owner."
+            )
+            
+    elif "negative" in itype:
+        # Do not clip negative values to zero: set to NaN and validation status to invalid
+        return (
+            f"qty = pd.to_numeric(df['{col_safe}'], errors='coerce')\n"
+            f"df['{col_safe}_clean'] = qty.where(qty >= 0)\n"
+            f"df['{col_safe}_validation_status'] = qty.ge(0).map({{True: 'valid', False: 'invalid'}})"
+        )
+        
+    else:
+        return f"# Remediate {issue_type} manually"
+
+
+def get_pyspark_code(col: Optional[str], issue_type: str, related_ds: Optional[str] = None, related_col: Optional[str] = None) -> str:
+    col_safe = col or "column_name"
+    itype = issue_type.lower()
+    
+    if "numeric" in itype or "mixed" in itype:
+        return (
+            f"import pyspark.sql.functions as F\n"
+            f"raw = F.col('{col_safe}')\n"
+            f"df = (\n"
+            f"    df\n"
+            f"    .withColumn('{col_safe}_raw', raw)\n"
+            f"    .withColumn('{col_safe}_clean', raw.cast('double'))\n"
+            f"    .withColumn(\n"
+            f"        '{col_safe}_validation_status',\n"
+            f"        F.when(raw.isNull(), 'source_null')\n"
+            f"         .when(F.trim(raw.cast('string')) == '', 'empty')\n"
+            f"         .when(raw.cast('double').isNull(), 'invalid_numeric')\n"
+            f"         .otherwise('valid')\n"
+            f"    )\n"
+            f")"
+        )
+    
+    elif "whitespace" in itype:
+        return f"import pyspark.sql.functions as F\ndf = df.withColumn('{col_safe}', F.trim(df['{col_safe}']))"
+        
+    elif "date" in itype:
+        return (
+            f"import pyspark.sql.functions as F\n"
+            f"parsed = F.to_date(F.col('{col_safe}'), 'yyyy-MM-dd')\n"
+            f"df = (\n"
+            f"    df\n"
+            f"    .withColumn('{col_safe}_clean', parsed)\n"
+            f"    .withColumn(\n"
+            f"        '{col_safe}_validation_status',\n"
+            f"        F.when(F.col('{col_safe}').isNull(), 'source_null')\n"
+            f"         .when(parsed.isNull(), 'invalid_date')\n"
+            f"         .otherwise('valid')\n"
+            f"    )\n"
+            f")"
+        )
+
+    elif "placeholder" in itype or "punctuation" in itype:
+        return (
+            f"import pyspark.sql.functions as F\n"
+            f"placeholder_tokens = ['???', 'n/a', 'unknown', 'tbd', 'not available']\n"
+            f"normalized = F.lower(F.trim(F.col('{col_safe}')))\n"
+            f"df = df.withColumn(\n"
+            f"    '{col_safe}_clean',\n"
+            f"    F.when(normalized.isin(placeholder_tokens), None)\n"
+            f"     .otherwise(F.col('{col_safe}'))\n"
+            f")"
+        )
+
+    elif "orphan" in itype or "relationship" in itype:
+        p_ds_safe = (related_ds or "parent_dataset").replace(".", "_").replace("-", "_")
+        p_col_safe = related_col or "parent_column"
+        return (
+            f"# Quarantine the child rows. Remove only under approved retention & remediation policy.\n"
+            f"parent_keys = {p_ds_safe}_df.select('{p_col_safe}').dropDuplicates()\n"
+            f"orphan_{col_safe}_rows = df.join(parent_keys, on='{col_safe}', how='left_anti')\n"
+            f"valid_{col_safe}_rows = df.join(parent_keys, on='{col_safe}', how='left_semi')"
+        )
+
+    elif "null" in itype or "violation" in itype:
+        if "suspected" in itype:
+            return (
+                f"# Profile and review these rows. Do not quarantine automatically until key is declared mandatory.\n"
+                f"# df.select('{col_safe}').groupBy('{col_safe}').count().show()"
+            )
+        is_key = col_safe.lower().endswith(("_id", "_key", "_code")) or col_safe.lower() == "id" or "key" in itype
+        if is_key:
+            return (
+                f"quarantine_df = df.filter(df['{col_safe}'].isNull())\n"
+                f"clean_df = df.filter(df['{col_safe}'].isNotNull())"
+            )
+        else:
+            return (
+                f"# Preserve as null or impute under approved policy\n"
+                f"# Apply only the field-specific imputation function approved by the data owner."
+            )
+            
+    elif "negative" in itype:
+        return (
+            f"import pyspark.sql.functions as F\n"
+            f"df = df.withColumn('{col_safe}_validation_status', F.when(df['{col_safe}'] >= 0, 'valid').otherwise('invalid'))\n"
+            f"df = df.withColumn('{col_safe}_clean', F.when(df['{col_safe}'] >= 0, df['{col_safe}']).otherwise(None))"
+        )
+        
+    else:
+        return f"# Remediate {issue_type} using PySpark manually"
+
+
+def _fallback(dq: Dict[str, Any]) -> DQRecommendations:
+    # Minimal safe fallback: promote existing per-issue recommendation fields if present.
+    try:
+        from agent.profiling.assessment_orchestrator import load_thresholds
+        thresholds = load_thresholds()
+    except Exception:
+        thresholds = {}
+    platform_target = thresholds.get("platform", {}).get("target", "fabric_spark_sql")
+
+    from agent.profiling.sql_dialect_adapter import get_remediation_sql
+
     recs: List[Dict[str, Any]] = []
     datasets = (dq.get("datasets") or {}) if isinstance(dq.get("datasets"), dict) else {}
     for ds_name, block in datasets.items():
@@ -63,7 +266,8 @@ def _fallback(dq: Dict[str, Any]) -> DQRecommendations:
             if not isinstance(it, dict):
                 continue
             issue_type = it.get("type") or it.get("issue_type") or "issue"
-            # simple fallback mapping to mapped_action
+            
+            # Simple fallback mapping to mapped_action
             mapped = "noop"
             itl = issue_type.lower()
             if "whitespace" in itl:
@@ -87,26 +291,60 @@ def _fallback(dq: Dict[str, Any]) -> DQRecommendations:
             elif "custom_rule_violation" in itl:
                 mapped = "review_manually"
 
+            col_name = it.get("column")
+            related_ds = it.get("related_dataset")
+            related_col = it.get("related_column")
+            example_sql = get_remediation_sql(platform_target, ds_name, col_name, issue_type)
+            example_pandas = get_pandas_code(col_name, issue_type, related_ds, related_col)
+            example_pyspark = get_pyspark_code(col_name, issue_type, related_ds, related_col)
+
+            # Compute meaningful recommendation priority
+            is_gating = it.get("gating", True)
+            sev = (it.get("severity") or "medium").lower()
+            is_rel = any(k in itl for k in ["relationship", "orphan", "foreign_key"])
+            
+            if is_gating and sev == "high" and is_rel:
+                priority = 0
+            elif is_gating and sev == "high":
+                priority = 1
+            elif sev == "medium":
+                priority = 2
+            elif sev == "low":
+                priority = 3
+            else:
+                priority = 4
+
+            # Only allow auto-remediation execution for safe and tested issue types
+            auto_fix = issue_type in ("whitespace", "whitespace_only")
+
             recs.append(
                 {
-                    "priority": 99,
+                    "priority": priority,
                     "dataset": ds_name,
-                    "column": it.get("column"),
+                    "column": col_name,
                     "issue_type": issue_type,
+                    "related_dataset": related_ds,
+                    "related_column": related_col,
                     "severity": it.get("severity") or "medium",
                     "why_it_matters": it.get("message") or "",
                     "suggested_fix": it.get("recommendation") or "Review and remediate based on business rules.",
                     "mapped_action": mapped,
-                    "example_sql": None,
-                    "example_pandas": None,
+                    "auto_fixable": auto_fix,
+                    "example_sql": example_sql,
+                    "example_pandas": example_pandas,
+                    "example_pyspark": example_pyspark,
                     "risk": "Fallback mode (LLM not configured). Validate before applying changes.",
                 }
             )
+            
+    # Sort recommendations by priority (P0 to P4)
+    recs.sort(key=lambda r: r.get("priority", 99))
+
     return DQRecommendations(
         recommendations=recs[:80],
         summary={
             "top_themes": [],
-            "notes": "LLM not configured; returned fallback recommendations based on existing rule hints.",
+            "notes": f"LLM not configured; returned fallback recommendations mapped to {platform_target} target.",
         },
     )
 
@@ -164,10 +402,32 @@ class DQRecommendationsAgent:
                 recs = []
             if not isinstance(summ, dict):
                 summ = {"notes": "LLM returned invalid summary; using empty summary."}
-            # Normalize priority
+            
+            # Enrich LLM recommendations with Pandas & Spark code blocks
+            from agent.profiling.sql_dialect_adapter import get_remediation_sql
+            try:
+                from agent.profiling.assessment_orchestrator import load_thresholds
+                thresholds = load_thresholds()
+            except Exception:
+                thresholds = {}
+            platform_target = thresholds.get("platform", {}).get("target", "fabric_spark_sql")
+
             for i, r in enumerate(recs):
-                if isinstance(r, dict) and "priority" not in r:
+                if not isinstance(r, dict):
+                    continue
+                if "priority" not in r:
                     r["priority"] = i + 1
+                col_name = r.get("column")
+                issue_type = r.get("issue_type")
+                related_ds = r.get("related_dataset")
+                related_col = r.get("related_column")
+                if "example_pandas" not in r:
+                    r["example_pandas"] = get_pandas_code(col_name, issue_type, related_ds, related_col)
+                if "example_pyspark" not in r:
+                    r["example_pyspark"] = get_pyspark_code(col_name, issue_type, related_ds, related_col)
+                if "example_sql" not in r:
+                    r["example_sql"] = get_remediation_sql(platform_target, r.get("dataset", ""), col_name, issue_type)
+
             usage = usage_dict_from_response(resp)
             return DQRecommendations(recommendations=recs[:120], summary=summ), usage
         except Exception:
@@ -176,4 +436,5 @@ class DQRecommendationsAgent:
 
 def dq_recommendations_to_dict(r: DQRecommendations) -> Dict[str, Any]:
     return {"recommendations": r.recommendations, "summary": r.summary}
+
 

@@ -41,14 +41,76 @@ def _is_matching_dataset(a: str, b: str) -> bool:
 
 def _customize_code_for_dataset(pyspark_code: str, target_ds: str) -> str:
     """
-    Ensures complete, self-contained PySpark code is deployed to Fabric Notebooks,
-    setting DATASETS = [target_ds] so the notebook only reads and processes target_ds.
+    Ensures the PySpark code only runs for ``target_ds``:
+
+    * If the code contains ``DATASETS = [...]``, rewrite that list to
+      ``[target_ds]`` (original behaviour).
+    * Otherwise, wrap every ``dfs["<other_ds>"] = ...`` top-level assignment
+      in an ``if False:`` block so only the target dataset block is active.
+    * Falls back to returning the code unchanged if AST parsing fails.
     """
+    # Strategy 1: rewrite DATASETS list if present
     ds_pattern = r"DATASETS\s*=\s*\[[\s\S]*?\]"
     if re.search(ds_pattern, pyspark_code):
         return re.sub(ds_pattern, f"DATASETS = [{target_ds!r}]", pyspark_code, count=1)
-    return pyspark_code
 
+    # Strategy 2: AST-aware wrapping of dfs["<other>"] = ... assignments
+    try:
+        import ast as _ast
+        import textwrap as _textwrap
+
+        lines = pyspark_code.splitlines(keepends=True)
+        tree = _ast.parse(pyspark_code)
+
+        # Collect line ranges for non-target dfs["ds"] = ... top-level assignments
+        block_ranges = []  # list of (start_lineno, end_lineno, ds_name) -- 1-indexed
+        for node in tree.body:
+            if not isinstance(node, _ast.Assign):
+                continue
+            for tgt in node.targets:
+                if (
+                    isinstance(tgt, _ast.Subscript)
+                    and isinstance(tgt.value, _ast.Name)
+                    and tgt.value.id == "dfs"
+                ):
+                    key_node = tgt.slice
+                    if isinstance(key_node, _ast.Constant) and isinstance(key_node.value, str):
+                        ds_key = key_node.value
+                    elif hasattr(key_node, "value") and isinstance(
+                        getattr(key_node, "value", None), _ast.Constant
+                    ):
+                        ds_key = key_node.value.value
+                    else:
+                        ds_key = None
+                    if ds_key and ds_key != target_ds:
+                        block_ranges.append((node.lineno, node.end_lineno, ds_key))
+
+        if not block_ranges:
+            return pyspark_code  # nothing to wrap
+
+        result_parts = []
+        i = 0
+        while i < len(lines):
+            lineno = i + 1  # convert to 1-indexed
+            matched = next((b for b in block_ranges if b[0] == lineno), None)
+            if matched:
+                s, e, ds = matched
+                block_body = "".join(lines[s - 1 : e])
+                indented = _textwrap.indent(block_body, "    ")
+                result_parts.append(
+                    f"if False:  # dataset '{ds}' inactive (target='{target_ds}')\n"
+                )
+                result_parts.append(indented)
+                if not indented.endswith("\n"):
+                    result_parts.append("\n")
+                i = e  # jump past this block (0-indexed end)
+                continue
+            result_parts.append(lines[i])
+            i += 1
+
+        return "".join(result_parts)
+    except Exception:
+        return pyspark_code
 
 def _extract_datasets_from_code(pyspark_code: str) -> List[str]:
     """Extract DATASETS list from generated PySpark code (supports DATASETS array or transform_ function names)."""

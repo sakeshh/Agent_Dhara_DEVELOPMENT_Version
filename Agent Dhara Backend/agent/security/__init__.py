@@ -68,4 +68,3 @@ def client_ip(req: Request) -> str:
     if xff:
         return xff
     return req.client.host if req.client else "unknown"
-

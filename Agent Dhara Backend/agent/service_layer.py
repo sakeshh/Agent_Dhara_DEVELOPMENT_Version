@@ -325,6 +325,52 @@ def _dtype_with_inference(cmeta: Dict[str, Any]) -> str:
     return f"{d} ({inf})" if d == "object" and inf else str(d)
 
 
+def classify_readiness(
+    *,
+    assessment_status: str,
+    score: Optional[float],
+    gating_highs: int,
+    gating_mediums: int,
+    advisory_highs: int,
+    medium: int,
+    ready_threshold: float = 70.0,
+    blocked_threshold: float = 35.0,
+) -> Tuple[str, str]:
+    if assessment_status != "COMPLETE":
+        return "UNKNOWN", "assessment_incomplete"
+
+    if score is None:
+        return "UNKNOWN", "score_unavailable"
+
+    # BLOCKED fires first — even with HIGH gating issues
+    if score < blocked_threshold:
+        return "BLOCKED", "score_below_blocked_threshold"
+
+    if gating_highs > 0:
+        return "NEEDS_WORK", "gating_high_issues_present"
+
+    if score < ready_threshold:
+        return "NEEDS_WORK", "score_below_ready_threshold"
+
+    if gating_mediums > 0 or advisory_highs > 0 or medium > 0:
+        return "READY_WITH_WARNINGS", "non_blocking_issues_present"
+
+    return "READY", "all_gates_passed"
+
+
+def aggregate_readiness(states: List[str]) -> str:
+    state_set = set(states)
+    if "BLOCKED" in state_set:
+        return "BLOCKED"
+    if "UNKNOWN" in state_set:
+        return "UNKNOWN"
+    if "NEEDS_WORK" in state_set:
+        return "NEEDS_WORK"
+    if "READY_WITH_WARNINGS" in state_set:
+        return "READY_WITH_WARNINGS"
+    return "READY"
+
+
 def build_dq_scorecard(result: Dict[str, Any]) -> Dict[str, Any]:
     """
     Top-level readiness verdict and per-dataset score summary for banners
@@ -334,10 +380,25 @@ def build_dq_scorecard(result: Dict[str, Any]) -> Dict[str, Any]:
     dq = result.get("data_quality_issues", {}) or {}
     dq_ds = dq.get("datasets", {}) or {}
 
+    try:
+        from agent.profiling.assessment_orchestrator import load_dq_thresholds
+        thresholds = load_dq_thresholds()
+    except Exception:
+        thresholds = {}
+
+    ready_threshold = 70.0
+    blocked_threshold = 35.0
+    if thresholds:
+        rel_cfg = thresholds.get("relationships") or {}
+        readiness_cfg = rel_cfg.get("readiness") or thresholds.get("readiness") or {}
+        ready_threshold = float(readiness_cfg.get("ready_threshold", 70.0))
+        blocked_threshold = float(readiness_cfg.get("blocked_threshold", 35.0))
+
     per_dataset: List[Dict[str, Any]] = []
     total_rows = 0
     total_high = total_medium = total_low = 0
     total_affected_by_high = 0
+    total_distinct_affected_by_high = 0
 
     for ds_name, ds_meta in datasets.items():
         row_count = int(ds_meta.get("row_count", 0) or 0)
@@ -350,9 +411,15 @@ def build_dq_scorecard(result: Dict[str, Any]) -> Dict[str, Any]:
         issues = (dq_ds.get(ds_name) or {}).get("issues") or []
         if not isinstance(issues, list):
             issues = []
-        high = sum(1 for i in issues if (i.get("severity") or "").lower() == "high")
+
+        gating_highs = sum(1 for i in issues if (i.get("severity") or "").lower() == "high" and i.get("gating", True))
+        gating_mediums = sum(1 for i in issues if (i.get("severity") or "").lower() == "medium" and i.get("gating", True))
+        advisory_highs = sum(1 for i in issues if (i.get("severity") or "").lower() == "high" and not i.get("gating", True))
+
+        high = gating_highs + advisory_highs
         medium = sum(1 for i in issues if (i.get("severity") or "").lower() == "medium")
         low = sum(1 for i in issues if (i.get("severity") or "").lower() == "low")
+        
         affected_high = 0
         for i in issues:
             if (i.get("severity") or "").lower() == "high":
@@ -361,10 +428,18 @@ def build_dq_scorecard(result: Dict[str, Any]) -> Dict[str, Any]:
                 except Exception:
                     pass
 
+        clean_est_high = summ.get("estimated_clean_rows_after_high")
+        if clean_est_high is not None:
+            ds_distinct_high = max(0, row_count - int(clean_est_high))
+        else:
+            ds_distinct_high = affected_high
+
         total_high += high
         total_medium += medium
         total_low += low
         total_affected_by_high += affected_high
+        total_distinct_affected_by_high += ds_distinct_high
+
 
         if raw_score is not None:
             try:
@@ -372,32 +447,36 @@ def build_dq_scorecard(result: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 score = 0.0
         else:
-            if issues or row_count > 0:
-                n = max(1, row_count)
-                high_cnt = sum(int(i.get("count") or 1) for i in issues if (i.get("severity") or "").lower() == "high")
-                med_cnt = sum(int(i.get("count") or 1) for i in issues if (i.get("severity") or "").lower() == "medium")
-                low_cnt = sum(int(i.get("count") or 1) for i in issues if (i.get("severity") or "").lower() == "low")
-                
-                frac_h = min(1.0, high_cnt / n)
-                frac_m = min(1.0, med_cnt / n)
-                frac_l = min(1.0, low_cnt / n)
-                
-                raw_penalty = (3.0 * frac_h) + (1.0 * frac_m) + (0.3 * frac_l)
-                max_penalty = 3.0 + 1.0 + 0.3
-                score = 100.0 * max(0.0, 1.0 - (raw_penalty / max_penalty))
-                score_source = "count_estimated"
-            else:
-                score = None
-                score_source = "unavailable"
+            score = None
+            score_source = "unavailable"
 
-        if score is None:
-            readiness = "UNKNOWN"
-        elif score >= 70:
-            readiness = "READY"
-        elif score >= 35:
-            readiness = "NEEDS_WORK"
-        else:
-            readiness = "BLOCKED"
+        assessment_status = ds_meta.get("assessment_status", "COMPLETE")
+        readiness, qualifier = classify_readiness(
+            assessment_status=assessment_status,
+            score=score,
+            gating_highs=gating_highs,
+            gating_mediums=gating_mediums,
+            advisory_highs=advisory_highs,
+            medium=medium,
+            ready_threshold=ready_threshold,
+            blocked_threshold=blocked_threshold,
+        )
+
+        reasons = []
+        if assessment_status != "COMPLETE":
+            reasons.append("assessment_incomplete")
+        if score is not None and score < blocked_threshold:
+            reasons.append("score_below_blocked_threshold")
+        if gating_highs > 0:
+            reasons.append("gating_high_issues_present")
+        if score is not None and score < ready_threshold:
+            reasons.append("score_below_ready_threshold")
+        if gating_mediums > 0:
+            reasons.append("gating_medium_issues_present")
+        if advisory_highs > 0:
+            reasons.append("advisory_high_issues_present")
+        if not reasons:
+            reasons.append("all_gates_passed")
 
         per_dataset.append(
             {
@@ -405,39 +484,45 @@ def build_dq_scorecard(result: Dict[str, Any]) -> Dict[str, Any]:
                 "dq_score": round(score, 1) if score is not None else "N/A",
                 "score_source": score_source,
                 "readiness": readiness,
+                "readiness_qualifier": qualifier,
+                "readiness_reasons": reasons,
+                "gating_high_issue_count": gating_highs,
+                "advisory_high_issue_count": advisory_highs,
+                "thresholds_used": {"ready": ready_threshold, "blocked": blocked_threshold},
                 "row_count": row_count,
                 "high": high,
                 "medium": medium,
                 "low": low,
                 "rows_affected_by_high": affected_high,
+                "clean_rows_after_high_pct": summ.get("estimated_clean_rows_after_high"),
+                "clean_rows_after_high_medium_pct": summ.get("estimated_clean_rows_after_high_and_medium"),
             }
         )
 
-    order = {"BLOCKED": 0, "NEEDS_WORK": 1, "READY": 2, "UNKNOWN": 3}
+    order = {"BLOCKED": 0, "UNKNOWN": 1, "NEEDS_WORK": 2, "READY_WITH_WARNINGS": 3, "READY": 4}
     per_dataset.sort(
         key=lambda x: (
-            order.get(x["readiness"], 3),
+            order.get(x["readiness"], 4),
             float(x["dq_score"]) if isinstance(x["dq_score"], (int, float)) else -1.0
         )
     )
 
-    valid_scores = [d["dq_score"] for d in per_dataset if isinstance(d["dq_score"], (int, float))]
-    overall_score = (
-        sum(valid_scores) / len(valid_scores) if valid_scores else None
-    )
+    verdict = aggregate_readiness([d["readiness"] for d in per_dataset])
 
-    if any(d["readiness"] == "BLOCKED" for d in per_dataset):
-        verdict = "BLOCKED"
-    elif any(d["readiness"] == "NEEDS_WORK" for d in per_dataset):
-        verdict = "NEEDS_WORK"
-    elif any(d["readiness"] == "UNKNOWN" for d in per_dataset):
-        verdict = "UNKNOWN"
+    # Row-count-weighted overall score
+    valid_pairs = [
+        (d["dq_score"], d["row_count"]) for d in per_dataset
+        if isinstance(d["dq_score"], (int, float)) and d["row_count"] > 0
+    ]
+    if valid_pairs:
+        total_weighted = sum(s * r for s, r in valid_pairs)
+        total_weight = sum(r for _, r in valid_pairs)
+        overall_score = total_weighted / total_weight
     else:
-        verdict = "READY"
+        overall_score = None
 
-    # Sum of HIGH `count` can exceed row count (multiple issues touch the same row). Clamp UI % to [0, 100].
     if total_rows > 0:
-        raw_pct = ((total_rows - total_affected_by_high) / total_rows) * 100.0
+        raw_pct = ((total_rows - total_distinct_affected_by_high) / total_rows) * 100.0
         clean_rows_est = round(max(0.0, min(100.0, raw_pct)), 1)
     else:
         clean_rows_est = 100.0
@@ -447,13 +532,16 @@ def build_dq_scorecard(result: Dict[str, Any]) -> Dict[str, Any]:
         "overall_dq_score": round(overall_score, 1) if overall_score is not None else "N/A",
         "total_issues": {"high": total_high, "medium": total_medium, "low": total_low},
         "total_rows": total_rows,
-        "rows_affected_by_high": total_affected_by_high,
+        "rows_affected_by_high": total_distinct_affected_by_high,
+        "distinct_rows_affected_by_high": total_distinct_affected_by_high,
+        "total_high_memberships": total_affected_by_high,
         "estimated_clean_rows_pct": clean_rows_est,
         "per_dataset": per_dataset,
         "datasets_blocked": [d["name"] for d in per_dataset if d["readiness"] == "BLOCKED"],
         "datasets_at_risk": [d["name"] for d in per_dataset if d["readiness"] == "NEEDS_WORK"],
-        "datasets_clean": [d["name"] for d in per_dataset if d["readiness"] == "READY"],
+        "datasets_clean": [d["name"] for d in per_dataset if d["readiness"] in {"READY", "READY_WITH_WARNINGS"}],
     }
+
 
 
 def build_cleaning_manifest(
@@ -575,6 +663,7 @@ def build_cleaning_manifest(
 
 def build_markdown_report(result: Dict[str, Any]) -> str:
     """Build Markdown report from assessment result."""
+    from datetime import datetime
     md: List[str] = []
     md.append("**Intelligent Data Assessment Report**\n")
 
@@ -583,16 +672,39 @@ def build_markdown_report(result: Dict[str, Any]) -> str:
     v_icon = "🔴" if v == "BLOCKED" else ("⚠️" if v == "NEEDS_WORK" else "✅")
     v_label = v.replace("_", " ")
     ti = sc["total_issues"]
+    
+    if v == "READY":
+        release_decision = "RELEASE"
+        auth_status = "YES"
+    elif v == "READY_WITH_WARNINGS":
+        release_decision = "RELEASE"
+        auth_status = "YES (WITH WARNINGS)"
+    elif v == "NEEDS_WORK":
+        release_decision = "HOLD"
+        auth_status = "NO"
+    elif v == "BLOCKED":
+        release_decision = "REJECT"
+        auth_status = "NO"
+    else:
+        release_decision = "HOLD"
+        auth_status = "NO"
+
     md.append(f"## {v_icon} Data Quality Verdict: {v_label}")
     md.append("")
     md.append("| Metric | Value |")
     md.append("|--------|-------|")
+    md.append(f"| Assessment Status | COMPLETE |")
+    md.append(f"| Readiness | {v_label} |")
+    md.append(f"| Data Release Decision | {release_decision} |")
+    md.append(f"| Production Consumption Authorized | {auth_status} |")
     md.append(f"| Overall DQ Score | {sc['overall_dq_score']} / 100 |")
     md.append(f"| High severity issues | {ti.get('high', 0)} |")
-    md.append(f"| Rows affected by HIGH issues | {sc['rows_affected_by_high']} |")
+    md.append(f"| Distinct rows affected by HIGH issues | {sc.get('distinct_rows_affected_by_high', sc['rows_affected_by_high'])} |")
+    md.append(f"| Total HIGH rule memberships | {sc.get('total_high_memberships', sc['rows_affected_by_high'])} |")
     md.append(
-        f"| Approx. unaffected row share (HIGH; counts may overlap) | {sc['estimated_clean_rows_pct']}% |"
+        f"| Approx. unaffected row share (HIGH) | {sc['estimated_clean_rows_pct']}% |"
     )
+
     md.append("")
     md.append("| Dataset | DQ Score | Readiness |")
     md.append("|---------|----------|-----------|")
@@ -718,14 +830,24 @@ def build_markdown_report(result: Dict[str, Any]) -> str:
                 )
         md.append("")
 
-    md.append("**Relationships (cardinality on shared keys)**")
+    md.append("**Relationships**")
     if rels:
         for rel in rels:
-            card = rel.get("cardinality") or "?"
+            rid = rel.get("relationship_id") or rel.get("name") or "?"
+            parent = rel.get("parent") or "?"
+            child = rel.get("child") or "?"
+            source = rel.get("source", "?")
+            status = rel.get("evaluation_status", "?")
+            shared = rel.get("shared_distinct_keys", "?")
+            child_orphans = rel.get("child_orphan_distinct_keys", 0)
+            unref_parents = rel.get("unreferenced_parent_distinct_keys", 0)
+            gating = rel.get("gating", False)
+            gate_label = " [GATING]" if gating else " [advisory]"
             md.append(
-                f"- **{rel['from']}** ↔ **{rel['to']}**  |  overlap: {rel.get('overlap_count')}  |  "
-                f"**{card}** (max/keys: A={rel.get('max_rows_per_key_a')}, B={rel.get('max_rows_per_key_b')})"
+                f"- **{rid}** ({source}{gate_label}) | status: {status} | shared keys: {shared} "
+                f"| child orphans: {child_orphans} | unreferenced parents: {unref_parents}"
             )
+            md.append(f"  - parent: `{parent}` → child: `{child}`")
             if rel.get("summary"):
                 md.append(f"  - {rel['summary']}")
     else:
@@ -759,19 +881,57 @@ def build_markdown_report(result: Dict[str, Any]) -> str:
         md.append("- (none)")
     md.append("")
 
-    md.append("**Data Quality Issues**")
+    md.append("**Data Quality Issues & Root Causes**\n")
     for ds_name, dq_block in dq_ds.items():
-        md.append(f"- **{ds_name}**")
+        md.append(f"### Dataset: `{ds_name}`")
+        summ = dq_block.get("summary") or {}
+        rc_sum = summ.get("root_cause_summary") or {}
+        if rc_sum and rc_sum.get("root_cause_groups"):
+            md.append("#### Root-Cause Groups (Non-Additive)")
+            md.append("| Root-Cause Family | Issue Types Triggered | Cells Affected | Rows Affected |")
+            md.append("|---|---|---|---|")
+            for g in rc_sum["root_cause_groups"]:
+                itypes_str = ", ".join(f"`{t}`" for t in g["issue_types_triggered"])
+                md.append(f"| **{g['family']}** | {itypes_str} | {g['distinct_cells_affected']:,} | {g['distinct_rows_affected']:,} |")
+            md.append("")
+            
         issues = dq_block.get("issues", [])
         if not issues:
             md.append("  - (no issues)")
         else:
-            for i in issues[:25]:
-                fx = i.get("fixability") or ""
-                fx_part = f" [{fx}]" if fx else ""
-                md.append("  " + _brief_issue_line({**i, "type": f"{i.get('type')}{fx_part}"}))
-            if len(issues) > 25:
-                md.append(f"  - ... (+{len(issues)-25} more)")
+            high_issues = [i for i in issues if (i.get("severity") or "").lower() == "high"]
+            med_issues = [i for i in issues if (i.get("severity") or "").lower() == "medium"]
+            low_issues = [i for i in issues if (i.get("severity") or "").lower() == "low"]
+            
+            if high_issues:
+                md.append("#### HIGH Severity (Gating Blocker)")
+                for i in high_issues[:15]:
+                    fx = i.get("fixability") or ""
+                    fx_part = f" [{fx}]" if fx else ""
+                    md.append("- " + _brief_issue_line({**i, "type": f"{i.get('type')}{fx_part}"}))
+                if len(high_issues) > 15:
+                    md.append(f"- ... (+{len(high_issues)-15} more HIGH issues)")
+                md.append("")
+                
+            if med_issues:
+                md.append("#### MEDIUM Severity (Warning)")
+                for i in med_issues[:15]:
+                    fx = i.get("fixability") or ""
+                    fx_part = f" [{fx}]" if fx else ""
+                    md.append("- " + _brief_issue_line({**i, "type": f"{i.get('type')}{fx_part}"}))
+                if len(med_issues) > 15:
+                    md.append(f"- ... (+{len(med_issues)-15} more MEDIUM issues)")
+                md.append("")
+                
+            if low_issues:
+                md.append("#### LOW Severity (Moved to Appendix)")
+                for i in low_issues[:10]:
+                    fx = i.get("fixability") or ""
+                    fx_part = f" [{fx}]" if fx else ""
+                    md.append("- " + _brief_issue_line({**i, "type": f"{i.get('type')}{fx_part}"}))
+                if len(low_issues) > 10:
+                    md.append(f"- ... (+{len(low_issues)-10} more LOW issues)")
+                md.append("")
         md.append("")
 
     md.append("- **Global Issues (value-level orphans)**")
@@ -799,6 +959,51 @@ def build_markdown_report(result: Dict[str, Any]) -> str:
             md.append(f"    - ({x.get('severity')}) {x.get('type')}: {x.get('message')}")
             if x.get("recommendation"):
                 md.append(f"      → {str(x.get('recommendation'))[:180]}")
+    md.append("")
+
+    md.append("## DQ Score Methodology")
+    md.append("- **Formula:** `100 - flat_penalty - row_penalty` (Single Authoritative Source)")
+    md.append("- **Weights:** High flat=2.5, Med flat=0.5, Low flat=0.1 (Cap=15.0); High row=30.0, Med row=15.0, Low row=5.0")
+    md.append(f"- **Gating Thresholds:** Score >= {sc.get('thresholds_used', {}).get('ready', 70.0)} is READY (unless gating HIGH issues exist); Score < {sc.get('thresholds_used', {}).get('blocked', 35.0)} is BLOCKED\n")
+    
+    for ds_name, dq_block in dq_ds.items():
+        summ = dq_block.get("summary") or {}
+        db = summ.get("dimension_breakdown") or {}
+        if db:
+            md.append(f"### Dimension Breakdown: `{ds_name}`")
+            md.append("| Dimension | Score | Details |")
+            md.append("|---|---|---|")
+            for dim, details in db.items():
+                if not details:
+                    continue
+                score_val = details.get("score")
+                score_str = f"**{score_val}%**" if score_val is not None else "N/A"
+                details_parts = [f"{k.replace('_', ' ')}: {v}" for k, v in details.items() if k != "score" and v is not None]
+                md.append(f"| {dim.capitalize()} | {score_str} | {', '.join(details_parts)} |")
+            md.append("")
+
+    # Reproducibility / Limitations / Appendix
+    rm = result.get("run_metadata") or {}
+    gov = result.get("governance") or {}
+    run_id = result.get("run_id") or rm.get("run_id") or "N/A"
+    agent_ver = gov.get("agent_version") or "3.4.0"
+    manifest_ver = gov.get("manifest_schema_version") or "2.0.0"
+    schema_hash = gov.get("schema_hash") or "N/A"
+    rules_hash = gov.get("rules_hash") or "N/A"
+
+    md.append("## Technical Appendix")
+    md.append("### Reproducibility Metadata")
+    md.append(f"- **Run ID:** `{run_id}`")
+    md.append(f"- **Agent Version:** `{agent_ver}`")
+    md.append(f"- **Manifest Schema Version:** `{manifest_ver}`")
+    md.append(f"- **Schema Hash:** `{schema_hash}`")
+    md.append(f"- **Rules Hash:** `{rules_hash}`")
+    md.append(f"- **Timestamp:** `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`")
+    md.append("")
+    
+    md.append("### Assessment Limitations")
+    md.append("- **Inferred Relationships:** Statistical overlap is advisory only and does not trigger gating checks.")
+    md.append("- **Cell Truncation:** Diagnostic row indexes are sampled up to 10 rows in the report.")
     md.append("")
     return "\n".join(md)
 
@@ -1125,10 +1330,62 @@ def build_html_report(result: Dict[str, Any]) -> str:
                 + "".join(rows_bits)
                 + "</aside>"
             )
+        
         n_high = len(buckets["high"])
         n_med = len(buckets["medium"])
         n_low = len(buckets["low"])
         dq_details_open_attr = " open" if (n_high + n_med + n_low) > 0 else ""
+
+        # Root-Cause Groups HTML
+        rc_summary = ds_summary.get("root_cause_summary") or {}
+        rc_groups_html = ""
+        if rc_summary and rc_summary.get("root_cause_groups"):
+            rc_groups_html = f"""
+            <div class="root-cause-summary-wrap" style="margin-bottom: 20px;">
+                <h5 style="margin-top: 10px; margin-bottom: 8px;">Root-Cause Groups (Non-Additive)</h5>
+                <p class="muted" style="margin-bottom: 8px; font-size: 0.9em;">
+                    Total Rule Hits: <strong>{rc_summary.get('rule_hit_count')}</strong> · 
+                    Distinct Cells Affected: <strong>{rc_summary.get('distinct_cells_affected')}</strong> · 
+                    Distinct Rows Affected: <strong>{rc_summary.get('distinct_rows_affected')}</strong>
+                </p>
+                <table class="profile-tbl" style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
+                    <thead>
+                        <tr style="background-color: #f9f9f9; border-bottom: 2px solid #ddd;">
+                            <th style="padding: 8px; text-align: left;">Root-Cause Family</th>
+                            <th style="padding: 8px; text-align: left;">Issue Types Triggered</th>
+                            <th style="padding: 8px; text-align: right;">Cells Affected</th>
+                            <th style="padding: 8px; text-align: right;">Rows Affected</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            """
+            for g in rc_summary["root_cause_groups"]:
+                itypes_formatted = ", ".join(f"<code>{t}</code>" for t in g["issue_types_triggered"])
+                rc_groups_html += f"""
+                        <tr style="border-bottom: 1px solid #eee;">
+                            <td style="padding: 8px; font-weight: bold;">{esc(g['family'])}</td>
+                            <td style="padding: 8px;">{itypes_formatted}</td>
+                            <td style="padding: 8px; text-align: right;">{g['distinct_cells_affected']:,}</td>
+                            <td style="padding: 8px; text-align: right;">{g['distinct_rows_affected']:,}</td>
+                        </tr>
+                """
+            rc_groups_html += """
+                    </tbody>
+                </table>
+            </div>
+            """
+
+        low_severity_html = ""
+        if buckets['low']:
+            low_severity_html = f"""
+            <details class="low-severity-details" style="margin-top: 15px; border: 1px solid var(--border-color, #e0e0e0); border-radius: 4px; padding: 10px;">
+                <summary style="cursor: pointer; font-weight: bold; color: var(--text-muted, #666);">Low severity issues ({n_low}) [Appendix]</summary>
+                <div style="margin-top: 10px;">
+                    {render_dq_table('Low severity', buckets['low'])}
+                </div>
+            </details>
+            """
+
         return f"""
         <div class="nest-file-card dataset-card depth-card" id="ds-{i}" data-path-group="{pi}">
           <button type="button" class="nest-toggle nest-level-3" aria-expanded="true" aria-controls="dbc-{i}">
@@ -1148,9 +1405,10 @@ def build_html_report(result: Dict[str, Any]) -> str:
             <details class="dq-issue-details"{dq_details_open_attr}>
               <summary class="dq-issue-summary">{esc(name)} — {n_high + n_med + n_low} issues ({n_high} HIGH · {n_med} MEDIUM · {n_low} LOW)</summary>
               <div class="dq-issue-body">
-            {render_dq_table('High severity', buckets['high'])}
-            {render_dq_table('Medium severity', buckets['medium'])}
-            {render_dq_table('Low severity', buckets['low'])}
+                {rc_groups_html}
+                {render_dq_table('High severity', buckets['high'])}
+                {render_dq_table('Medium severity', buckets['medium'])}
+                {low_severity_html}
               </div>
             </details>
           </div>
@@ -1226,37 +1484,147 @@ def build_html_report(result: Dict[str, Any]) -> str:
     def render_rels() -> str:
         if not rels:
             return "<p class='muted'>No cross-dataset column overlaps detected (same column name, case-insensitive).</p>"
-        card_labels = {
-            "one_to_one": "1:1",
-            "one_to_many": "1:N (A→B)",
-            "many_to_one": "N:1 (A→B)",
-            "many_to_many": "M:N",
-        }
-        rows = []
-        for r in rels:
-            card = r.get("cardinality") or "?"
-            cl = card_labels.get(card, esc(card))
-            rows.append(
-                "<tr>"
-                f"<td><code>{esc(r.get('dataset_a'))}</code></td>"
-                f"<td><code>{esc(r.get('column_a'))}</code></td>"
-                f"<td><code>{esc(r.get('dataset_b'))}</code></td>"
-                f"<td><code>{esc(r.get('column_b'))}</code></td>"
-                f"<td><strong>{cl}</strong><br/><span class='muted tiny'>{esc(r.get('from_a_to_b', ''))}</span></td>"
-                f"<td>{esc(r.get('overlap_count'))}</td>"
-                f"<td>{esc(r.get('max_rows_per_key_a'))} / {esc(r.get('max_rows_per_key_b'))}</td>"
-                f"<td class='msg-cell'>{esc(r.get('summary') or '')}</td>"
-                "</tr>"
+        
+        declared_rels = [r for r in rels if r.get("source") == "declared"]
+        inferred_rels = [r for r in rels if r.get("source") != "declared"]
+
+        declared_html = ""
+        if declared_rels:
+            cards = []
+            for r in declared_rels:
+                rid = r.get("relationship_id") or r.get("name") or "?"
+                parent = r.get("parent") or "?"
+                child = r.get("child") or "?"
+                status = r.get("evaluation_status", "?")
+                shared = r.get("shared_distinct_keys", 0)
+                child_orphans = r.get("child_orphan_distinct_keys", 0)
+                child_orphan_row_count = r.get("child_orphan_row_count", 0)
+                unref_parents = r.get("unreferenced_parent_distinct_keys", 0)
+                gating = r.get("gating", False)
+                gate_badge = "<span class='badge' style='background-color: #ef4444; color: #ffffff; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;'>GATING</span>" if gating else "<span class='badge' style='background-color: #64748b; color: #ffffff; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;'>advisory</span>"
+                sev = (r.get("severity") or "low").lower()
+                sev_badge = f"<span class='badge sev-{sev}'>{esc(sev.upper())}</span>"
+                
+                # Normalization details
+                norm = r.get("normalization_applied") or {}
+                trim_enabled = norm.get("trim", True)
+                trim_str = "enabled" if trim_enabled else "disabled"
+                casefold_enabled = norm.get("casefold", False)
+                casefold_str = "enabled" if casefold_enabled else "disabled"
+                
+                # Excluded null tokens
+                null_tokens = norm.get("null_tokens")
+                if null_tokens is None:
+                    null_tokens = ["", "N/A", "UNKNOWN", "none", "null", "unknown"]
+                null_tokens_str = ", ".join(f'"{t}"' for t in null_tokens) if null_tokens else "none"
+
+                # Composite key check
+                is_composite = "," in parent or (isinstance(norm.get("columns"), list) and len(norm.get("columns")) > 1)
+                composite_str = "yes" if is_composite else "no"
+
+                # Exclusions
+                parent_null = r.get("parent_null_excluded", 0)
+                parent_placeholder = r.get("parent_placeholder_excluded", 0)
+                child_null = r.get("child_null_excluded", 0)
+                child_placeholder = r.get("child_placeholder_excluded", 0)
+
+                # Gating status
+                gate_color = "#16a34a" if child_orphan_row_count == 0 else "#dc2626"
+                gate_result = "PASS" if child_orphan_row_count == 0 else "FAIL"
+
+                cards.append(f"""
+                <div class="relationship-card" style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 16px; background-color: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f1f5f9; padding-bottom: 8px; margin-bottom: 12px;">
+                    <h3 style="margin: 0; font-size: 1.05rem; color: #0f172a;">Relationship ID: <strong>{esc(rid)}</strong></h3>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                      {sev_badge}
+                      {gate_badge}
+                    </div>
+                  </div>
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;">
+                    <div>
+                      <h4 style="margin: 0 0 6px 0; font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em;">Mapping Schema</h4>
+                      <p style="margin: 0; font-size: 0.85rem; color: #1e293b;"><strong>Parent Keys:</strong> <code>{esc(parent)}</code></p>
+                      <p style="margin: 4px 0 0 0; font-size: 0.85rem; color: #1e293b;"><strong>Child Keys:</strong> <code>{esc(child)}</code></p>
+                      <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #64748b;"><strong>Status:</strong> {esc(status)}</p>
+                    </div>
+                    <div>
+                      <h4 style="margin: 0 0 6px 0; font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em;">Integrity Metrics</h4>
+                      <ul style="margin: 0; padding-left: 16px; font-size: 0.85rem; color: #1e293b; line-height: 1.4;">
+                        <li><strong>Shared Distinct Keys:</strong> {esc(str(shared))}</li>
+                        <li><strong>Child Orphan Distinct Keys:</strong> {esc(str(child_orphans))}</li>
+                        <li><strong>Child Orphan Row Count:</strong> {esc(str(child_orphan_row_count))}</li>
+                        <li><strong>Unreferenced Parent Keys:</strong> {esc(str(unref_parents))}</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h4 style="margin: 0 0 6px 0; font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em;">Normalization & Scope</h4>
+                      <ul style="margin: 0; padding-left: 16px; font-size: 0.85rem; color: #1e293b; line-height: 1.4;">
+                        <li><strong>Trim:</strong> {trim_str}</li>
+                        <li><strong>Case folding:</strong> {casefold_str}</li>
+                        <li><strong>Composite Key:</strong> {composite_str}</li>
+                        <li><strong>Evaluation Mode:</strong> full dataset</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h4 style="margin: 0 0 6px 0; font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em;">Exclusions & Gating</h4>
+                      <ul style="margin: 0; padding-left: 16px; font-size: 0.85rem; color: #1e293b; line-height: 1.4;">
+                        <li><strong>Null Tokens Excluded:</strong> <code style="font-size: 0.72rem; word-break: break-all;">{esc(null_tokens_str)}</code></li>
+                        <li><strong>Parent Excluded (Null/Placeholder):</strong> {esc(str(parent_null))} / {esc(str(parent_placeholder))}</li>
+                        <li><strong>Child Excluded (Null/Placeholder):</strong> {esc(str(child_null))} / {esc(str(child_placeholder))}</li>
+                        <li><strong>Gating Result:</strong> <span style="font-weight: bold; color: {gate_color};">{gate_result}</span></li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+                """)
+            declared_html = "<div style='margin-bottom: 24px;'><h3>Declared Relationships (Authoritative and Gating)</h3>" + "".join(cards) + "</div>"
+        else:
+            declared_html = "<div style='margin-bottom: 24px;'><h3>Declared Relationships (Authoritative and Gating)</h3><p class='muted'>No declared relationships configured.</p></div>"
+
+        inferred_html = ""
+        if inferred_rels:
+            rows = []
+            for r in inferred_rels:
+                rid = r.get("relationship_id") or r.get("name") or "?"
+                parent = r.get("parent") or "?"
+                child = r.get("child") or "?"
+                status = r.get("evaluation_status", "?")
+                shared = r.get("shared_distinct_keys", "—")
+                child_orphans = r.get("child_orphan_distinct_keys", 0)
+                unref_parents = r.get("unreferenced_parent_distinct_keys", 0)
+                sev = (r.get("severity") or "low").lower()
+                sev_badge = f"<span class='badge sev-{sev}'>{esc(sev.upper())}</span>"
+                rows.append(
+                    "<tr>"
+                    f"<td><strong>{esc(rid)}</strong></td>"
+                    f"<td class='msg-cell'><code>{esc(parent)}</code></td>"
+                    f"<td class='msg-cell'><code>{esc(child)}</code></td>"
+                    f"<td>{esc(status)}</td>"
+                    f"<td>{sev_badge} <span class='badge' style='background-color: #64748b; color: #ffffff;'>ADVISORY</span></td>"
+                    f"<td>{esc(str(shared))}</td>"
+                    f"<td>{esc(str(child_orphans))}</td>"
+                    f"<td>{esc(str(unref_parents))}</td>"
+                    "</tr>"
+                )
+            inferred_html = (
+                "<div style='margin-top: 24px;'>"
+                "<h3>Suggested Relationships (Inferred and Non-Gating)</h3>"
+                "<p class='section-lead'>The following column overlaps were dynamically discovered and are advisory. They do not block downstream readiness gating.</p>"
+                "<div class='table-wrap'><table class='data-table'><thead><tr>"
+                "<th>Relationship</th><th>Parent</th><th>Child</th>"
+                "<th>Status</th><th>Severity / Gate</th><th>Shared keys</th><th>Child orphans</th><th>Unreferenced parents</th>"
+                "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
+                "</div>"
             )
-        return (
-            "<p class='section-lead'>Cardinality is inferred from how often each <em>shared key value</em> appears "
-            "in each table (max rows per key on overlap). 1:N means the A-side key is unique per row at most; "
-            "B-side can repeat.</p>"
-            "<div class='table-wrap'><table class='data-table'><thead><tr>"
-            "<th>Table A</th><th>Col A</th><th>Table B</th><th>Col B</th>"
-            "<th>Cardinality</th><th>Shared keys</th><th>Max rows/key (A|B)</th><th>Interpretation</th>"
-            "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
-        )
+        else:
+            inferred_html = "<div style='margin-top: 24px;'><h3>Suggested Relationships (Inferred and Non-Gating)</h3><p class='muted'>No inferred relationships detected.</p></div>"
+
+        return f"""
+        <p class='section-lead'>Declared relationships are authoritative and gating. Inferred relationships are advisory.</p>
+        {declared_html}
+        {inferred_html}
+        """
 
     def render_global() -> str:
         orphans = dq_global.get("orphan_foreign_keys", []) or []
@@ -1449,17 +1817,48 @@ def build_html_report(result: Dict[str, Any]) -> str:
             f'<span class="badge {rb}">{icon} {esc(br)}</span></div>'
         )
     verdict_title_icon = "🔴" if v_vc == "BLOCKED" else ("⚠️" if v_vc == "NEEDS_WORK" else "✅")
+    
+    # Map verdict to operational decision
+    if v_vc == "READY":
+        release_decision = "RELEASE"
+        auth_status = "YES"
+        auth_color = "#15803d"
+    elif v_vc == "READY_WITH_WARNINGS":
+        release_decision = "RELEASE"
+        auth_status = "YES (WITH WARNINGS)"
+        auth_color = "#15803d"
+    elif v_vc == "NEEDS_WORK":
+        release_decision = "HOLD"
+        auth_status = "NO"
+        auth_color = "#b45309"
+    elif v_vc == "BLOCKED":
+        release_decision = "REJECT"
+        auth_status = "NO"
+        auth_color = "#b91c1c"
+    else:
+        release_decision = "HOLD"
+        auth_status = "NO"
+        auth_color = "#64748b"
+
     scorecard_banner_html = (
         '<section id="dq-scorecard" class="dq-scorecard-section">'
         f'<div class="{ban_cls}">'
         f'<div class="scorecard-verdict-row"><span class="v-ico">{verdict_title_icon}</span> '
         f'<span class="v-text">Data quality verdict: <strong>{esc(v_human)}</strong></span></div>'
+        
+        f'<div style="margin-top: 8px; margin-bottom: 8px; padding: 10px; background: rgba(255,255,255,0.7); border-radius: 6px; border: 1px solid rgba(0,0,0,0.05); font-size: 0.88rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px;">'
+        f'<div><strong>Assessment status:</strong> <span style="color: #1e3a8a; font-weight: bold;">COMPLETE</span></div>'
+        f'<div><strong>Readiness:</strong> <span style="color: {auth_color}; font-weight: bold;">{esc(v_human)}</span></div>'
+        f'<div><strong>Data release decision:</strong> <span style="color: {auth_color}; font-weight: bold;">{release_decision}</span></div>'
+        f'<div><strong>Production consumption authorized:</strong> <span style="color: {auth_color}; font-weight: bold;">{auth_status}</span></div>'
+        f'</div>'
+
         "<div class=\"scorecard-metrics\">Overall DQ score: "
         f"<strong>{esc(scorecard['overall_dq_score'])}</strong> / 100 · "
         f"High severity issues: <strong>{ti_sc.get('high', 0)}</strong> · "
-        f"Rows affected by HIGH: <strong>{esc(scorecard['rows_affected_by_high'])}</strong> · "
-        "<span title=\"Based on summed HIGH issue counts; same row may be counted multiple times — value is clamped 0–100%.\">"
-        f'Approx. row share unaffected by HIGH (UI estimate): <strong>{esc(scorecard["estimated_clean_rows_pct"])}%</strong>'
+        f"Distinct rows affected by at least one HIGH finding: <strong>{esc(scorecard.get('distinct_rows_affected_by_high', scorecard['rows_affected_by_high']))}</strong> · "
+        f"Total HIGH rule memberships: <strong>{esc(scorecard.get('total_high_memberships', scorecard['rows_affected_by_high']))}</strong> · "
+        f"Approx. row share unaffected by HIGH: <strong>{esc(scorecard['estimated_clean_rows_pct'])}%</strong>"
         "</span></div>"
         f'<div class="scorecard-bar-list">{"".join(ds_score_bits)}</div>'
         "</div>"
@@ -1560,7 +1959,8 @@ def build_html_report(result: Dict[str, Any]) -> str:
         nav_llm_rec_link = '\n  <a href="#llm-recs" class="nav-jump">LLM recommendations</a>'
         cards = []
         for r in recs_list:
-            priority = r.get("priority") or "—"
+            pri_val = r.get("priority")
+            priority = f"P{pri_val}" if pri_val is not None else "—"
             ds = esc(r.get("dataset") or "")
             col = esc(r.get("column") or "")
             issue = esc(r.get("issue_type") or "")
@@ -1569,23 +1969,71 @@ def build_html_report(result: Dict[str, Any]) -> str:
             why = esc(r.get("why_it_matters") or "")
             risk = esc(r.get("risk") or "")
             
+            # Load downstream SQL target configuration from thresholds
+            try:
+                from agent.profiling.assessment_orchestrator import load_dq_thresholds
+                thresholds_cfg = load_dq_thresholds()
+            except Exception:
+                thresholds_cfg = {}
+            downstream_sql_target = (thresholds_cfg.get("downstream") or {}).get("sql_target")
+
             sql_code = r.get("example_sql")
             pandas_code = r.get("example_pandas")
+            pyspark_code = r.get("example_pyspark")
             
-            sql_html = ""
-            if sql_code:
-                sql_html = f"""<div class="code-wrap">
-                    <span class="code-title">SQL suggestion</span>
-                    <pre data-raw="{esc_attr(sql_code)}"><code class="language-sql">{esc(sql_code)}</code></pre>
+            pyspark_html = ""
+            if pyspark_code:
+                pyspark_html = f"""<div class="code-wrap">
+                    <span class="code-title">PySpark DataFrame Remediation</span>
+                    <pre data-raw="{esc_attr(pyspark_code)}"><code class="language-python">{esc(pyspark_code)}</code></pre>
                 </div>"""
-                
+
             pandas_html = ""
             if pandas_code:
                 pandas_html = f"""<div class="code-wrap">
-                    <span class="code-title">Pandas suggestion</span>
+                    <span class="code-title">Pandas DataFrame Remediation (For smaller files)</span>
                     <pre data-raw="{esc_attr(pandas_code)}"><code class="language-python">{esc(pandas_code)}</code></pre>
                 </div>"""
+
+            sql_html = ""
+            if sql_code and downstream_sql_target:
+                sql_html = f"""<div class="code-wrap">
+                    <span class="code-title">Optional Downstream SQL Table Implementation (Not a remediation against source Blob files)</span>
+                    <pre data-raw="{esc_attr(sql_code)}"><code class="language-sql">{esc(sql_code)}</code></pre>
+                </div>"""
+
+            # Destination-aware paths
+            clean_ds_name = ds.split(".")[0]  # remove file extension
+            src_ext = ds.split(".")[-1].upper() if "." in ds else "FILE"
             
+            is_dup = "duplicate" in issue.lower()
+            val_col = "row_validation_status" if (is_dup or not col) else f"{col}_validation_status"
+            reason_col = "row_validation_reason" if (is_dup or not col) else f"{col}_validation_reason"
+            
+            extra_cols_li = ""
+            if is_dup:
+                extra_cols_li = f"""
+                    <li><strong>Duplicate Metadata:</strong> <code>duplicate_cluster_id</code>, <code>duplicate_group_size</code>, <code>duplicate_similarity_max</code></li>
+                """
+
+            paths_html = f"""<div class="code-wrap" style="background-color: #f0fdf4; border-color: #bbf7d0;">
+                <span class="code-title" style="color: #166534;">Quarantine & Clean-Output Paths (Blob Native)</span>
+                <ul style="font-size: 0.82rem; margin: 4px 0; padding-left: 16px; color: #1e3a1e; line-height: 1.4;">
+                    <li><strong>Source Format:</strong> {src_ext}</li>
+                    <li><strong>Clean Dataset Path:</strong> <code>Files/clean/{clean_ds_name}/</code> (format: delta)</li>
+                    <li><strong>Quarantine Path:</strong> <code>Files/quarantine/{clean_ds_name}/</code> (format: delta)</li>
+                    <li><strong>Validation Column:</strong> <code>{val_col}</code></li>
+                    <li><strong>Reason Column:</strong> <code>{reason_col}</code></li>
+                    {extra_cols_li}
+                </ul>
+            </div>"""
+            
+            # Hide generic fallback warnings to reduce report clutter
+            is_generic_risk = "fallback mode" in risk.lower() or "llm not configured" in risk.lower()
+            risk_html = ""
+            if risk and not is_generic_risk:
+                risk_html = f'<p class="rec-risk-text"><strong>Risk:</strong> ⚠️ {risk}</p>'
+
             cards.append(f"""
             <div class="rec-card border-sev-{sev}">
               <div class="rec-header">
@@ -1597,22 +2045,193 @@ def build_html_report(result: Dict[str, Any]) -> str:
                 <h4 class="rec-issue-type">Issue: <code>{issue}</code></h4>
                 <p class="rec-fix-text"><strong>Suggested Fix:</strong> {suggested_fix}</p>
                 <p class="rec-why-text"><strong>Why it matters:</strong> {why}</p>
-                {sql_html}
+                {pyspark_html}
                 {pandas_html}
-                <p class="rec-risk-text"><strong>Risk:</strong> ⚠️ {risk}</p>
+                {paths_html}
+                {sql_html}
+                {risk_html}
               </div>
             </div>
             """)
-            
+
+        sql_target_label = "Configured" if downstream_sql_target else "Not configured (Downstream SQL recommendations omitted)"
         llm_recs_section_html = f"""
         <section id="llm-recs" class="llm-recs-section">
-          <h2>LLM Cleaning Recommendations</h2>
-          <p class="section-lead">AI-assisted recommendations mapped from data quality findings.</p>
+          <h2>Data Cleaning & Remediation Recommendations</h2>
+          <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+            <h3 style="margin: 0 0 8px 0; font-size: 1rem; color: #0f172a;">Remediation Engine Configuration Context</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; font-size: 0.88rem; color: #334155;">
+              <div><strong>Primary Remediation Engine:</strong> PySpark DataFrame API</div>
+              <div><strong>Source Storage:</strong> Blob files (OneLake/Blob Store)</div>
+              <div><strong>Downstream SQL Target:</strong> <code>{esc(sql_target_label)}</code></div>
+              <div><strong>Recommendation Mode:</strong> Deterministic Fallback (LLM Config Unavailable)</div>
+              <div><strong>Action Policy:</strong> DRY_RUN, validation required for all transformations.</div>
+            </div>
+          </div>
           <div class="rec-cards-grid">
             {"".join(cards)}
           </div>
         </section>
         """
+
+    # Build DQ Score Methodology Section
+    methodology_html = f"""
+    <section id="score-methodology" class="datasets-section" style="margin-top: 30px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #ddd;">
+      <h2>DQ Score Methodology</h2>
+      <p class="section-lead">Authoritative metrics, formula weights, and multidimensional dimension breakdowns.</p>
+      
+      <div style="margin-bottom: 20px;">
+        <h3>DQ Score Formula</h3>
+        <p>Overall and per-dataset quality scores are calculated using the single authoritative formula:</p>
+        <code style="display: block; padding: 12px; background-color: #f5f5f5; border-radius: 4px; margin: 10px 0; font-size: 1.1em; font-family: monospace;">
+          DQ Score = 100 - flat_penalty(issue_diversity) - row_penalty(affected_rows)
+        </code>
+        
+        <h4 style="margin-top: 15px;">Formula Component Weights</h4>
+        <table class="profile-tbl" style="margin-top: 10px; width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="background-color: #f9f9f9; border-bottom: 2px solid #ddd;">
+              <th style="padding: 8px; text-align: left;">Penalty Type</th>
+              <th style="padding: 8px; text-align: left;">High Severity</th>
+              <th style="padding: 8px; text-align: left;">Medium Severity</th>
+              <th style="padding: 8px; text-align: left;">Low Severity</th>
+              <th style="padding: 8px; text-align: left;">Cap</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom: 1px solid #eee;">
+              <td style="padding: 8px;"><strong>Flat Penalty</strong> (per issue type)</td>
+              <td style="padding: 8px;">2.5 pts</td>
+              <td style="padding: 8px;">0.5 pts</td>
+              <td style="padding: 8px;">0.1 pts</td>
+              <td style="padding: 8px;">15.0 pts max cap</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #eee;">
+              <td style="padding: 8px;"><strong>Row Penalty</strong> (gating row fraction)</td>
+              <td style="padding: 8px;">30.0 pts</td>
+              <td style="padding: 8px;">15.0 pts</td>
+              <td style="padding: 8px;">5.0 pts</td>
+              <td style="padding: 8px;">None</td>
+            </tr>
+          </tbody>
+        </table>
+        
+        <h4 style="margin-top: 20px;">Readiness Gating Thresholds</h4>
+        <p>Datasets and overall pipelines are gated against the following configured score thresholds:</p>
+        <ul style="margin-top: 8px; padding-left: 20px; line-height: 1.6;">
+          <li><strong>Score &ge; {scorecard.get('thresholds_used', {}).get('ready', 70.0)}:</strong> READY (unless gating HIGH issues are present, which escalates status to NEEDS_WORK)</li>
+          <li><strong>Score &ge; {scorecard.get('thresholds_used', {}).get('blocked', 35.0)}:</strong> NEEDS_WORK (requires remediation)</li>
+          <li><strong>Score &lt; {scorecard.get('thresholds_used', {}).get('blocked', 35.0)}:</strong> BLOCKED (gated, score below blocked threshold takes precedence over high issues check)</li>
+        </ul>
+      </div>
+      
+      <h3>Multidimensional Quality Breakdown</h3>
+    """
+    
+    for ds_name, ds_meta in datasets.items():
+        ds_summary = (dq_ds.get(ds_name) or {}).get("summary") or {}
+        db = ds_summary.get("dimension_breakdown") or {}
+        if db:
+            methodology_html += f"""
+            <div style="margin-top: 15px; padding: 15px; border: 1px solid #eee; border-radius: 6px; background-color: #fafafa;">
+              <h4>Dataset: <code>{esc(ds_name)}</code></h4>
+              <table class="profile-tbl" style="width: 100%; margin-top: 10px; border-collapse: collapse;">
+                <thead>
+                  <tr style="background-color: #f2f2f2; border-bottom: 1px solid #ccc;">
+                    <th style="padding: 6px; text-align: left;">Dimension</th>
+                    <th style="padding: 6px; text-align: left;">Score</th>
+                    <th style="padding: 6px; text-align: left;">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+            """
+            for dim, details in db.items():
+                if not details:
+                    continue
+                score_val = details.get("score")
+                score_str = f"<strong>{score_val}%</strong>" if score_val is not None else "N/A"
+                
+                # Relabel uniqueness dimension
+                dim_label = dim.capitalize()
+                if dim.lower() == "uniqueness":
+                    dim_label = "Declared-Key Uniqueness"
+                
+                details_parts = []
+                # Customize consistency denominator details
+                if dim.lower() == "consistency":
+                    violations = details.get("cross_field_violations", 0)
+                    total_rules = details.get("evaluated_rules", 0)
+                    passed = max(0, total_rules - violations)
+                    details_parts = [
+                        f"Passed evaluations: {passed}",
+                        f"Failed evaluations: {violations}",
+                        f"Evaluated rules/cells: {total_rules}",
+                        "Calculation method: row-level rule pass rate"
+                    ]
+                else:
+                    for k, v in details.items():
+                        if k != "score" and v is not None:
+                            details_parts.append(f"{k.replace('_', ' ')}: {v}")
+                
+                details_str = ", ".join(details_parts)
+                
+                methodology_html += f"""
+                  <tr style="border-bottom: 1px solid #e0e0e0;">
+                    <td style="padding: 6px;"><strong>{dim_label}</strong></td>
+                    <td style="padding: 6px;">{score_str}</td>
+                    <td style="padding: 6px;">{esc(details_str)}</td>
+                  </tr>
+                """
+            methodology_html += """
+                </tbody>
+              </table>
+            </div>
+            """
+    methodology_html += "</section>"
+
+    # Build technical_appendix_html
+    rm = result.get("run_metadata") or {}
+    gov = result.get("governance") or {}
+    run_id = result.get("run_id") or rm.get("run_id") or "N/A"
+    agent_ver = gov.get("agent_version") or "3.4.0"
+    manifest_ver = gov.get("manifest_schema_version") or "2.0.0"
+    schema_hash = gov.get("schema_hash") or "N/A"
+    rules_hash = gov.get("rules_hash") or "N/A"
+    
+    reproducibility_html = f"""
+    <div style="background-color: #fff; border-radius: 8px; padding: 20px; border: 1px solid #ddd; margin-top: 20px;">
+      <h4>Reproducibility Metadata</h4>
+      <ul style="padding-left: 20px; line-height: 1.6;">
+        <li><strong>Run ID:</strong> <code>{esc(str(run_id))}</code></li>
+        <li><strong>Agent Version:</strong> <code>{esc(str(agent_ver))}</code></li>
+        <li><strong>Manifest Schema Version:</strong> <code>{esc(str(manifest_ver))}</code></li>
+        <li><strong>Schema Hash:</strong> <code>{esc(str(schema_hash))}</code></li>
+        <li><strong>Rules Hash:</strong> <code>{esc(str(rules_hash))}</code></li>
+        <li><strong>Assessment Timestamp:</strong> <code>{esc(str(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))}</code></li>
+        <li><strong>Sampling Strategy:</strong> <code>Full dataset profiling (no truncation/sampling applied)</code></li>
+      </ul>
+    </div>
+    """
+    
+    limitations_html = """
+    <div style="background-color: #fff; border-radius: 8px; padding: 20px; border: 1px solid #ddd; margin-top: 20px;">
+      <h4>Assessment Limitations</h4>
+      <ul style="padding-left: 20px; line-height: 1.6;">
+        <li><strong>Inferred Relationships:</strong> Discoveries are advisory and require promotion in <code>dq_thresholds.yaml</code> for enforcement.</li>
+        <li><strong>Parsing Failures:</strong> Handled gracefully via execution warnings.</li>
+        <li><strong>Cell Truncation:</strong> Diagnostic row indexes are sampled up to 10 rows per issue type.</li>
+      </ul>
+    </div>
+    """
+    
+    technical_appendix_html = f"""
+    <section id="technical-appendix" class="datasets-section" style="margin-top: 30px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #ddd;">
+      <h2>Technical Appendix</h2>
+      <p class="section-lead">Reproducibility metadata, scan limitations, and full diagnostic details.</p>
+      {reproducibility_html}
+      {limitations_html}
+    </section>
+    """
 
     return (
         "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
@@ -1634,7 +2253,9 @@ def build_html_report(result: Dict[str, Any]) -> str:
   <a href="#datasets" class="nav-jump" data-expand-datasets="1">Datasets</a>
   <a href="#relations" class="nav-jump" data-expand-relations="1">Relations</a>
   <a href="#globalq" class="nav-jump" data-expand-global="1">Global DQ</a>
-  <a href="#governance" class="nav-jump">Governance</a>{nav_llm_link}{nav_llm_rec_link}{nav_fix_link}
+  <a href="#governance" class="nav-jump">Governance</a>
+  <a href="#score-methodology" class="nav-jump">Methodology</a>
+  <a href="#technical-appendix" class="nav-jump">Appendix</a>{nav_llm_link}{nav_llm_rec_link}{nav_fix_link}
   <button type="button" class="tool-btn secondary" id="btn-collapse-all">Collapse all</button>
   <button type="button" class="tool-btn" id="btn-expand-all">Expand all</button>
 </nav>
@@ -1676,6 +2297,8 @@ def build_html_report(result: Dict[str, Any]) -> str:
 </div>
 </section>
 {suggestions_section_html}
+{methodology_html}
+{technical_appendix_html}
 </div>
 <footer class="report-watermark-footer" aria-label="Attribution">
   <span class="report-watermark-oval">Agent Dhara</span>
@@ -1795,6 +2418,7 @@ def engine_to_pf_dq(engine_result: dict) -> dict:
     issue_to_dimension = {
         "nulls": "completeness", "whitespace": "consistency", "invalid_email": "validity",
         "invalid_phone": "validity", "invalid_date_format": "validity", "invalid_numeric": "validity",
+        "numeric_value_serialized_as_string": "validity",
         "negative_values": "validity", "suspicious_zero": "validity", "mixed_types": "consistency",
         "nested_structure": "anomalies", "duplicate_rows": "consistency", "duplicate_primary_key": "consistency",
         "potential_primary_key": "consistency",

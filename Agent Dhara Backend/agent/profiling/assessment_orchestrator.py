@@ -199,140 +199,158 @@ def analyze_cross_dataset_relationships(
     thresholds: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    For each pair of datasets sharing a column name (case-insensitive):
-    - overlap count, cardinality (one_to_one / one_to_many / many_to_one / many_to_many)
-    - Row-level orphan FK issues (child rows whose key is missing from parent)
-    - Warnings for ambiguous M:N on id-like columns
+    Evaluate declared relationships and auto-discover inferred relationships.
     """
+    from agent.profiling.relationship_registry import (
+        validate_relationship_config,
+        compute_directional_orphans,
+        discover_inferred_relationships,
+        RelationshipConfigError,
+    )
+
+    thresholds = thresholds or load_dq_thresholds()
+    rel_cfg = thresholds.get("relationships") or {}
+    declared_list = rel_cfg.get("declared") or []
+    discovery_cfg = rel_cfg.get("discovery") or {}
+
     relationships: List[Dict[str, Any]] = []
     row_issues: List[Dict[str, Any]] = []
     warnings: List[Dict[str, Any]] = []
-    thresholds = thresholds or {}
-    rel_cfg = thresholds.get("relationships") or {}
-    include_non_key = bool(rel_cfg.get("include_non_key_columns", False))
-    orphan_only_if_same_data = bool(rel_cfg.get("orphan_only_if_same_dataset", True))
-    same_data_min_id_overlap = float(rel_cfg.get("same_dataset_min_id_overlap_ratio", 0.90))
-    same_data_max_row_diff = float(rel_cfg.get("same_dataset_max_rowcount_diff_ratio", 0.10))
 
-    def _is_key_like(col_lower: str) -> bool:
-        return (col_lower.endswith("_id") or col_lower == "id" 
-                or col_lower.endswith("_key") or col_lower.endswith("_code")
-                or col_lower.endswith("_sku") or col_lower == "sku")
+    declared_names = set()
 
-    names = list(datasets.keys())
+    # 1. Process Declared Relationships
+    for rel_meta in declared_list:
+        name = rel_meta.get("name")
+        if name:
+            declared_names.add(name)
 
-    for i in range(len(names)):
-        n1, df1 = names[i], datasets[names[i]]
-        meta1 = metadata.get(n1, {}) or {}
-        for j in range(i + 1, len(names)):
-            n2, df2 = names[j], datasets[names[j]]
-            meta2 = metadata.get(n2, {}) or {}
-            if df1.empty or df2.empty:
-                continue
-            common = set(map(str.lower, df1.columns)) & set(map(str.lower, df2.columns))
-            for col_lower in common:
-                if (not include_non_key) and (not _is_key_like(col_lower)):
+        try:
+            validate_relationship_config(rel_meta)
+        except RelationshipConfigError as e:
+            logger.warning(f"Skipping declared relationship config error: {e}")
+            continue
+
+        p_ds = rel_meta["parent"]["dataset"]
+        p_cols = rel_meta["parent"]["columns"]
+        c_ds = rel_meta["child"]["dataset"]
+        c_cols = rel_meta["child"]["columns"]
+        gating = rel_meta.get("gating", True)
+        severity = rel_meta.get("severity", "high")
+
+        # Check if datasets exist in the current run
+        if p_ds not in datasets or c_ds not in datasets:
+            reason = "parent_dataset_unavailable" if p_ds not in datasets else "child_dataset_unavailable"
+            relationships.append({
+                "relationship_id": name,
+                "evaluation_status": "NOT_EVALUATED",
+                "reason": reason,
+                "parent": f"{p_ds}.{p_cols}",
+                "child": f"{c_ds}.{c_cols}",
+                "source": "declared",
+                "gating": gating,
+                "severity": severity,
+            })
+            continue
+
+        parent_df = datasets[p_ds]
+        child_df = datasets[c_ds]
+
+        try:
+            metrics = compute_directional_orphans(
+                parent_df, p_cols, child_df, c_cols,
+                rel_meta.get("normalization", {})
+            )
+        except Exception as e:
+            logger.warning(f"Error computing orphans for declared relationship '{name}': {e}")
+            relationships.append({
+                "relationship_id": name,
+                "evaluation_status": "NOT_EVALUATED",
+                "reason": f"execution_error: {e}",
+                "parent": f"{p_ds}.{p_cols}",
+                "child": f"{c_ds}.{c_cols}",
+                "source": "declared",
+                "gating": gating,
+                "severity": severity,
+            })
+            continue
+
+        relationships.append({
+            "relationship_id": name,
+            "evaluation_status": "EVALUATED",
+            "reason": None,
+            "source": "declared",
+            "gating": gating,
+            "severity": severity,
+            "parent": f"{p_ds}.{p_cols}",
+            "child": f"{c_ds}.{c_cols}",
+            "normalization_applied": rel_meta.get("normalization", {}),
+            **metrics
+        })
+
+        # Add child-only orphans to row_issues (gating=True for declared orphans)
+        oc = metrics["child_orphan_row_count"]
+        if oc > 0:
+            row_issues.append({
+                "severity": severity,
+                "type": "orphan_foreign_key_rows",
+                "dataset": c_ds,
+                "column": c_cols[0] if len(c_cols) == 1 else str(c_cols),
+                "related_dataset": p_ds,
+                "related_column": p_cols[0] if len(p_cols) == 1 else str(p_cols),
+                "count": oc,
+                "row_indexes": metrics["child_orphan_indexes"][:MAX_REL_ROW_INDEXES],
+                "sample_values": metrics["sample_child_orphans"][:8],
+                "message": (
+                    f"{oc} row(s) in child dataset '{c_ds}' column(s) {c_cols} reference key(s) not found in "
+                    f"parent dataset '{p_ds}' column(s) {p_cols} (orphan FK violation)."
+                ),
+                "gating": gating,
+                "score_included": gating,
+                "score_dimension": "consistency",
+                "recommendation": (
+                    f"Check relationship {name}. Quarantine the child rows in '{c_ds}'. Remove only under an approved retention and remediation policy."
+                )
+            })
+
+    # 2. Run Advisory-Only Inferred Discovery
+    if discovery_cfg.get("enabled", True):
+        try:
+            discovered = discover_inferred_relationships(datasets, discovery_cfg)
+            for inf in discovered:
+                if inf["relationship_id"] in declared_names:
                     continue
-                c1 = next(x for x in df1.columns if str(x).lower() == col_lower)
-                c2 = next(x for x in df2.columns if str(x).lower() == col_lower)
-                try:
-                    k1_full = df1[c1]
-                    k2_full = df2[c2]
-                    # No sampling, user wants full analysis
-                    k1 = k1_full.map(_to_key)
-                    k2 = k2_full.map(_to_key)
-                    s1k = set(k1.dropna().tolist())
-                    s2k = set(k2.dropna().tolist())
-                    overlap = s1k & s2k
-                except Exception:
-                    continue
-                if not overlap:
-                    continue
-                vc1 = k1.dropna().value_counts()
-                vc2 = k2.dropna().value_counts()
-                common_idx = vc1.index.intersection(vc2.index)
-                m1 = int(vc1.reindex(common_idx).fillna(0).max()) if len(common_idx) else 1
-                m2 = int(vc2.reindex(common_idx).fillna(0).max()) if len(common_idx) else 1
-                card, summary = _classify_cardinality(m1, m2)
-                rel = {
-                    "from": f"{n1}.{c1}",
-                    "to": f"{n2}.{c2}",
-                    "dataset_a": n1,
-                    "dataset_b": n2,
-                    "column_a": c1,
-                    "column_b": c2,
-                    "overlap_count": len(overlap),
-                    "cardinality": card,
-                    "max_rows_per_key_a": m1,
-                    "max_rows_per_key_b": m2,
-                    "summary": summary,
-                    "from_a_to_b": (
-                        "one_to_many" if m1 <= 1 < m2 else
-                        "many_to_one" if m2 <= 1 < m1 else
-                        "one_to_one" if m1 <= 1 and m2 <= 1 else
-                        "many_to_many"
-                    ),
-                }
-                relationships.append(rel)
+                relationships.append(inf)
 
-                if m1 > 1 and m2 > 1:
-                    id_like = any(
-                        x in col_lower for x in ("_id", "id", "key", "code", "sku")
-                    )
-                    sev = "medium" if id_like else "low"
+                oc = inf["child_orphan_distinct_keys"]
+                if oc > 0:
                     warnings.append({
-                        "severity": sev,
-                        "type": "many_to_many_relationship",
-                        "datasets": [n1, n2],
-                        "columns": [c1, c2],
+                        "severity": inf["severity"],
+                        "type": "orphan_foreign_key_rows",
+                        "dataset": inf["child"].split(".")[0],
+                        "column": inf["child"].split(".")[1],
+                        "related_dataset": inf["parent"].split(".")[0],
+                        "related_column": inf["parent"].split(".")[1],
+                        "count": oc,
+                        "row_indexes": [],
+                        "sample_values": [],
                         "message": (
-                            f"{n1}.{c1} <-> {n2}.{c2}: keys repeat on both sides "
-                            f"(max {m1} rows per key in {n1}, max {m2} in {n2})."
+                            f"Suspected FK relationship found between child '{inf['child']}' and parent '{inf['parent']}'. "
+                            f"{oc} child keys do not exist in parent. Promote to a declared relationship to enforce gating."
                         ),
-                        "recommendation": (
-                            "If you expected a parent-child (1:N) model, deduplicate keys on the 'one' side "
-                            "or fix source extraction. If M:N is correct (e.g. orders-products), model it with "
-                            "a junction table and FK constraints."
-                        ),
+                        "gating": False,
+                        "score_included": False,
+                        "score_dimension": "consistency",
+                        "recommendation": "Review and promote to declared relationship if valid."
                     })
+        except Exception as e:
+            logger.warning(f"Inferred relationship discovery failed: {e}")
 
-                guess = _guess_parent_child_tables(n1, df1, c1, n2, df2, c2, meta1, meta2)
-                if guess:
-                    _pn, pdf, pc, cn, cdf, cc = guess
-                    if orphan_only_if_same_data and not _same_dataset_representation(pdf, cdf, min_id_overlap=same_data_min_id_overlap, max_row_diff=same_data_max_row_diff):
-                        continue
-                    try:
-                        parent_keys = set(_to_key(x) for x in pdf[pc].dropna())
-                    except Exception:
-                        parent_keys = set()
-                    if not parent_keys:
-                        continue
-                    ck = cdf[cc].map(lambda x: _to_key(x) if pd.notna(x) else None)
-                    orphan = cdf[cc].notna() & ~ck.isin(parent_keys)
-                    oc = int(orphan.sum())
-                    if oc > 0:
-                        oidx = cdf.index[orphan].tolist()[:MAX_REL_ROW_INDEXES]
-                        samples = list(cdf.loc[orphan, cc].head(8))
-                        row_issues.append({
-                            "severity": "high",
-                            "type": "orphan_foreign_key_rows",
-                            "dataset": cn,
-                            "column": cc,
-                            "related_dataset": _pn,
-                            "related_column": pc,
-                            "count": oc,
-                            "row_indexes": oidx,
-                            "sample_values": samples,
-                            "message": (
-                                f"{oc} row(s) in '{cn}' column '{cc}' reference value(s) not found in "
-                                f"'{_pn}'.'{pc}' (orphan / broken FK)."
-                            ),
-                            "recommendation": (
-                                f"1) Add missing keys to '{_pn}' or remove bad rows from '{cn}'. "
-                                f"2) Enforce FK in the source DB or pipeline. "
-                                f"3) Trim/normalize keys (whitespace, type) if mismatch is format-only."
-                            ),
-                        })
+    return {
+        "relationships": relationships,
+        "relationship_row_issues": row_issues,
+        "relationship_warnings": warnings,
+    }
 
     return {
         "relationships": relationships,
@@ -523,87 +541,49 @@ def build_executive_summary_items(
         })
     return items
 
-def detect_global_issues(datasets: Dict[str, pd.DataFrame], thresholds: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def detect_global_issues(
+    datasets: Dict[str, pd.DataFrame],
+    thresholds: Optional[Dict[str, Any]] = None,
+    relationships: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     """
-    - Orphan foreign keys: values present in one dataset.column but not in the counterpart
-    - Cross-dataset inconsistencies: coarse mixed numeric/text indicator per column by parse-rate
+    Collate orphan foreign keys and detect cross-dataset format inconsistencies.
     """
-    thresholds = thresholds or {}
-    rel_cfg = thresholds.get("relationships") or {}
-    orphan_only_if_same_data = bool(rel_cfg.get("orphan_only_if_same_dataset", True))
-    same_data_min_id_overlap = float(rel_cfg.get("same_dataset_min_id_overlap_ratio", 0.90))
-    same_data_max_row_diff = float(rel_cfg.get("same_dataset_max_rowcount_diff_ratio", 0.10))
-
     global_issues = {
         "orphan_foreign_keys": [],
         "cross_dataset_inconsistencies": [],
         "schema_drift": []
     }
 
+    # 1. Map already-computed declared relationships to global_issues for payload compatibility
+    if relationships:
+        for rel in relationships:
+            if rel.get("evaluation_status") == "EVALUATED" and rel.get("source") == "declared":
+                if rel.get("child_orphan_row_count", 0) > 0:
+                    global_issues["orphan_foreign_keys"].append({
+                        "from": rel["child"],
+                        "to": rel["parent"],
+                        "orphan_count": rel["child_orphan_row_count"],
+                        "sample_values": rel["sample_child_orphans"],
+                        "recommendation": (
+                            f"Add missing keys from {rel['child']} to {rel['parent']}, "
+                            f"or quarantine the child rows."
+                        )
+                    })
+
+    # 2. Schema drift & cross-dataset mixed-type inconsistencies
     names = list(datasets.keys())
     for i in range(len(names)):
         df1 = datasets[names[i]]
         for j in range(i + 1, len(names)):
             df2 = datasets[names[j]]
-            same_data = _same_dataset_representation(df1, df2, min_id_overlap=same_data_min_id_overlap, max_row_diff=same_data_max_row_diff)
-
             common = set(map(str.lower, df1.columns)) & set(map(str.lower, df2.columns))
             for col in common:
-                if not col.endswith("id"):
+                if col.endswith("id"):
                     continue
                 c1 = next(x for x in df1.columns if x.lower() == col)
                 c2 = next(x for x in df2.columns if x.lower() == col)
 
-                s1 = df1[c1].dropna()
-                s2 = df2[c2].dropna()
-
-                try:
-                    set1 = set(s1.map(_to_key).dropna())
-                    set2 = set(s2.map(_to_key).dropna())
-                except Exception:
-                    continue
-
-                only_left = list(set1 - set2)
-                only_right = list(set2 - set1)
-
-                _orph_rec = (
-                    "Align keys between datasets (trim, type cast). Add missing reference rows or remove "
-                    "orphan facts in the child extract. Prefer FK constraints in the source system."
-                )
-                if (not orphan_only_if_same_data) or same_data:
-                    if only_left:
-                        global_issues["orphan_foreign_keys"].append({
-                            "from": f"{names[i]}.{c1}",
-                            "to": f"{names[j]}.{c2}",
-                            "orphan_count": len(only_left),
-                            "sample_values": only_left[:10],
-                            "recommendation": _orph_rec,
-                        })
-                    if only_right:
-                        global_issues["orphan_foreign_keys"].append({
-                            "from": f"{names[j]}.{c2}",
-                            "to": f"{names[i]}.{c1}",
-                            "orphan_count": len(only_right),
-                            "sample_values": only_right[:10],
-                            "recommendation": _orph_rec,
-                        })
-
-            for nm, df in ((names[i], df1), (names[j], df2)):
-                for col in df.columns:
-                    s = df[col].map(_strip)
-                    num = pd.to_numeric(s, errors="coerce")
-                    parse_rate = 1.0 - float(num.isna().mean())
-                    if 0.2 < parse_rate < 0.8:
-                        global_issues["cross_dataset_inconsistencies"].append({
-                            "dataset": nm,
-                            "column": col,
-                            "issue_type": "mixed_types",
-                            "message": f"Mixed numeric/text values (parse={round(parse_rate*100,1)}%)",
-                            "recommendation": (
-                                "Standardize to one type in staging: coerce numerics after validation, "
-                                "or split into _raw and _numeric columns."
-                            ),
-                        })
 
     # Deduplicate cross-dataset inconsistencies: one row per (dataset, column, issue_type)
     try:
@@ -930,6 +910,16 @@ def load_and_profile(
         except Exception as e:
             logger.warning("sweetviz comparison failed: %s", e)
 
+    # 1. Run Relationship Checks first so FK orphans can be fed to child datasets
+    rel_bundle = analyze_cross_dataset_relationships(datasets, metadata, thresholds)
+    relationships = rel_bundle["relationships"]
+
+    relationship_issues_by_dataset: Dict[str, List[Dict[str, Any]]] = {}
+    for issue in rel_bundle.get("relationship_row_issues") or []:
+        ds = issue.get("dataset")
+        if ds:
+            relationship_issues_by_dataset.setdefault(ds, []).append(issue)
+
     per_dataset_dq = {}
     ds_list = list(datasets.keys())
     for idx, name in enumerate(ds_list):
@@ -937,7 +927,14 @@ def load_and_profile(
         if job_id:
             from agent.jobs_store import add_event
             add_event(job_id=job_id, level="info", message=f"Analyzing data quality: {name}")
-        per_dataset_dq[name] = analyze_dataset_quality(name, df, metadata[name], thresholds, job_id=job_id, business_rules=business_rules)
+        
+        # Pass computed relationship issues (orphans) to analyze_dataset_quality
+        rel_issues = relationship_issues_by_dataset.get(name) or []
+        per_dataset_dq[name] = analyze_dataset_quality(
+            name, df, metadata[name], thresholds,
+            job_id=job_id, business_rules=business_rules,
+            relationship_issues=rel_issues
+        )
         metadata[name]["quality"] = per_dataset_dq[name]
         if job_id:
             add_event(job_id=job_id, level="info", message=f"Quality check complete for {name}")
@@ -963,9 +960,7 @@ def load_and_profile(
                     1 for i in per_dataset_dq[ds_name]["issues"] if i.get("severity") == "high"
                 )
 
-    rel_bundle = analyze_cross_dataset_relationships(datasets, metadata, thresholds)
-    relationships = rel_bundle["relationships"]
-    global_issues = detect_global_issues(datasets, thresholds)
+    global_issues = detect_global_issues(datasets, thresholds, relationships=relationships)
     global_issues["relationship_row_issues"] = rel_bundle["relationship_row_issues"]
     global_issues["relationship_warnings"] = rel_bundle["relationship_warnings"]
     global_issues["cross_dataset_consistency"] = analyze_cross_dataset_consistency(datasets, metadata, thresholds)

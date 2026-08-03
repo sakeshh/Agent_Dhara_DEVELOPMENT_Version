@@ -192,10 +192,38 @@ def enrich_issue_with_recommendation(issue: Dict[str, Any]) -> None:
         issue.get("type") or "", _DEFAULT_REC
     )
 
-def enrich_issue_with_fixability(issue: Dict[str, Any]) -> None:
-    if issue.get("fixability"):
+def enrich_issue_with_fixability(issue: Dict[str, Any], business_rules: Optional[Dict[str, Any]] = None) -> None:
+    if "gating" not in issue:
+        issue["gating"] = True
+        issue.setdefault("contract_warnings", []).append("gating_defaulted_for_legacy_issue")
+        
+    issue_type = issue.get("type") or issue.get("issue_type") or ""
+    
+    if issue.get("fixability_details"):
         return
-    issue["fixability"] = FIXABILITY_BY_ISSUE_TYPE.get(issue.get("type") or "", "COMPLEX")
+        
+    from agent.profiling.contracts import FIXABILITY_BY_ISSUE_TYPE, FIXABILITY_TIERS
+    
+    fixability = FIXABILITY_BY_ISSUE_TYPE.get(issue_type, "HUMAN_REVIEW_REQUIRED")
+    
+    ingestion_rules = (business_rules or {}).get("ingestion_rules") or {}
+    if issue_type == "exact_duplicate_rows" and ingestion_rules.get("safe_exact_deduplication", False):
+        fixability = "AUTO_FIXABLE"
+        
+    issue["fixability"] = fixability
+    
+    issue["fixability_details"] = {
+        "fixability": fixability,
+        "automation_allowed": fixability == "AUTO_FIXABLE",
+        "requires_policy": fixability == "CONDITIONALLY_FIXABLE",
+        "recommended_disposition": (
+            "AUTO_CLEAN" if fixability == "AUTO_FIXABLE" else
+            "QUARANTINE" if fixability == "HUMAN_REVIEW_REQUIRED" else
+            "ESCALATE" if fixability == "ROOT_CAUSE_ONLY" else
+            "POLICY_GATE"
+        ),
+        "fixability_rationale": FIXABILITY_TIERS.get(fixability, ""),
+    }
 
 def dq_issue(
     sev: str,
@@ -205,14 +233,16 @@ def dq_issue(
     column: Optional[str] = None,
     count: Optional[int] = None,
     rows: Optional[List[int]] = None,
-    sample: Optional[List[Any]] = None
+    sample: Optional[List[Any]] = None,
+    gating: bool = True
 ) -> Dict[str, Any]:
     """
-    Create a normalized DQ issue record.
-    - severity: "low" | "medium" | "high"
-    - row_indexes: list of 0-based indexes (capped to 50)
-    - sample_values: capped to 10
+    Create a normalized DQ issue record with 4-tier fixability.
     """
+    from agent.profiling.contracts import FIXABILITY_BY_ISSUE_TYPE, FIXABILITY_TIERS
+    
+    fixability = FIXABILITY_BY_ISSUE_TYPE.get(typ, "HUMAN_REVIEW_REQUIRED")
+    
     return {
         "severity": sev,
         "type": typ,
@@ -221,7 +251,20 @@ def dq_issue(
         "row_indexes": rows[:50] if rows else [],
         "sample_values": sample[:10] if sample else [],
         "message": msg,
-        "fixability": FIXABILITY_BY_ISSUE_TYPE.get(typ, "COMPLEX"),
+        "fixability": fixability,
+        "gating": gating,
+        "fixability_details": {
+            "fixability": fixability,
+            "automation_allowed": fixability == "AUTO_FIXABLE",
+            "requires_policy": fixability == "CONDITIONALLY_FIXABLE",
+            "recommended_disposition": (
+                "AUTO_CLEAN" if fixability == "AUTO_FIXABLE" else
+                "QUARANTINE" if fixability == "HUMAN_REVIEW_REQUIRED" else
+                "ESCALATE" if fixability == "ROOT_CAUSE_ONLY" else
+                "POLICY_GATE"
+            ),
+            "fixability_rationale": FIXABILITY_TIERS.get(fixability, ""),
+        }
     }
 
 def make_json_serializable(obj: Any) -> Any:
@@ -307,6 +350,7 @@ def analyze_dataset_quality(
     job_id: Optional[str] = None,
     business_rules: Optional[Dict[str, Any]] = None,
     approved_semantics: Optional[Dict[str, str]] = None,
+    relationship_issues: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Validation engine powered by Great Expectations.
@@ -318,6 +362,32 @@ def analyze_dataset_quality(
     business_rules = business_rules or {}
     issues: List[Dict[str, Any]] = []
     n = len(df)
+
+    # Build declared key set from thresholds declared relationships
+    declared_key_set = set()
+    rel_cfg = thresholds.get("relationships") or {}
+    for rel_meta in rel_cfg.get("declared", []):
+        p_ds = rel_meta.get("parent", {}).get("dataset")
+        p_cols = rel_meta.get("parent", {}).get("columns") or []
+        c_ds = rel_meta.get("child", {}).get("dataset")
+        c_cols = rel_meta.get("child", {}).get("columns") or []
+        
+        if p_ds == name:
+            for col_col in p_cols:
+                declared_key_set.add(str(col_col).lower())
+        if c_ds == name:
+            for col_col in c_cols:
+                declared_key_set.add(str(col_col).lower())
+
+    # Build declared non-negative set from thresholds formula_rules
+    declared_non_negative_set = set()
+    configured_non_negative_severity = "high"
+    for rule in thresholds.get("formula_rules", []):
+        assertion = rule.get("assertion") or ""
+        if ">= 0" in assertion:
+            col_part = assertion.split(">=")[0].strip()
+            declared_non_negative_set.add(col_part.lower())
+            configured_non_negative_severity = rule.get("severity", "high")
     
     # 1. Run Great Expectations validation
     try:
@@ -361,6 +431,7 @@ def analyze_dataset_quality(
         # Heuristically determine severity and issue type
         severity = "medium"
         issue_type = "custom_rule_violation"
+        gating = True
         msg = f"{col}: expectation failed."
         
         if exp == "placeholder_detected":
@@ -368,21 +439,101 @@ def analyze_dataset_quality(
             severity = "medium"
             msg = f"{unexp_cnt} placeholder/semantic null value(s) (e.g. '???', 'N/A')" if unexp_cnt > 0 else "Placeholder value(s) found"
         elif "not be null" in exp:
-            issue_type = "nulls"
-            severity = "high" if str(col).lower() in non_nullable_set else "low"
-            msg = f"{unexp_cnt} null value(s)" if unexp_cnt > 0 else "Null value(s) found"
+            col_lower = str(col).lower()
+            null_pct = unexp_cnt / max(1, n)
+            gating = False
+
+            if col_lower in declared_key_set:
+                severity = "high"
+                gating = True
+                configured_high_ratio = 0.05  # 5%
+                if null_pct >= configured_high_ratio:
+                    issue_type = "declared_key_high_null_ratio"
+                    msg = (
+                        f"{unexp_cnt} null value(s) in declared key column '{col}' (high null ratio: {null_pct:.1%}). "
+                        f"Observed ratio: {null_pct:.1%}, High-ratio threshold: {configured_high_ratio:.1%}, Rule source: declared"
+                    )
+                else:
+                    issue_type = "declared_key_null_violation"
+                    msg = (
+                        f"{unexp_cnt} null value(s) in declared key column '{col}' (null violation). "
+                        f"Observed ratio: {null_pct:.1%}, High-ratio threshold: {configured_high_ratio:.1%}, Rule source: declared"
+                    )
+            elif col_lower in non_nullable_set:
+                severity = "high"
+                issue_type = "nulls"
+                gating = True
+                msg = f"{unexp_cnt} null value(s) in declared non-nullable column '{col}'"
+
+
+            elif profile.get("columns", {}).get(col, {}).get("nullable") == "NO":
+                severity = "high"
+                issue_type = "nulls"
+                gating = True
+                msg = f"{unexp_cnt} null value(s) in database-defined NOT NULL column '{col}'"
+            elif profile.get("columns", {}).get(col, {}).get("semantic_type") in {"identifier", "primary_key", "foreign_key"}:
+                if null_pct >= 0.50:
+                    severity = "high"
+                    issue_type = "suspected_key_high_null_ratio"
+                    gating = False
+                elif null_pct >= 0.20:
+                    severity = "medium"
+                    issue_type = "suspected_key_high_null_ratio"
+                    gating = False
+                else:
+                    severity = "low"
+                    issue_type = "nulls"
+                msg = f"{unexp_cnt} null value(s) in semantic key column '{col}'"
+            elif any(col_lower.endswith(s) or col_lower == s for s in ("_id", "_key", "_code", "id")):
+                if null_pct >= 0.50:
+                    severity = "medium"
+                    issue_type = "suspected_key_high_null_ratio"
+                    gating = False
+                else:
+                    severity = "low"
+                    issue_type = "nulls"
+                msg = f"{unexp_cnt} null value(s) in suspected key column '{col}'"
+            else:
+                severity = "low"
+                issue_type = "nulls"
+                msg = f"{unexp_cnt} null value(s)" if unexp_cnt > 0 else "Null value(s) found"
         elif "be unique" in exp:
-            issue_type = "duplicate_primary_key"
-            severity = "high"
-            msg = f"{unexp_cnt} duplicate in candidate PK" if unexp_cnt > 0 else "Duplicate key values found"
+            col_lower = str(col).lower()
+            col_is_declared_key = col_lower in declared_key_set
+            col_is_inferred_pk = (profile.get("columns", {}).get(col, {})
+                                  .get("candidate_primary_key", False))
+            
+            if col_is_declared_key:
+                issue_type = "declared_key_violation"
+                severity = "high"
+                gating = True
+                msg = f"{unexp_cnt} duplicate value(s) on declared key column '{col}'"
+            elif col_is_inferred_pk:
+                issue_type = "candidate_key_violation"
+                severity = "high"
+                gating = False
+                msg = (f"{unexp_cnt} duplicate value(s) on inferred candidate key '{col}'. "
+                       f"Key role is inferred, not declared — verify before treating as blocker.")
+            else:
+                issue_type = "exact_duplicate_rows"
+                severity = "medium"
+                gating = False
+                msg = f"{unexp_cnt} exact duplicate row(s) detected"
         elif "compound columns to be unique" in exp or "compound_columns_to_be_unique" in exp:
-            issue_type = "duplicate_rows"
-            severity = "low"
+            issue_type = "exact_duplicate_rows"
+            severity = "medium"
+            gating = False
             msg = f"{unexp_cnt} duplicate row(s)" if unexp_cnt > 0 else "Duplicate rows found"
         elif exp == "string_with_only_digits_in_text_column":
-            issue_type = "string_with_only_digits_in_text_column"
-            severity = "medium"
-            msg = f"{unexp_cnt} digit string(s) in categorical column '{col}'"
+            is_num_col = any(kw in str(col).lower() for kw in ["qty", "quantity", "amount", "budget", "price", "sum", "count"])
+            if is_num_col:
+                issue_type = "numeric_value_serialized_as_string"
+                severity = "medium"
+                msg = f"{unexp_cnt} numeric value(s) serialized as string in column '{col}'"
+            else:
+                issue_type = "string_with_only_digits_in_text_column"
+                severity = "medium"
+                msg = f"{unexp_cnt} digit string(s) in categorical column '{col}'"
         elif exp == "invalid_numeric_values":
             issue_type = "invalid_numeric"
             severity = "medium"
@@ -453,9 +604,48 @@ def analyze_dataset_quality(
             severity = "medium"
             msg = f"{unexp_cnt} bad date(s) (failed parsing)"
         elif exp == "negative_values":
-            issue_type = "negative_values"
-            severity = "medium"
-            msg = f"{unexp_cnt} negative value(s)"
+            col_lower = str(col).lower()
+            sem_type  = profile.get("columns", {}).get(col, {}).get("semantic_type", "")
+            gating    = False
+
+            BIPOLAR_SEMANTICS   = {"amount", "revenue", "balance", "profit", "adjustment",
+                                   "margin", "credit", "debit"}
+            PHYSICAL_SEMANTICS  = {"quantity", "count", "duration", "age"}
+
+            if col_lower in declared_non_negative_set:
+                issue_type = "declared_non_negative_rule_violation"
+                severity = configured_non_negative_severity
+                gating = True
+                msg = f"{unexp_cnt} negative value(s) violating declared non-negative rule in '{col}'"
+            elif sem_type in BIPOLAR_SEMANTICS:
+                issue_type = "negative_values_review_required"
+                severity = "low"
+                gating = False
+                msg = (f"{unexp_cnt} negative value(s) in '{col}'. Column has a bipolar-financial "
+                       "semantic type. Negatives may represent refunds/credits/reversals. "
+                       "Validate against transaction_type before rejecting.")
+            elif sem_type in PHYSICAL_SEMANTICS:
+                issue_type = "negative_values_in_non_negative_measure"
+                severity = "high"
+                gating = True
+                msg = f"{unexp_cnt} negative value(s) in '{col}' — physically impossible for quantity/count/age"
+            elif any(k in col_lower for k in ("amount","revenue","balance","profit",
+                                               "margin","credit","debit","adjustment")):
+                issue_type = "negative_values_review_required"
+                severity = "low"
+                gating = False
+                msg = (f"{unexp_cnt} negative value(s) in '{col}'. Name suggests financial field — "
+                       "may be valid (refunds/credits). Confirm with domain owner.")
+            elif any(k in col_lower for k in ("qty","quantity","count","age","duration")):
+                issue_type = "negative_values_in_non_negative_measure"
+                severity = "medium"
+                gating = False
+                msg = f"{unexp_cnt} negative value(s) in '{col}' — unexpected for quantity/count fields"
+            else:
+                issue_type = "negative_values_review_required"
+                severity = "medium"
+                gating = False
+                msg = f"{unexp_cnt} negative value(s) — domain unknown, review required"
         elif "be between" in exp:
             if "age" in str(col).lower():
                 issue_type = "implausible_age"
@@ -597,9 +787,15 @@ def analyze_dataset_quality(
             severity = "low"
             msg = details
         elif exp == "string_with_only_digits_in_text_column":
-            issue_type = "string_with_only_digits_in_text_column"
-            severity = "medium"
-            msg = details
+            is_num_col = any(kw in str(col).lower() for kw in ["qty", "quantity", "amount", "budget", "price", "sum", "count"])
+            if is_num_col:
+                issue_type = "numeric_value_serialized_as_string"
+                severity = "medium"
+                msg = f"Numeric value serialized as string in numeric column '{col}': {details}"
+            else:
+                issue_type = "string_with_only_digits_in_text_column"
+                severity = "medium"
+                msg = details
         elif exp == "repeated_token_in_string":
             issue_type = "repeated_token_in_string"
             severity = "low"
@@ -618,6 +814,51 @@ def analyze_dataset_quality(
             severity = "low"
             msg = details
             
+        dup_metrics = None
+        if issue_type in {"exact_duplicate_rows", "declared_key_violation", "candidate_key_violation", "duplicate_primary_key"}:
+            try:
+                import json
+                def _stable_scalar(v):
+                    if isinstance(v, (dict, list)):
+                        return json.dumps(v, sort_keys=True, ensure_ascii=False, default=str)
+                    if pd.isna(v):
+                        return "__NULL__"
+                    return v
+
+                normalized_for_dup = df.map(_stable_scalar)
+                if issue_type == "exact_duplicate_rows" and col == "-":
+                    group_sizes = normalized_for_dup.value_counts(dropna=False)
+                elif col in df.columns:
+                    group_sizes = normalized_for_dup[col].value_counts(dropna=False)
+                else:
+                    group_sizes = normalized_for_dup.value_counts(dropna=False)
+
+                dup_groups = group_sizes[group_sizes > 1]
+
+                dup_metrics = {
+                    "group_count": int(len(dup_groups)),
+                    "rows_in_groups": int(dup_groups.sum()),
+                    "redundant_rows": int(dup_groups.sum() - len(dup_groups)),
+                    "largest_group_size": int(dup_groups.max()) if len(dup_groups) else 0,
+                }
+            except Exception as e:
+                logger.warning(f"Error computing duplicate group metrics: {e}")
+                dup_metrics = {
+                    "group_count": 0,
+                    "rows_in_groups": 0,
+                    "redundant_rows": 0,
+                    "largest_group_size": 0,
+                }
+
+        if issue_type == "exact_duplicate_rows" and dup_metrics:
+            msg = (
+                f"{unexp_cnt} exact duplicate row(s) detected. "
+                f"Duplicate groups: {dup_metrics['group_count']}, "
+                f"Rows in duplicate groups: {dup_metrics['rows_in_groups']}, "
+                f"Redundant rows: {dup_metrics['redundant_rows']}, "
+                f"Largest group size: {dup_metrics['largest_group_size']}"
+            )
+
         issues.append({
             "severity": severity,
             "type": issue_type,
@@ -626,7 +867,9 @@ def analyze_dataset_quality(
             "row_indexes": unexp_idx[:50],
             "sample_values": unexp_vals[:10],
             "message": msg,
-            "fixability": FIXABILITY_BY_ISSUE_TYPE.get(issue_type, "COMPLEX")
+            "fixability": FIXABILITY_BY_ISSUE_TYPE.get(issue_type, "COMPLEX"),
+            "gating": gating,
+            "duplicate_group_metrics": dup_metrics
         })
         
     # India-specific validation DQ issue generation (Component 13)
@@ -737,6 +980,11 @@ def analyze_dataset_quality(
     except Exception as e:
         logger.warning(f"PII content scanning failed for {name}: {e}")
 
+    # Append relationship issues (orphans) to local issues list
+    if relationship_issues:
+        for iss in relationship_issues:
+            issues.append(iss)
+
     # Calculate Scorecard Summary Metrics
     try:
         score_cfg = thresholds.get("dq_score") or {}
@@ -744,40 +992,43 @@ def analyze_dataset_quality(
         wh = float(w.get("high", 3.0))
         wm = float(w.get("medium", 1.0))
         wl = float(w.get("low", 0.3))
-        sev_w = {"high": wh, "medium": wm, "low": wl}
 
-        high_rows, med_rows, low_rows = set(), set(), set()
+        # Build mutually exclusive row severity buckets for GATING issues
+        highest_sev_by_row = {}
+        SEV_RANK = {"high": 3, "medium": 2, "low": 1}
         synth_idx = n
         has_synthesized = False
-        
+
         for it in issues:
-            sev = str(it.get("severity") or "low").lower()
-            rows = it.get("row_indexes") or []
-            cnt = int(it.get("count") or it.get("unexpected_count") or len(rows) or 1)
-            cnt = min(cnt, n)
+            if not it.get("gating", True):
+                continue
             
+            sev = str(it.get("severity") or "low").lower()
+            sev_r = SEV_RANK.get(sev, 0)
+            rows = it.get("row_indexes") or []
+            cnt = int(it.get("count") or len(rows) or 1)
+            cnt = min(cnt, n)
+
             explicit_rows = set(rows)
-            if sev == "high":
-                high_rows.update(explicit_rows)
-            elif sev == "medium":
-                med_rows.update(explicit_rows)
-            else:
-                low_rows.update(explicit_rows)
-                
+            for r_idx in explicit_rows:
+                cur_sev = highest_sev_by_row.get(r_idx)
+                cur_r = SEV_RANK.get(cur_sev, 0)
+                if sev_r > cur_r:
+                    highest_sev_by_row[r_idx] = sev
+
             remaining_cnt = cnt - len(explicit_rows)
             if remaining_cnt > 0:
-                dummy_rows = range(synth_idx, synth_idx + remaining_cnt)
+                for r_idx in range(synth_idx, synth_idx + remaining_cnt):
+                    cur_sev = highest_sev_by_row.get(r_idx)
+                    cur_r = SEV_RANK.get(cur_sev, 0)
+                    if sev_r > cur_r:
+                        highest_sev_by_row[r_idx] = sev
                 synth_idx += remaining_cnt
                 has_synthesized = True
-                if sev == "high":
-                    high_rows.update(dummy_rows)
-                elif sev == "medium":
-                    med_rows.update(dummy_rows)
-                else:
-                    low_rows.update(dummy_rows)
 
-        med_rows = set(med_rows) - set(high_rows)
-        low_rows = set(low_rows) - set(high_rows) - set(med_rows)
+        high_rows   = {i for i, s in highest_sev_by_row.items() if s == "high"}
+        medium_rows = {i for i, s in highest_sev_by_row.items() if s == "medium"}
+        low_rows    = {i for i, s in highest_sev_by_row.items() if s == "low"}
 
         if has_synthesized:
             import logging
@@ -785,16 +1036,16 @@ def analyze_dataset_quality(
                 f"DQ scoring: count-based index synthesis used for issues without row_indexes (dataset size: {n})"
             )
 
-        # Flat penalty based on issue diversity (capped at 15.0 max)
-        num_high_types = sum(1 for i in issues if str(i.get("severity") or "low").lower() == "high")
-        num_med_types = sum(1 for i in issues if str(i.get("severity") or "low").lower() == "medium")
-        num_low_types = sum(1 for i in issues if str(i.get("severity") or "low").lower() == "low")
+        # Flat penalty based on issue diversity of gating issues
+        num_high_types = sum(1 for i in issues if str(i.get("severity") or "low").lower() == "high" and i.get("gating", True))
+        num_med_types = sum(1 for i in issues if str(i.get("severity") or "low").lower() == "medium" and i.get("gating", True))
+        num_low_types = sum(1 for i in issues if str(i.get("severity") or "low").lower() == "low" and i.get("gating", True))
         
         flat_penalty = min(15.0, (2.5 * num_high_types) + (0.5 * num_med_types) + (0.1 * num_low_types))
 
         # Row fraction penalty
         frac_h = min(1.0, len(high_rows) / max(1, n))
-        frac_m = min(1.0, len(med_rows) / max(1, n))
+        frac_m = min(1.0, len(medium_rows) / max(1, n))
         frac_l = min(1.0, len(low_rows) / max(1, n))
 
         row_penalty = (30.0 * frac_h) + (15.0 * frac_m) + (5.0 * frac_l)
@@ -803,14 +1054,221 @@ def analyze_dataset_quality(
         dq_score = max(0.0, min(100.0, 100.0 - total_penalty))
 
         clean_est_high = max(0, n - len(high_rows))
-        clean_est_high_med = max(0, n - len(high_rows.union(med_rows)))
-    except Exception:
+        clean_est_high_med = max(0, n - len(high_rows.union(medium_rows)))
+
+        # Score components for ledger reconciliation
+        score_components = {
+            "flat_penalty": round(flat_penalty, 4),
+            "row_penalty": round(row_penalty, 4),
+            "total_penalty": round(total_penalty, 4),
+            "weights": {
+                "high_flat_per_type": 2.5, "medium_flat_per_type": 0.5, "low_flat_per_type": 0.1,
+                "high_row_fraction": 30.0, "medium_row_fraction": 15.0, "low_row_fraction": 5.0,
+                "flat_penalty_cap": 15.0
+            },
+            "high_issue_type_count": num_high_types,
+            "medium_issue_type_count": num_med_types,
+            "distinct_high_rows": len(high_rows),
+            "distinct_medium_rows": len(medium_rows),
+            "distinct_low_rows": len(low_rows),
+            "row_severity_buckets_are_mutually_exclusive": True,
+            "advisory_issues_included_in_score": False,
+            "row_count": n
+        }
+
+        # Dimension breakdown calculations
+        # 1. Completeness
+        total_cols = len(df.columns)
+        evaluated_cells = n * total_cols
+        null_issues_cnt = sum(int(i.get("count") or 1) for i in issues if i.get("type") in {
+            "nulls", "empty_string_values", "placeholder_detected",
+            "declared_key_high_null_ratio", "declared_key_null_violation", "suspected_key_high_null_ratio"
+        })
+
+        passed_cells = max(0, evaluated_cells - null_issues_cnt)
+        completeness = {
+            "score": round((passed_cells / max(1, evaluated_cells)) * 100.0, 1),
+            "passed_cells": passed_cells,
+            "evaluated_cells": evaluated_cells,
+            "excluded_cells": 0
+        }
+
+        # 2. Validity
+        total_exp = len(results)
+        passed_exp = sum(1 for r in results if r.get("success"))
+        validity = {
+            "score": round((passed_exp / max(1, total_exp)) * 100.0, 1) if total_exp > 0 else 100.0,
+            "passed_expectations": passed_exp,
+            "evaluated_expectations": total_exp
+        }
+
+        # 3. Uniqueness
+        redundant_rows_sum = 0
+        for i in issues:
+            if i.get("duplicate_group_metrics"):
+                redundant_rows_sum += i["duplicate_group_metrics"].get("redundant_rows", 0)
+        uniqueness = {
+            "score": round((max(0, n - redundant_rows_sum) / max(1, n)) * 100.0, 1),
+            "duplicate_rows": redundant_rows_sum,
+            "total_rows": n
+        }
+
+        # 4. Consistency
+        consistency_issues_cnt = sum(int(i.get("count") or 1) for i in issues if i.get("type") in {
+            "formula_rule_violation", "custom_rule_violation", "custom_one_of", "custom_range",
+            "custom_regex", "custom_not_null", "orphan_foreign_key_rows"
+        })
+        total_consistency_rules = len(thresholds.get("formula_rules") or []) + len(thresholds.get("custom_rules") or [])
+        total_consistency_rules += len(relationship_issues or [])
+        if total_consistency_rules == 0:
+            total_consistency_rules = 5
+        passed_rules = max(0, total_consistency_rules - consistency_issues_cnt)
+        consistency = {
+            "score": round((passed_rules / max(1, total_consistency_rules)) * 100.0, 1),
+            "cross_field_violations": consistency_issues_cnt,
+            "evaluated_rules": total_consistency_rules
+        }
+
+        # 5. Timeliness
+        date_cols = [c for c in df.columns if "date" in str(c).lower() or "time" in str(c).lower()]
+        if date_cols:
+            evaluated_date_cells = n * len(date_cols)
+            date_issues_cnt = sum(int(i.get("count") or 1) for i in issues if i.get("type") in {
+                "invalid_date_format", "mixed_date_formats", "future_dates", "ancient_dates", "impossible_date"
+            })
+            passed_date_cells = max(0, evaluated_date_cells - date_issues_cnt)
+            timeliness = {
+                "score": round((passed_date_cells / max(1, evaluated_date_cells)) * 100.0, 1),
+                "valid_date_cells": passed_date_cells,
+                "evaluated_date_cells": evaluated_date_cells
+            }
+        else:
+            timeliness = None
+
+        dimension_breakdown = {
+            "completeness": completeness,
+            "validity": validity,
+            "uniqueness": uniqueness,
+            "consistency": consistency,
+            "timeliness": timeliness
+        }
+
+        # Root-Cause Grouping (P5)
+        ROOT_CAUSE_FAMILIES = {
+            "missing_or_null": {
+                "nulls", "empty_string_values", "placeholder_detected",
+                "declared_key_high_null_ratio", "declared_key_null_violation", "suspected_key_high_null_ratio"
+            },
+
+            "format_invalid": {
+                "invalid_numeric", "mixed_scalar_types", "invalid_date_format",
+                "mixed_date_formats", "impossible_date", "invalid_email", "invalid_uuid"
+            },
+            "content_anomaly": {
+                "punctuation_only_value", "string_with_only_digits_in_text_column",
+                "sentinel_numeric_value", "negative_values", "negative_values_review_required",
+                "negative_values_in_non_negative_measure"
+            },
+            "uniqueness": {
+                "exact_duplicate_rows", "declared_key_violation", "candidate_key_violation",
+                "duplicate_primary_key", "duplicate_rows", "near_duplicate_rows"
+            },
+            "referential": {
+                "orphan_foreign_key_rows", "orphan_foreign_key"
+            },
+            "casing_style": {
+                "case_inconsistency", "whitespace", "internal_whitespace",
+                "all_caps_values", "duplicate_representation_candidate"
+            }
+        }
+
+        def get_family(itype: str) -> str:
+            for fam, types in ROOT_CAUSE_FAMILIES.items():
+                if itype in types:
+                    return fam
+            return "other"
+
+        global_cells = set()
+        global_rows = set()
+        family_cells_map = {f: set() for f in ROOT_CAUSE_FAMILIES.keys()}
+        family_rows_map = {f: set() for f in ROOT_CAUSE_FAMILIES.keys()}
+        family_types_map = {f: set() for f in ROOT_CAUSE_FAMILIES.keys()}
+        family_cells_map["other"] = set()
+        family_rows_map["other"] = set()
+        family_types_map["other"] = set()
+
+        for it in issues:
+            itype = it.get("type") or it.get("issue_type") or "other"
+            fam = get_family(itype)
+            
+            rows = it.get("row_indexes") or []
+            cols = it.get("columns") or []
+            if not cols and it.get("column"):
+                cols = [it["column"]]
+            if not cols:
+                cols = ["__global__"]
+                
+            family_types_map[fam].add(itype)
+            
+            for r in rows:
+                global_rows.add(r)
+                family_rows_map[fam].add(r)
+                for c in cols:
+                    global_cells.add((r, c))
+                    family_cells_map[fam].add((r, c))
+
+        root_cause_groups = []
+        for fam in sorted(family_types_map.keys()):
+            if family_types_map[fam]:
+                root_cause_groups.append({
+                    "family": fam,
+                    "issue_types_triggered": sorted(list(family_types_map[fam])),
+                    "distinct_cells_affected": len(family_cells_map[fam]),
+                    "distinct_rows_affected": len(family_rows_map[fam])
+                })
+
+        root_cause_summary = {
+            "rule_hit_count": len(issues),
+            "distinct_issue_types": len({it.get("type") or it.get("issue_type") for it in issues if it.get("type") or it.get("issue_type")}),
+            "distinct_rows_affected": len(global_rows),
+            "distinct_cells_affected": len(global_cells),
+            "root_cause_family_count": len(root_cause_groups),
+            "family_counts_are_non_additive": True,
+            "root_cause_groups": root_cause_groups
+        }
+
+    except Exception as e:
+        logger.warning(f"DQ scoring failed: {e}")
         dq_score = None
         clean_est_high = None
         clean_est_high_med = None
+        score_components = {}
+        dimension_breakdown = {}
+        root_cause_summary = {}
 
     from agent.etl_pipeline.dq_issue_schema import normalize_issue_dict
     issues = [normalize_issue_dict(i, name, "profiler") for i in issues]
+
+    from agent.profiling.issue_contract import validate_issue
+
+    # Map gating flag and duplicate_group_metrics to normalized issues
+    for i, issue_data in enumerate(issues):
+        orig = issues[i]
+        # Just copy them back since normalize_issue_dict might strip custom fields
+        orig["gating"] = issues[i].get("gating", True)
+        orig["duplicate_group_metrics"] = issues[i].get("duplicate_group_metrics")
+        
+        # Ensure contract required fields are populated
+        orig["issue_type"] = orig.get("type") or orig.get("issue_type") or "unknown"
+        orig["rule_source"] = orig.get("rule_source") or "built_in"
+        orig.setdefault("fixability_details", {
+            "fixability": orig.get("fixability", "HUMAN_REVIEW_REQUIRED"),
+            "automation_allowed": orig.get("fixability") == "AUTO_FIXABLE",
+            "requires_policy": orig.get("fixability") == "CONDITIONALLY_FIXABLE",
+            "recommended_disposition": "QUARANTINE"
+        })
+        
+        validate_issue(orig)
 
     return make_json_serializable({
         "issues": issues,
@@ -820,6 +1278,12 @@ def analyze_dataset_quality(
             "medium_severity": sum(1 for i in issues if i["severity"] == "medium"),
             "low_severity": sum(1 for i in issues if i["severity"] == "low"),
             "dq_score_0_100": dq_score,
+            "score_methodology_version": "2.0.0",
+            "score_is_comparable_to_prior_version": False,
+            "score_formula": "100 - flat_penalty(issue_diversity) - row_penalty(affected_rows)",
+            "score_components": score_components,
+            "dimension_breakdown": dimension_breakdown,
+            "root_cause_summary": root_cause_summary,
             "estimated_clean_rows_after_high": clean_est_high,
             "estimated_clean_rows_after_high_and_medium": clean_est_high_med,
         }

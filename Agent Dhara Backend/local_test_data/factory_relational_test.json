@@ -1,0 +1,8002 @@
+[
+  {
+    "factory_id": "FAC079",
+    "product_id": "PRD0002",
+    "machine_name": "tool",
+    "production_qty": 1901,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0158",
+    "machine_name": "Tool",
+    "production_qty": 4053,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC056",
+    "product_id": "PRD0247",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC065",
+    "product_id": "PRD0493",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC083",
+    "product_id": "PRD0094",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC015",
+    "product_id": "PRD0314",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0315",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC024",
+    "product_id": "PRD0450",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC013",
+    "product_id": "PRD0498",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC046",
+    "product_id": "PRD0291",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC052",
+    "product_id": "PRD0027",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC089",
+    "product_id": "PRD0460",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC010",
+    "product_id": "PRD0096",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC079",
+    "product_id": "PRD0053",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0339",
+    "machine_name": "tool",
+    "production_qty": 43,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC072",
+    "product_id": "PRD0499",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0243",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC025",
+    "product_id": "PRD0116",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": 123,
+    "product_id": "PRD0230",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC018",
+    "product_id": "PRD0238",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC076",
+    "product_id": "PRD0207",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC094",
+    "product_id": "PRD0292",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC019",
+    "product_id": "PRD0310",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0416",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC016",
+    "product_id": "PRD0220",
+    "machine_name": "tool",
+    "production_qty": 3284,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC075",
+    "product_id": "PRD0201",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC067",
+    "product_id": "PRD0033",
+    "machine_name": "N/A",
+    "production_qty": 768,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "",
+    "product_id": "PRD0267",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC094",
+    "product_id": "PRD0028",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC088",
+    "product_id": "PRD0077",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC013",
+    "product_id": "PRD0135",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC026",
+    "product_id": "PRD0053",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC035",
+    "product_id": "PRD0349",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC090",
+    "product_id": "PRD0480",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC011",
+    "product_id": "PRD0366",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC070",
+    "product_id": "PRD0267",
+    "machine_name": "N/A",
+    "production_qty": 1847,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC059",
+    "product_id": "PRD0027",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0123",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC008",
+    "product_id": "PRD0288",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC039",
+    "product_id": "PRD0491",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0288",
+    "machine_name": "WID-01",
+    "production_qty": 596,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC060",
+    "product_id": "PRD0373",
+    "machine_name": "WID-01",
+    "production_qty": 771,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC064",
+    "product_id": "PRD0409",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0256",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC018",
+    "product_id": "PRD0155",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC084",
+    "product_id": "PRD0211",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC028",
+    "product_id": "PRD0293",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC016",
+    "product_id": "PRD0377",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC017",
+    "product_id": "PRD0500",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0465",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC015",
+    "product_id": "PRD0308",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC012",
+    "product_id": "PRD0052",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC084",
+    "product_id": "PRD0257",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0131",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC069",
+    "product_id": "PRD0248",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC081",
+    "product_id": "PRD0005",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC040",
+    "product_id": "PRD0315",
+    "machine_name": "###",
+    "production_qty": 3375,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC052",
+    "product_id": "PRD0270",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC088",
+    "product_id": "PRD0254",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC074",
+    "product_id": "PRD0085",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC099",
+    "product_id": "PRD0014",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC012",
+    "product_id": "PRD0416",
+    "machine_name": "widget ",
+    "production_qty": 4615,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC041",
+    "product_id": "PRD0445",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC082",
+    "product_id": "PRD0438",
+    "machine_name": "N/A",
+    "production_qty": 433,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC037",
+    "product_id": "PRD0130",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC082",
+    "product_id": "PRD0442",
+    "machine_name": "Tool",
+    "production_qty": 152,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC028",
+    "product_id": "PRD0094",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC027",
+    "product_id": "PRD0002",
+    "machine_name": "tool",
+    "production_qty": 2998,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC045",
+    "product_id": "PRD0034",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC037",
+    "product_id": "PRD0131",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC074",
+    "product_id": "PRD0389",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC067",
+    "product_id": "PRD0367",
+    "machine_name": "N/A",
+    "production_qty": 4842,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0385",
+    "machine_name": "tool",
+    "production_qty": 2507,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0003",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC057",
+    "product_id": "PRD0013",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC041",
+    "product_id": "PRD0238",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC019",
+    "product_id": "PRD0410",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC045",
+    "product_id": "PRD0478",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC037",
+    "product_id": "PRD0449",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC046",
+    "product_id": "PRD0046",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC068",
+    "product_id": "PRD0497",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0395",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0497",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC073",
+    "product_id": "PRD0357",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC043",
+    "product_id": "PRD0433",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC082",
+    "product_id": "PRD0455",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC004",
+    "product_id": "PRD0483",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC059",
+    "product_id": "PRD0166",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC001",
+    "product_id": "PRD0141",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC001",
+    "product_id": "PRD0049",
+    "machine_name": null,
+    "production_qty": 4769,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0213",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0290",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC002",
+    "product_id": "PRD0292",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC051",
+    "product_id": "PRD0297",
+    "machine_name": "Tool",
+    "production_qty": 3970,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC091",
+    "product_id": "PRD0313",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC074",
+    "product_id": "PRD0031",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC053",
+    "product_id": "PRD0193",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC045",
+    "product_id": "PRD0131",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC095",
+    "product_id": "PRD0294",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC098",
+    "product_id": "PRD0233",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC046",
+    "product_id": "PRD0442",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC012",
+    "product_id": "PRD0088",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC050",
+    "product_id": "PRD0316",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0463",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "",
+    "product_id": "PRD0345",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC058",
+    "product_id": "PRD0432",
+    "machine_name": "N/A",
+    "production_qty": 3194,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC026",
+    "product_id": "PRD0206",
+    "machine_name": null,
+    "production_qty": 4246,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0167",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC035",
+    "product_id": "PRD0340",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC099",
+    "product_id": "PRD0265",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC090",
+    "product_id": "PRD0149",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC045",
+    "product_id": "PRD0008",
+    "machine_name": null,
+    "production_qty": 1888,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC047",
+    "product_id": "PRD0002",
+    "machine_name": "tool",
+    "production_qty": 1180,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC029",
+    "product_id": "PRD0012",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC090",
+    "product_id": "PRD0187",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC049",
+    "product_id": "PRD0175",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC003",
+    "product_id": "PRD0425",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0290",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC047",
+    "product_id": "PRD0481",
+    "machine_name": "Tool",
+    "production_qty": 1349,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC007",
+    "product_id": "PRD0454",
+    "machine_name": null,
+    "production_qty": 4650,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0246",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0491",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC011",
+    "product_id": "PRD0499",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC070",
+    "product_id": "PRD0372",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC045",
+    "product_id": "PRD0070",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC091",
+    "product_id": "PRD0306",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC006",
+    "product_id": "PRD0436",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC013",
+    "product_id": "PRD0062",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "",
+    "product_id": "PRD0337",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC010",
+    "product_id": "PRD0400",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC048",
+    "product_id": "PRD0013",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC005",
+    "product_id": "PRD0232",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC073",
+    "product_id": "PRD0463",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC077",
+    "product_id": "PRD0303",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC022",
+    "product_id": "PRD0288",
+    "machine_name": "tool",
+    "production_qty": 1808,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC052",
+    "product_id": "PRD0060",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC056",
+    "product_id": "PRD0131",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC070",
+    "product_id": "PRD0288",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC077",
+    "product_id": "PRD0362",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0384",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC018",
+    "product_id": "PRD0332",
+    "machine_name": null,
+    "production_qty": 2701,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0150",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC073",
+    "product_id": "PRD0402",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC095",
+    "product_id": "PRD0300",
+    "machine_name": "WID-01",
+    "production_qty": 2671,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0052",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC054",
+    "product_id": "PRD0322",
+    "machine_name": "WID-01",
+    "production_qty": 4275,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC064",
+    "product_id": "PRD0244",
+    "machine_name": "N/A",
+    "production_qty": 4506,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC062",
+    "product_id": "PRD0392",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC044",
+    "product_id": "PRD0430",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0232",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC066",
+    "product_id": "PRD0125",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC026",
+    "product_id": "PRD0117",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC068",
+    "product_id": "PRD0449",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC059",
+    "product_id": "PRD0113",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC050",
+    "product_id": "PRD0211",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC028",
+    "product_id": "PRD0099",
+    "machine_name": "tool",
+    "production_qty": 897,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC015",
+    "product_id": "PRD0399",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC046",
+    "product_id": "PRD0265",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "",
+    "product_id": "PRD0215",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC084",
+    "product_id": "PRD0340",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC082",
+    "product_id": "PRD0427",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC009",
+    "product_id": "PRD0081",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC068",
+    "product_id": "PRD0202",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC025",
+    "product_id": "PRD0223",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC043",
+    "product_id": "PRD0296",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC100",
+    "product_id": "PRD0282",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC019",
+    "product_id": "PRD0134",
+    "machine_name": "Tool",
+    "production_qty": 4589,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC057",
+    "product_id": "PRD0154",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC090",
+    "product_id": "PRD0267",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC011",
+    "product_id": "PRD0316",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC087",
+    "product_id": "PRD0301",
+    "machine_name": null,
+    "production_qty": 4601,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC002",
+    "product_id": "PRD0497",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC086",
+    "product_id": "PRD0474",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC089",
+    "product_id": "PRD0423",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0279",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC043",
+    "product_id": "PRD0128",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC027",
+    "product_id": "PRD0038",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC044",
+    "product_id": "PRD0334",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC042",
+    "product_id": "PRD0369",
+    "machine_name": "widget ",
+    "production_qty": 4435,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC005",
+    "product_id": "PRD0336",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC097",
+    "product_id": "PRD0349",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC019",
+    "product_id": "PRD0490",
+    "machine_name": "tool",
+    "production_qty": 330,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC022",
+    "product_id": "PRD0367",
+    "machine_name": "WID-01",
+    "production_qty": 525,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC029",
+    "product_id": "PRD0023",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0355",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": 123,
+    "product_id": "PRD0204",
+    "machine_name": "widget ",
+    "production_qty": 3242,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC024",
+    "product_id": "PRD0348",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC028",
+    "product_id": "PRD0245",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC012",
+    "product_id": "PRD0430",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC032",
+    "product_id": "PRD0464",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC094",
+    "product_id": "PRD0468",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC094",
+    "product_id": "PRD0192",
+    "machine_name": "N/A",
+    "production_qty": 171,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC097",
+    "product_id": "PRD0267",
+    "machine_name": null,
+    "production_qty": 804,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0342",
+    "machine_name": "###",
+    "production_qty": 1882,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC011",
+    "product_id": "PRD0220",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC017",
+    "product_id": "PRD0200",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC023",
+    "product_id": "PRD0171",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC070",
+    "product_id": "PRD0427",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0342",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC019",
+    "product_id": "PRD0333",
+    "machine_name": null,
+    "production_qty": 4822,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0119",
+    "machine_name": "N/A",
+    "production_qty": 312,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC054",
+    "product_id": "PRD0240",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC025",
+    "product_id": "PRD0361",
+    "machine_name": null,
+    "production_qty": 1768,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0247",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0396",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0298",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC016",
+    "product_id": "PRD0187",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC097",
+    "product_id": "PRD0255",
+    "machine_name": "Tool",
+    "production_qty": 4207,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0306",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC087",
+    "product_id": "PRD0224",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC041",
+    "product_id": "PRD0358",
+    "machine_name": "tool",
+    "production_qty": 1992,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC025",
+    "product_id": "PRD0322",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC100",
+    "product_id": "PRD0435",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC085",
+    "product_id": "PRD0045",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC060",
+    "product_id": "PRD0457",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC074",
+    "product_id": "PRD0356",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0135",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC068",
+    "product_id": "PRD0368",
+    "machine_name": "WID-01",
+    "production_qty": 3593,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC006",
+    "product_id": "PRD0158",
+    "machine_name": "WID-01",
+    "production_qty": 3548,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0404",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC067",
+    "product_id": "PRD0160",
+    "machine_name": "tool",
+    "production_qty": 1792,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC074",
+    "product_id": "PRD0424",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC040",
+    "product_id": "PRD0241",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC070",
+    "product_id": "PRD0177",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC011",
+    "product_id": "PRD0394",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC066",
+    "product_id": "PRD0163",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0232",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC090",
+    "product_id": "PRD0415",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC098",
+    "product_id": "PRD0136",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0356",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC080",
+    "product_id": "PRD0114",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC092",
+    "product_id": "PRD0034",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC058",
+    "product_id": "PRD0494",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC015",
+    "product_id": "PRD0496",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC029",
+    "product_id": "PRD0058",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC030",
+    "product_id": "PRD0275",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0495",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC061",
+    "product_id": "PRD0454",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC022",
+    "product_id": "PRD0364",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC006",
+    "product_id": "PRD0463",
+    "machine_name": "WID-01",
+    "production_qty": 3423,
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": 123,
+    "product_id": "PRD0183",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC092",
+    "product_id": "PRD0023",
+    "machine_name": "tool",
+    "production_qty": 1727,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC050",
+    "product_id": "PRD0432",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC094",
+    "product_id": "PRD0032",
+    "machine_name": null,
+    "production_qty": 699,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC082",
+    "product_id": "PRD0031",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC081",
+    "product_id": "PRD0420",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC098",
+    "product_id": "PRD0493",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC041",
+    "product_id": "BAD-PROD",
+    "machine_name": "WID-01",
+    "production_qty": 4534,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0150",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC089",
+    "product_id": "PRD0234",
+    "machine_name": "###",
+    "production_qty": 476,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0007",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC092",
+    "product_id": "PRD0383",
+    "machine_name": "N/A",
+    "production_qty": 3948,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC064",
+    "product_id": "PRD0081",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC096",
+    "product_id": "PRD0108",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC100",
+    "product_id": "PRD0376",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC082",
+    "product_id": "PRD0129",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0443",
+    "machine_name": "N/A",
+    "production_qty": 2513,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC057",
+    "product_id": "PRD0406",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC002",
+    "product_id": "PRD0020",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC015",
+    "product_id": "PRD0376",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC083",
+    "product_id": "PRD0132",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC046",
+    "product_id": "PRD0458",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC070",
+    "product_id": "PRD0265",
+    "machine_name": "N/A",
+    "production_qty": 1822,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0470",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC055",
+    "product_id": "PRD0451",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC001",
+    "product_id": "PRD0013",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC094",
+    "product_id": "PRD0261",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC053",
+    "product_id": "PRD0040",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC039",
+    "product_id": "PRD0049",
+    "machine_name": "widget ",
+    "production_qty": 3400,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC037",
+    "product_id": "PRD0328",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC085",
+    "product_id": "PRD0487",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC058",
+    "product_id": "PRD0127",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": null,
+    "product_id": "PRD0029",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC085",
+    "product_id": "PRD0024",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC093",
+    "product_id": "PRD0104",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC040",
+    "product_id": "PRD0205",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC035",
+    "product_id": "PRD0122",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC016",
+    "product_id": "PRD0415",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": 123,
+    "product_id": "PRD0303",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC045",
+    "product_id": "PRD0134",
+    "machine_name": "N/A",
+    "production_qty": 2365,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC025",
+    "product_id": "PRD0315",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC050",
+    "product_id": "PRD0085",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC096",
+    "product_id": "PRD0173",
+    "machine_name": "WID-01",
+    "production_qty": 1764,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC094",
+    "product_id": "PRD0496",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0430",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC049",
+    "product_id": "PRD0019",
+    "machine_name": "widget ",
+    "production_qty": 1481,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC094",
+    "product_id": "PRD0034",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC012",
+    "product_id": "PRD0021",
+    "machine_name": "WID-01",
+    "production_qty": 2978,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0232",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC062",
+    "product_id": "PRD0242",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC085",
+    "product_id": "PRD0238",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC017",
+    "product_id": "PRD0308",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC070",
+    "product_id": "PRD0446",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC097",
+    "product_id": "PRD0457",
+    "machine_name": "tool",
+    "production_qty": 762,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC072",
+    "product_id": "PRD0403",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC055",
+    "product_id": "PRD0303",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC027",
+    "product_id": "PRD0422",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC024",
+    "product_id": "PRD0117",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC028",
+    "product_id": "PRD0342",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC007",
+    "product_id": "PRD0333",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC007",
+    "product_id": "PRD0175",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0058",
+    "machine_name": "widget ",
+    "production_qty": 2397,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC066",
+    "product_id": "PRD0220",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC091",
+    "product_id": "PRD0257",
+    "machine_name": "N/A",
+    "production_qty": 954,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC003",
+    "product_id": "PRD0308",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0449",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC072",
+    "product_id": "PRD0064",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC079",
+    "product_id": "PRD0379",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC087",
+    "product_id": "PRD0132",
+    "machine_name": "###",
+    "production_qty": 3670,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0418",
+    "machine_name": "Tool",
+    "production_qty": 2187,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC082",
+    "product_id": "PRD0484",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC005",
+    "product_id": "PRD0035",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC050",
+    "product_id": "PRD0363",
+    "machine_name": "tool",
+    "production_qty": 4969,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC061",
+    "product_id": "PRD0448",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC040",
+    "product_id": "PRD0033",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC051",
+    "product_id": "PRD0058",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC041",
+    "product_id": "PRD0490",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC011",
+    "product_id": "PRD0334",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC060",
+    "product_id": "PRD0430",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC061",
+    "product_id": "PRD0180",
+    "machine_name": "widget ",
+    "production_qty": 2698,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC051",
+    "product_id": "PRD0382",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC090",
+    "product_id": "PRD0233",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC081",
+    "product_id": "PRD0444",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC086",
+    "product_id": "PRD0452",
+    "machine_name": "tool",
+    "production_qty": 283,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC005",
+    "product_id": "PRD0335",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0149",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC077",
+    "product_id": "PRD0063",
+    "machine_name": "###",
+    "production_qty": 906,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": 123,
+    "product_id": "PRD0388",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC049",
+    "product_id": "PRD0002",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC093",
+    "product_id": "PRD0378",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC005",
+    "product_id": "PRD0008",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC024",
+    "product_id": "PRD0268",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC100",
+    "product_id": "PRD0482",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC026",
+    "product_id": "PRD0468",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC046",
+    "product_id": "PRD0177",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC082",
+    "product_id": "PRD0317",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0134",
+    "machine_name": "###",
+    "production_qty": 2522,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC062",
+    "product_id": "PRD0433",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0496",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC044",
+    "product_id": "PRD0158",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC011",
+    "product_id": "PRD0472",
+    "machine_name": null,
+    "production_qty": 2208,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC068",
+    "product_id": "PRD0422",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC042",
+    "product_id": "PRD0258",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC099",
+    "product_id": "PRD0171",
+    "machine_name": "WID-01",
+    "production_qty": 1743,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC027",
+    "product_id": "PRD0460",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC009",
+    "product_id": "PRD0456",
+    "machine_name": "widget ",
+    "production_qty": 796,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": null,
+    "product_id": "PRD0168",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC075",
+    "product_id": "PRD0085",
+    "machine_name": "Tool",
+    "production_qty": 4806,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC097",
+    "product_id": "PRD0499",
+    "machine_name": "###",
+    "production_qty": 4480,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC093",
+    "product_id": "PRD0186",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC080",
+    "product_id": "PRD0251",
+    "machine_name": "N/A",
+    "production_qty": 4247,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC003",
+    "product_id": "PRD0260",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0297",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0288",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC070",
+    "product_id": "PRD0418",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC065",
+    "product_id": "PRD0240",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC050",
+    "product_id": "PRD0441",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0371",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC004",
+    "product_id": "PRD0382",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC025",
+    "product_id": "PRD0094",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "",
+    "product_id": "PRD0181",
+    "machine_name": "###",
+    "production_qty": 3988,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC011",
+    "product_id": "PRD0159",
+    "machine_name": "widget ",
+    "production_qty": 718,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC080",
+    "product_id": "PRD0322",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC047",
+    "product_id": "PRD0485",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0412",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC084",
+    "product_id": "PRD0474",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC009",
+    "product_id": "PRD0212",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC006",
+    "product_id": "PRD0450",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC025",
+    "product_id": "PRD0332",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0121",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0210",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC027",
+    "product_id": "PRD0023",
+    "machine_name": "Tool",
+    "production_qty": 2889,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC019",
+    "product_id": "PRD0373",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC027",
+    "product_id": "PRD0497",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC076",
+    "product_id": "PRD0497",
+    "machine_name": "WID-01",
+    "production_qty": 2457,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC081",
+    "product_id": "PRD0118",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC095",
+    "product_id": "PRD0397",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0027",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC027",
+    "product_id": "PRD0358",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC080",
+    "product_id": "PRD0083",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC007",
+    "product_id": "PRD0216",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC042",
+    "product_id": "PRD0183",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC046",
+    "product_id": "PRD0303",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC090",
+    "product_id": "PRD0072",
+    "machine_name": null,
+    "production_qty": 725,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC069",
+    "product_id": "PRD0359",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "",
+    "product_id": "PRD0296",
+    "machine_name": "WID-01",
+    "production_qty": 4935,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC059",
+    "product_id": "PRD0346",
+    "machine_name": "N/A",
+    "production_qty": 2617,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC012",
+    "product_id": "PRD0141",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC027",
+    "product_id": "PRD0499",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC002",
+    "product_id": "PRD0093",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0491",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC087",
+    "product_id": "PRD0492",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC037",
+    "product_id": "PRD0010",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0131",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC082",
+    "product_id": "PRD0347",
+    "machine_name": "WID-01",
+    "production_qty": 3012,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0194",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC037",
+    "product_id": "PRD0354",
+    "machine_name": "Tool",
+    "production_qty": 4144,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC019",
+    "product_id": "PRD0232",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC096",
+    "product_id": "PRD0128",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC051",
+    "product_id": "PRD0482",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC015",
+    "product_id": "PRD0290",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC079",
+    "product_id": "PRD0409",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC042",
+    "product_id": "PRD0240",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC005",
+    "product_id": "PRD0282",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC055",
+    "product_id": "PRD0190",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC045",
+    "product_id": "PRD0372",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0465",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC095",
+    "product_id": "PRD0198",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC093",
+    "product_id": "PRD0125",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0317",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": 123,
+    "product_id": "PRD0389",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC055",
+    "product_id": "PRD0241",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC026",
+    "product_id": "PRD0117",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC056",
+    "product_id": "PRD0026",
+    "machine_name": "WID-01",
+    "production_qty": 3287,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC012",
+    "product_id": "PRD0191",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0480",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC032",
+    "product_id": "PRD0424",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC076",
+    "product_id": "PRD0002",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC010",
+    "product_id": "PRD0466",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC045",
+    "product_id": "PRD0246",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC006",
+    "product_id": "PRD0231",
+    "machine_name": "widget ",
+    "production_qty": 3177,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC044",
+    "product_id": "PRD0041",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC085",
+    "product_id": "PRD0081",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC035",
+    "product_id": "PRD0095",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC099",
+    "product_id": "PRD0463",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC051",
+    "product_id": "PRD0025",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC091",
+    "product_id": "PRD0322",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC068",
+    "product_id": "PRD0022",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC090",
+    "product_id": "PRD0458",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0134",
+    "machine_name": "###",
+    "production_qty": 2522,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC098",
+    "product_id": "PRD0051",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC010",
+    "product_id": "PRD0178",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC024",
+    "product_id": "PRD0159",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC014",
+    "product_id": "PRD0362",
+    "machine_name": "widget ",
+    "production_qty": 4476,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC079",
+    "product_id": "PRD0271",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0414",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC064",
+    "product_id": "PRD0224",
+    "machine_name": "WID-01",
+    "production_qty": 4534,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC098",
+    "product_id": "PRD0217",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC047",
+    "product_id": "PRD0066",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC043",
+    "product_id": "PRD0086",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC015",
+    "product_id": "PRD0011",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC010",
+    "product_id": "PRD0145",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "",
+    "product_id": "PRD0263",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC014",
+    "product_id": "PRD0397",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC075",
+    "product_id": "PRD0242",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC065",
+    "product_id": "PRD0484",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC041",
+    "product_id": "PRD0175",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0440",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC066",
+    "product_id": "PRD0473",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC011",
+    "product_id": "PRD0071",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC016",
+    "product_id": "PRD0151",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC061",
+    "product_id": "PRD0017",
+    "machine_name": "tool",
+    "production_qty": 2211,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC035",
+    "product_id": "PRD0165",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC006",
+    "product_id": "PRD0382",
+    "machine_name": "widget ",
+    "production_qty": 2493,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC079",
+    "product_id": "PRD0318",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0266",
+    "machine_name": "tool",
+    "production_qty": 4427,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0429",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC008",
+    "product_id": "PRD0467",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0119",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0236",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0131",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC057",
+    "product_id": "PRD0106",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC061",
+    "product_id": "PRD0380",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC059",
+    "product_id": "PRD0486",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC056",
+    "product_id": "PRD0170",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0091",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC005",
+    "product_id": "PRD0195",
+    "machine_name": "widget ",
+    "production_qty": 1579,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0202",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC084",
+    "product_id": "PRD0384",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0211",
+    "machine_name": "WID-01",
+    "production_qty": 1442,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC093",
+    "product_id": "PRD0014",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC035",
+    "product_id": "PRD0248",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC032",
+    "product_id": "PRD0367",
+    "machine_name": "###",
+    "production_qty": 64,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC010",
+    "product_id": "BAD-PROD",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC012",
+    "product_id": "PRD0296",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC003",
+    "product_id": "PRD0130",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC093",
+    "product_id": "PRD0405",
+    "machine_name": "###",
+    "production_qty": 3678,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC088",
+    "product_id": "PRD0417",
+    "machine_name": "WID-01",
+    "production_qty": 806,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC042",
+    "product_id": "PRD0154",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": 123,
+    "product_id": "PRD0045",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC079",
+    "product_id": "PRD0440",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC100",
+    "product_id": "PRD0350",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": null,
+    "product_id": "PRD0174",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC042",
+    "product_id": "PRD0190",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC072",
+    "product_id": "PRD0459",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0472",
+    "machine_name": "widget ",
+    "production_qty": 572,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC095",
+    "product_id": "PRD0012",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC090",
+    "product_id": "PRD0141",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC074",
+    "product_id": "PRD0412",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC011",
+    "product_id": "PRD0041",
+    "machine_name": "WID-01",
+    "production_qty": 1109,
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC015",
+    "product_id": "PRD0245",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC075",
+    "product_id": "PRD0480",
+    "machine_name": "WID-01",
+    "production_qty": 1130,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC049",
+    "product_id": "PRD0245",
+    "machine_name": "tool",
+    "production_qty": 2545,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC067",
+    "product_id": "PRD0314",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC035",
+    "product_id": "PRD0116",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC055",
+    "product_id": "PRD0221",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC023",
+    "product_id": "PRD0410",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": null,
+    "product_id": "PRD0174",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC009",
+    "product_id": "PRD0424",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0103",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC043",
+    "product_id": "PRD0233",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC015",
+    "product_id": "PRD0202",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC006",
+    "product_id": "PRD0483",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0312",
+    "machine_name": "N/A",
+    "production_qty": 1823,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC074",
+    "product_id": "PRD0256",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0135",
+    "machine_name": "widget ",
+    "production_qty": 122,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC098",
+    "product_id": "PRD0403",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC087",
+    "product_id": "PRD0212",
+    "machine_name": "tool",
+    "production_qty": 4109,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC024",
+    "product_id": "PRD0264",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC080",
+    "product_id": "PRD0468",
+    "machine_name": "widget ",
+    "production_qty": 1137,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC048",
+    "product_id": "PRD0287",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC062",
+    "product_id": "PRD0422",
+    "machine_name": "###",
+    "production_qty": 3017,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC091",
+    "product_id": "PRD0326",
+    "machine_name": "tool",
+    "production_qty": 4840,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC025",
+    "product_id": "PRD0250",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC047",
+    "product_id": "PRD0330",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC096",
+    "product_id": "PRD0162",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC100",
+    "product_id": "PRD0208",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC024",
+    "product_id": "PRD0029",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC098",
+    "product_id": "PRD0499",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC043",
+    "product_id": "PRD0478",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC089",
+    "product_id": "BAD-PROD",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC009",
+    "product_id": "PRD0232",
+    "machine_name": null,
+    "production_qty": 4038,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0493",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC092",
+    "product_id": "PRD0439",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0193",
+    "machine_name": null,
+    "production_qty": 1474,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC059",
+    "product_id": "PRD0266",
+    "machine_name": "tool",
+    "production_qty": 4829,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC015",
+    "product_id": "PRD0016",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC080",
+    "product_id": "PRD0377",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0191",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC089",
+    "product_id": "PRD0397",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0278",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC002",
+    "product_id": "PRD0238",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC014",
+    "product_id": "PRD0475",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0293",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC011",
+    "product_id": "PRD0459",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC032",
+    "product_id": null,
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC055",
+    "product_id": "PRD0341",
+    "machine_name": "widget ",
+    "production_qty": 588,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC053",
+    "product_id": "PRD0196",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC039",
+    "product_id": "PRD0004",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC076",
+    "product_id": "PRD0339",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC067",
+    "product_id": "PRD0009",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC049",
+    "product_id": "PRD0137",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC030",
+    "product_id": "PRD0455",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0296",
+    "machine_name": "N/A",
+    "production_qty": 4841,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC004",
+    "product_id": "PRD0304",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC018",
+    "product_id": "PRD0359",
+    "machine_name": "###",
+    "production_qty": 30,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC010",
+    "product_id": "PRD0195",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC086",
+    "product_id": "PRD0427",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC005",
+    "product_id": "PRD0479",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC022",
+    "product_id": "PRD0172",
+    "machine_name": "N/A",
+    "production_qty": 3286,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC097",
+    "product_id": "PRD0079",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC013",
+    "product_id": "PRD0493",
+    "machine_name": "widget ",
+    "production_qty": 1033,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC009",
+    "product_id": "PRD0402",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC032",
+    "product_id": "PRD0438",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0259",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC017",
+    "product_id": "PRD0498",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC096",
+    "product_id": "PRD0150",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC030",
+    "product_id": "PRD0048",
+    "machine_name": "Tool",
+    "production_qty": 4513,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC093",
+    "product_id": "PRD0132",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC022",
+    "product_id": "PRD0037",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC002",
+    "product_id": "PRD0137",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC045",
+    "product_id": "PRD0385",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC017",
+    "product_id": "PRD0394",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC029",
+    "product_id": "PRD0215",
+    "machine_name": "widget ",
+    "production_qty": 3147,
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": 123,
+    "product_id": "PRD0178",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC062",
+    "product_id": "PRD0434",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC048",
+    "product_id": "PRD0198",
+    "machine_name": "Tool",
+    "production_qty": 2346,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "",
+    "product_id": "PRD0163",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC092",
+    "product_id": "PRD0410",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC032",
+    "product_id": "PRD0363",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0377",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC072",
+    "product_id": "PRD0280",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC001",
+    "product_id": "PRD0043",
+    "machine_name": "Tool",
+    "production_qty": 4100,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC002",
+    "product_id": "PRD0479",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": 123,
+    "product_id": "PRD0068",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC087",
+    "product_id": "PRD0213",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0457",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0275",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC044",
+    "product_id": "PRD0494",
+    "machine_name": "Tool",
+    "production_qty": 1436,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC022",
+    "product_id": "PRD0457",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0247",
+    "machine_name": "tool",
+    "production_qty": 329,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0308",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC051",
+    "product_id": "PRD0308",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0030",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC099",
+    "product_id": "PRD0113",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC067",
+    "product_id": "PRD0383",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0029",
+    "machine_name": "tool",
+    "production_qty": 2853,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC035",
+    "product_id": "PRD0084",
+    "machine_name": "Tool",
+    "production_qty": 1793,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC003",
+    "product_id": "PRD0447",
+    "machine_name": "###",
+    "production_qty": 4623,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC085",
+    "product_id": "PRD0032",
+    "machine_name": "N/A",
+    "production_qty": 2354,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC072",
+    "product_id": "PRD0245",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC030",
+    "product_id": "PRD0340",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC070",
+    "product_id": "PRD0233",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0439",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "",
+    "product_id": "PRD0227",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC032",
+    "product_id": "PRD0192",
+    "machine_name": "widget ",
+    "production_qty": 1210,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC069",
+    "product_id": "PRD0416",
+    "machine_name": "tool",
+    "production_qty": 3475,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC003",
+    "product_id": "PRD0342",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC046",
+    "product_id": "PRD0295",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC007",
+    "product_id": "PRD0048",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC039",
+    "product_id": "PRD0468",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC062",
+    "product_id": "PRD0280",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC086",
+    "product_id": "PRD0043",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC039",
+    "product_id": "PRD0332",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC016",
+    "product_id": "PRD0317",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC077",
+    "product_id": "PRD0083",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC001",
+    "product_id": "PRD0163",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC058",
+    "product_id": "PRD0090",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC089",
+    "product_id": "PRD0273",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC077",
+    "product_id": "PRD0494",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC083",
+    "product_id": "PRD0469",
+    "machine_name": "###",
+    "production_qty": 639,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC046",
+    "product_id": "PRD0062",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC044",
+    "product_id": "PRD0313",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC014",
+    "product_id": "PRD0376",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC045",
+    "product_id": "PRD0391",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC067",
+    "product_id": "PRD0385",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC062",
+    "product_id": "PRD0391",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC025",
+    "product_id": "PRD0156",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC016",
+    "product_id": "PRD0447",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC051",
+    "product_id": "PRD0007",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC089",
+    "product_id": "PRD0021",
+    "machine_name": "WID-01",
+    "production_qty": 763,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC061",
+    "product_id": "PRD0071",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC035",
+    "product_id": "PRD0028",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC018",
+    "product_id": "PRD0468",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC079",
+    "product_id": "PRD0487",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC074",
+    "product_id": "PRD0482",
+    "machine_name": null,
+    "production_qty": 1907,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC064",
+    "product_id": "PRD0102",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC056",
+    "product_id": "PRD0155",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC030",
+    "product_id": "PRD0369",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC072",
+    "product_id": "PRD0171",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC029",
+    "product_id": "PRD0102",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0430",
+    "machine_name": "widget ",
+    "production_qty": 3800,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC087",
+    "product_id": "PRD0184",
+    "machine_name": "###",
+    "production_qty": 3233,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC039",
+    "product_id": "PRD0498",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC028",
+    "product_id": "PRD0088",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC070",
+    "product_id": "PRD0323",
+    "machine_name": "widget ",
+    "production_qty": 2014,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC050",
+    "product_id": "PRD0116",
+    "machine_name": "WID-01",
+    "production_qty": 2750,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC061",
+    "product_id": "PRD0308",
+    "machine_name": null,
+    "production_qty": 3389,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC040",
+    "product_id": "PRD0110",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0452",
+    "machine_name": "N/A",
+    "production_qty": 3213,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": null,
+    "product_id": "PRD0102",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC086",
+    "product_id": "PRD0073",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC043",
+    "product_id": "PRD0414",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC094",
+    "product_id": "PRD0042",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0139",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0173",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": null,
+    "product_id": "PRD0379",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC051",
+    "product_id": "PRD0418",
+    "machine_name": "WID-01",
+    "production_qty": 1443,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC096",
+    "product_id": "PRD0077",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0352",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC070",
+    "product_id": "PRD0090",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC013",
+    "product_id": "PRD0050",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC003",
+    "product_id": "PRD0389",
+    "machine_name": "Tool",
+    "production_qty": 4899,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC065",
+    "product_id": "PRD0499",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0387",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0289",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC092",
+    "product_id": "PRD0038",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC002",
+    "product_id": "PRD0237",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0436",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC035",
+    "product_id": "PRD0477",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC014",
+    "product_id": "PRD0447",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC070",
+    "product_id": "PRD0084",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC085",
+    "product_id": "PRD0237",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "",
+    "product_id": "PRD0026",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": 123,
+    "product_id": "PRD0194",
+    "machine_name": "WID-01",
+    "production_qty": 1595,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC019",
+    "product_id": "PRD0489",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC023",
+    "product_id": "PRD0041",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC028",
+    "product_id": "PRD0364",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC064",
+    "product_id": "PRD0041",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC053",
+    "product_id": "PRD0202",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC017",
+    "product_id": "PRD0432",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC005",
+    "product_id": "PRD0426",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0288",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC008",
+    "product_id": "PRD0423",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC048",
+    "product_id": "PRD0344",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC013",
+    "product_id": "PRD0325",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC058",
+    "product_id": "PRD0255",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC059",
+    "product_id": "PRD0152",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC068",
+    "product_id": "PRD0131",
+    "machine_name": null,
+    "production_qty": 4211,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC099",
+    "product_id": "PRD0016",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC082",
+    "product_id": "PRD0043",
+    "machine_name": "N/A",
+    "production_qty": 584,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0131",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC072",
+    "product_id": "PRD0397",
+    "machine_name": null,
+    "production_qty": 3459,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC013",
+    "product_id": "PRD0130",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0357",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC075",
+    "product_id": "PRD0125",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC030",
+    "product_id": "PRD0450",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC016",
+    "product_id": "PRD0267",
+    "machine_name": "Tool",
+    "production_qty": 1858,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0436",
+    "machine_name": null,
+    "production_qty": 3758,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC052",
+    "product_id": "PRD0005",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC046",
+    "product_id": "PRD0021",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0134",
+    "machine_name": "###",
+    "production_qty": 2522,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC029",
+    "product_id": "PRD0240",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC088",
+    "product_id": "PRD0056",
+    "machine_name": "WID-01",
+    "production_qty": 1664,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC012",
+    "product_id": "PRD0300",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC003",
+    "product_id": "PRD0173",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC027",
+    "product_id": "PRD0361",
+    "machine_name": "WID-01",
+    "production_qty": 914,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC047",
+    "product_id": "PRD0291",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC070",
+    "product_id": "PRD0398",
+    "machine_name": "WID-01",
+    "production_qty": 2186,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC054",
+    "product_id": "PRD0433",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC048",
+    "product_id": "PRD0161",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC058",
+    "product_id": "PRD0193",
+    "machine_name": "###",
+    "production_qty": 3539,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC023",
+    "product_id": "PRD0029",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0110",
+    "machine_name": "N/A",
+    "production_qty": 4245,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC028",
+    "product_id": "PRD0072",
+    "machine_name": "tool",
+    "production_qty": 2719,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC060",
+    "product_id": "PRD0253",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC019",
+    "product_id": "PRD0023",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC022",
+    "product_id": "PRD0182",
+    "machine_name": "WID-01",
+    "production_qty": 3730,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0253",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC010",
+    "product_id": "PRD0339",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC017",
+    "product_id": "PRD0011",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC044",
+    "product_id": "PRD0326",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0413",
+    "machine_name": "tool",
+    "production_qty": 2702,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC072",
+    "product_id": "PRD0118",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0045",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC017",
+    "product_id": "PRD0205",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC095",
+    "product_id": "PRD0084",
+    "machine_name": "WID-01",
+    "production_qty": 908,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC090",
+    "product_id": "PRD0022",
+    "machine_name": "Tool",
+    "production_qty": 4598,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC085",
+    "product_id": "PRD0132",
+    "machine_name": "widget ",
+    "production_qty": 3944,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC084",
+    "product_id": "PRD0017",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC068",
+    "product_id": "PRD0093",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC041",
+    "product_id": "PRD0317",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC094",
+    "product_id": "PRD0480",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC088",
+    "product_id": "PRD0485",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC004",
+    "product_id": "PRD0452",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": null,
+    "product_id": "PRD0395",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC099",
+    "product_id": "PRD0486",
+    "machine_name": "Tool",
+    "production_qty": 3074,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC059",
+    "product_id": "PRD0223",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC047",
+    "product_id": "PRD0161",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC076",
+    "product_id": "PRD0077",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC049",
+    "product_id": "PRD0114",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC035",
+    "product_id": "PRD0153",
+    "machine_name": "WID-01",
+    "production_qty": 1377,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC068",
+    "product_id": "PRD0115",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC042",
+    "product_id": "PRD0099",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0277",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC061",
+    "product_id": "PRD0123",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0134",
+    "machine_name": "###",
+    "production_qty": 2522,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC037",
+    "product_id": "PRD0203",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC060",
+    "product_id": "PRD0207",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC062",
+    "product_id": "PRD0426",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC002",
+    "product_id": "PRD0471",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC041",
+    "product_id": "PRD0239",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC024",
+    "product_id": "PRD0394",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0231",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC058",
+    "product_id": "PRD0130",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0081",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC051",
+    "product_id": "PRD0022",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC057",
+    "product_id": "PRD0452",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC019",
+    "product_id": "PRD0495",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC081",
+    "product_id": "PRD0265",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC012",
+    "product_id": "PRD0097",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC069",
+    "product_id": "PRD0363",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC027",
+    "product_id": "PRD0011",
+    "machine_name": "WID-01",
+    "production_qty": 3442,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0280",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC074",
+    "product_id": "PRD0234",
+    "machine_name": "widget ",
+    "production_qty": 725,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0478",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC026",
+    "product_id": "PRD0479",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0022",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC054",
+    "product_id": "PRD0480",
+    "machine_name": "###",
+    "production_qty": 1890,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0134",
+    "machine_name": "###",
+    "production_qty": 2522,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC050",
+    "product_id": "PRD0193",
+    "machine_name": "WID-01",
+    "production_qty": 1866,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC055",
+    "product_id": "PRD0402",
+    "machine_name": "widget ",
+    "production_qty": 1528,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC019",
+    "product_id": "PRD0029",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC037",
+    "product_id": "PRD0183",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC074",
+    "product_id": "PRD0322",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC028",
+    "product_id": "PRD0191",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC062",
+    "product_id": "PRD0222",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC073",
+    "product_id": "PRD0211",
+    "machine_name": "widget ",
+    "production_qty": 4236,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC040",
+    "product_id": "PRD0423",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC053",
+    "product_id": "PRD0259",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC073",
+    "product_id": "PRD0414",
+    "machine_name": "Tool",
+    "production_qty": 4103,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC083",
+    "product_id": "PRD0343",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0066",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC090",
+    "product_id": "PRD0250",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC006",
+    "product_id": "PRD0225",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC069",
+    "product_id": "PRD0147",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC096",
+    "product_id": "PRD0007",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC081",
+    "product_id": "PRD0116",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC053",
+    "product_id": "PRD0084",
+    "machine_name": "###",
+    "production_qty": 3020,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0134",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC054",
+    "product_id": "PRD0467",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "",
+    "product_id": "PRD0002",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC047",
+    "product_id": "PRD0416",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC004",
+    "product_id": "PRD0395",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC043",
+    "product_id": "PRD0156",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC026",
+    "product_id": "PRD0043",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC030",
+    "product_id": "PRD0205",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC042",
+    "product_id": "PRD0187",
+    "machine_name": null,
+    "production_qty": 3539,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC014",
+    "product_id": "PRD0062",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0409",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC089",
+    "product_id": "PRD0024",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC025",
+    "product_id": "PRD0192",
+    "machine_name": "tool",
+    "production_qty": 1970,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC095",
+    "product_id": "PRD0037",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC026",
+    "product_id": "PRD0420",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC059",
+    "product_id": "PRD0235",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC008",
+    "product_id": "PRD0209",
+    "machine_name": "Tool",
+    "production_qty": 3228,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC047",
+    "product_id": "PRD0321",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC061",
+    "product_id": "PRD0431",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0396",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC100",
+    "product_id": "PRD0448",
+    "machine_name": "WID-01",
+    "production_qty": 4850,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC052",
+    "product_id": "PRD0259",
+    "machine_name": "widget ",
+    "production_qty": 1186,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC029",
+    "product_id": "PRD0198",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC010",
+    "product_id": "PRD0196",
+    "machine_name": "widget ",
+    "production_qty": 2406,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC100",
+    "product_id": "PRD0099",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC015",
+    "product_id": "PRD0126",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC026",
+    "product_id": "PRD0349",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC002",
+    "product_id": "PRD0452",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC018",
+    "product_id": "PRD0076",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC044",
+    "product_id": "PRD0115",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC075",
+    "product_id": "PRD0425",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0404",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC091",
+    "product_id": "PRD0317",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0182",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC016",
+    "product_id": "PRD0273",
+    "machine_name": "N/A",
+    "production_qty": 2141,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC010",
+    "product_id": "PRD0317",
+    "machine_name": "widget ",
+    "production_qty": 4041,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC042",
+    "product_id": "PRD0400",
+    "machine_name": "tool",
+    "production_qty": 1577,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC059",
+    "product_id": "PRD0181",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC040",
+    "product_id": "PRD0088",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC074",
+    "product_id": "PRD0491",
+    "machine_name": "WID-01",
+    "production_qty": 1452,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC029",
+    "product_id": "PRD0284",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC073",
+    "product_id": "PRD0479",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC032",
+    "product_id": "PRD0159",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC072",
+    "product_id": "PRD0377",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC022",
+    "product_id": "PRD0159",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC005",
+    "product_id": "PRD0108",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC029",
+    "product_id": "PRD0469",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC084",
+    "product_id": "PRD0250",
+    "machine_name": null,
+    "production_qty": 3791,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC068",
+    "product_id": "PRD0034",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC073",
+    "product_id": null,
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC056",
+    "product_id": "PRD0411",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC015",
+    "product_id": "PRD0267",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC097",
+    "product_id": "PRD0259",
+    "machine_name": "tool",
+    "production_qty": 1124,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC046",
+    "product_id": "PRD0104",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC093",
+    "product_id": "PRD0118",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC006",
+    "product_id": "PRD0191",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC084",
+    "product_id": "PRD0500",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC097",
+    "product_id": "PRD0484",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC035",
+    "product_id": "PRD0414",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC040",
+    "product_id": "PRD0428",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC100",
+    "product_id": "PRD0090",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC099",
+    "product_id": "PRD0073",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC061",
+    "product_id": "PRD0040",
+    "machine_name": null,
+    "production_qty": 4200,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC075",
+    "product_id": "PRD0195",
+    "machine_name": "N/A",
+    "production_qty": 4844,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC086",
+    "product_id": "PRD0435",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC057",
+    "product_id": "PRD0029",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0225",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": null,
+    "product_id": "PRD0473",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC059",
+    "product_id": "PRD0310",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC029",
+    "product_id": "PRD0007",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC044",
+    "product_id": "PRD0129",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC003",
+    "product_id": "PRD0268",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC090",
+    "product_id": "PRD0003",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC077",
+    "product_id": "PRD0135",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC011",
+    "product_id": "PRD0398",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC032",
+    "product_id": "PRD0198",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC008",
+    "product_id": "PRD0324",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC073",
+    "product_id": "PRD0225",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0354",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "",
+    "product_id": "PRD0371",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC100",
+    "product_id": "PRD0064",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC069",
+    "product_id": "PRD0147",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0051",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC051",
+    "product_id": "PRD0119",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC058",
+    "product_id": "PRD0229",
+    "machine_name": "WID-01",
+    "production_qty": 3685,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC029",
+    "product_id": "PRD0246",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC081",
+    "product_id": "PRD0290",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC004",
+    "product_id": "PRD0493",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0066",
+    "machine_name": "widget ",
+    "production_qty": 3450,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC062",
+    "product_id": "PRD0049",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC054",
+    "product_id": null,
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC065",
+    "product_id": "PRD0164",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0282",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC096",
+    "product_id": "PRD0095",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC006",
+    "product_id": "PRD0249",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC012",
+    "product_id": "PRD0137",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC053",
+    "product_id": "PRD0453",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC051",
+    "product_id": "PRD0411",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0197",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC053",
+    "product_id": "PRD0206",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0047",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC086",
+    "product_id": "PRD0038",
+    "machine_name": "N/A",
+    "production_qty": 1268,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC034",
+    "product_id": "PRD0202",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC075",
+    "product_id": "PRD0106",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC013",
+    "product_id": "PRD0405",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC002",
+    "product_id": "PRD0235",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC032",
+    "product_id": "PRD0371",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC080",
+    "product_id": "PRD0271",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC008",
+    "product_id": "PRD0253",
+    "machine_name": "Tool",
+    "production_qty": 2716,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0015",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0045",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC089",
+    "product_id": "PRD0435",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC096",
+    "product_id": "PRD0005",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0134",
+    "machine_name": "###",
+    "production_qty": 2522,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC044",
+    "product_id": "PRD0018",
+    "machine_name": null,
+    "production_qty": 777,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC045",
+    "product_id": null,
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC007",
+    "product_id": "PRD0092",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC016",
+    "product_id": "PRD0145",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0134",
+    "machine_name": "###",
+    "production_qty": 2522,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC046",
+    "product_id": "PRD0479",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC067",
+    "product_id": "PRD0290",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC041",
+    "product_id": "PRD0498",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC094",
+    "product_id": "PRD0431",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC013",
+    "product_id": "PRD0379",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC041",
+    "product_id": "PRD0250",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC048",
+    "product_id": "PRD0200",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC025",
+    "product_id": "PRD0444",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC023",
+    "product_id": "PRD0316",
+    "machine_name": "tool",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0026",
+    "machine_name": "###",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC042",
+    "product_id": "PRD0252",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC087",
+    "product_id": "PRD0441",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC076",
+    "product_id": "PRD0458",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC075",
+    "product_id": "PRD0490",
+    "machine_name": "widget ",
+    "production_qty": 3778,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC058",
+    "product_id": "PRD0313",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC089",
+    "product_id": "PRD0480",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC039",
+    "product_id": "PRD0031",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0031",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC048",
+    "product_id": "PRD0200",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC078",
+    "product_id": "PRD0387",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC066",
+    "product_id": "PRD0452",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC046",
+    "product_id": "PRD0300",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": null
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0087",
+    "machine_name": null,
+    "production_qty": 52,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC061",
+    "product_id": "PRD0237",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC003",
+    "product_id": "PRD0483",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC098",
+    "product_id": "PRD0326",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC007",
+    "product_id": "PRD0326",
+    "machine_name": "###",
+    "production_qty": 666,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC095",
+    "product_id": "PRD0446",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC062",
+    "product_id": "PRD0046",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC072",
+    "product_id": "PRD0439",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC056",
+    "product_id": "PRD0483",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC095",
+    "product_id": "PRD0410",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC073",
+    "product_id": "PRD0383",
+    "machine_name": "widget ",
+    "production_qty": 4001,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC094",
+    "product_id": "PRD0252",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC059",
+    "product_id": "PRD0199",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": 123,
+    "product_id": "PRD0186",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC056",
+    "product_id": "PRD0384",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC064",
+    "product_id": "PRD0228",
+    "machine_name": null,
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC097",
+    "product_id": "PRD0187",
+    "machine_name": "N/A",
+    "production_qty": 1701,
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC001",
+    "product_id": "PRD0272",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC093",
+    "product_id": "PRD0306",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC060",
+    "product_id": "PRD0313",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC098",
+    "product_id": "PRD0278",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC015",
+    "product_id": "PRD0371",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC026",
+    "product_id": "PRD0279",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC031",
+    "product_id": "PRD0040",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC066",
+    "product_id": "PRD0329",
+    "machine_name": "Tool",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0410",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC054",
+    "product_id": "PRD0344",
+    "machine_name": "###",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC030",
+    "product_id": "PRD0449",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC084",
+    "product_id": "PRD0015",
+    "machine_name": "N/A",
+    "production_qty": 919,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC019",
+    "product_id": "PRD0466",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC020",
+    "product_id": "PRD0039",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC021",
+    "product_id": "PRD0134",
+    "machine_name": "###",
+    "production_qty": 2522,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC062",
+    "product_id": "PRD0150",
+    "machine_name": "###",
+    "production_qty": 3330,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC032",
+    "product_id": "PRD0450",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC009",
+    "product_id": "PRD0036",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC067",
+    "product_id": "PRD0148",
+    "machine_name": "tool",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC057",
+    "product_id": "PRD0475",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC047",
+    "product_id": "PRD0192",
+    "machine_name": "WID-01",
+    "production_qty": null,
+    "inspection_date": "2025-01-01",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC026",
+    "product_id": "PRD0021",
+    "machine_name": "WID-01",
+    "production_qty": 1162,
+    "inspection_date": "",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC098",
+    "product_id": "PRD0113",
+    "machine_name": "###",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0031",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": null,
+    "product_id": "PRD0391",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC029",
+    "product_id": "PRD0117",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC055",
+    "product_id": "PRD0406",
+    "machine_name": "widget ",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0195",
+    "machine_name": "Tool",
+    "production_qty": 1922,
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC097",
+    "product_id": "PRD0278",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC063",
+    "product_id": "PRD0072",
+    "machine_name": "Tool",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC076",
+    "product_id": "PRD0298",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC013",
+    "product_id": "PRD0266",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC048",
+    "product_id": "PRD0394",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC071",
+    "product_id": "PRD0272",
+    "machine_name": "Tool",
+    "production_qty": 4290,
+    "inspection_date": "",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC048",
+    "product_id": "PRD0086",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC057",
+    "product_id": "PRD0189",
+    "machine_name": "N/A",
+    "production_qty": "",
+    "inspection_date": "not available",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC004",
+    "product_id": "PRD0177",
+    "machine_name": "WID-01",
+    "production_qty": 900,
+    "inspection_date": "",
+    "location": null
+  },
+  {
+    "factory_id": "FAC045",
+    "product_id": "PRD0357",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC036",
+    "product_id": "PRD0041",
+    "machine_name": null,
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC074",
+    "product_id": "PRD0035",
+    "machine_name": "Tool",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC039",
+    "product_id": "PRD0417",
+    "machine_name": "Tool",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": null
+  },
+  {
+    "factory_id": "FAC062",
+    "product_id": "PRD0471",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC010",
+    "product_id": "PRD0117",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC007",
+    "product_id": "PRD0202",
+    "machine_name": null,
+    "production_qty": "ten",
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC029",
+    "product_id": "PRD0149",
+    "machine_name": "widget ",
+    "production_qty": -5,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC047",
+    "product_id": "PRD0220",
+    "machine_name": "###",
+    "production_qty": 2264,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC084",
+    "product_id": "PRD0250",
+    "machine_name": "widget ",
+    "production_qty": null,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC030",
+    "product_id": "PRD0074",
+    "machine_name": "WID-01",
+    "production_qty": -5,
+    "inspection_date": "32/13/2025",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC075",
+    "product_id": "PRD0207",
+    "machine_name": "WID-01",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC030",
+    "product_id": "PRD0357",
+    "machine_name": "###",
+    "production_qty": 1383,
+    "inspection_date": "not available",
+    "location": null
+  },
+  {
+    "factory_id": "FAC035",
+    "product_id": "PRD0036",
+    "machine_name": "tool",
+    "production_qty": "",
+    "inspection_date": "",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC067",
+    "product_id": "PRD0108",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC014",
+    "product_id": "PRD0194",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "2025-01-01",
+    "location": null
+  },
+  {
+    "factory_id": "FAC030",
+    "product_id": "PRD0292",
+    "machine_name": null,
+    "production_qty": "",
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": 123,
+    "product_id": "PRD0330",
+    "machine_name": "N/A",
+    "production_qty": null,
+    "inspection_date": "not available",
+    "location": "Mumbai"
+  },
+  {
+    "factory_id": "FAC054",
+    "product_id": "PRD0274",
+    "machine_name": "###",
+    "production_qty": -5,
+    "inspection_date": "2025-01-01",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC014",
+    "product_id": "PRD0441",
+    "machine_name": "WID-01",
+    "production_qty": "",
+    "inspection_date": null,
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC038",
+    "product_id": "PRD0195",
+    "machine_name": "tool",
+    "production_qty": 4062,
+    "inspection_date": null,
+    "location": "123"
+  },
+  {
+    "factory_id": "FAC072",
+    "product_id": "PRD0174",
+    "machine_name": "###",
+    "production_qty": 505,
+    "inspection_date": "",
+    "location": "NY"
+  },
+  {
+    "factory_id": "FAC023",
+    "product_id": "PRD0159",
+    "machine_name": "N/A",
+    "production_qty": "ten",
+    "inspection_date": "not available",
+    "location": "unknown"
+  },
+  {
+    "factory_id": "FAC095",
+    "product_id": "PRD0358",
+    "machine_name": "widget ",
+    "production_qty": "",
+    "inspection_date": "32/13/2025",
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC067",
+    "product_id": "PRD0493",
+    "machine_name": "N/A",
+    "production_qty": -5,
+    "inspection_date": null,
+    "location": "mumbAI"
+  },
+  {
+    "factory_id": "FAC033",
+    "product_id": "PRD0390",
+    "machine_name": "tool",
+    "production_qty": null,
+    "inspection_date": "32/13/2025",
+    "location": "unknown"
+  }
+]
