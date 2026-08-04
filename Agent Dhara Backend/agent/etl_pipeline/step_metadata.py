@@ -211,9 +211,45 @@ def enrich_relationship_plan_joins(rel_plan: Dict[str, Any], rules: Dict[str, An
 
 
 def finalize_dataset_steps(steps: List[Dict[str, Any]], assessment: Dict[str, Any], rules: Dict[str, Any]) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+    ACTION_EFFECTS = {
+        "trim": {"trim"},
+        "trim_preserve_case": {"trim", "preserve_case"},
+    }
+    
+    unique_steps: List[Dict[str, Any]] = []
     for st in steps:
         if not isinstance(st, dict):
             continue
+        col = st.get("column")
+        act = st.get("action")
+        
+        is_redundant = False
+        for ost in unique_steps:
+            if ost.get("column") == col:
+                oact = ost.get("action")
+                if oact == act:
+                    is_redundant = True
+                    break
+                if act in ACTION_EFFECTS and oact in ACTION_EFFECTS:
+                    if ACTION_EFFECTS[act].issubset(ACTION_EFFECTS[oact]):
+                        is_redundant = True
+                        break
+        if is_redundant:
+            continue
+            
+        to_remove = []
+        for idx, ost in enumerate(unique_steps):
+            if ost.get("column") == col:
+                oact = ost.get("action")
+                if act in ACTION_EFFECTS and oact in ACTION_EFFECTS:
+                    if ACTION_EFFECTS[oact].issubset(ACTION_EFFECTS[act]):
+                        to_remove.append(idx)
+        for idx in sorted(to_remove, reverse=True):
+            unique_steps.pop(idx)
+            
+        unique_steps.append(st)
+        
+    out: List[Dict[str, Any]] = []
+    for st in unique_steps:
         out.append(enrich_step_record(st, assessment=assessment, rules=rules))
     return out

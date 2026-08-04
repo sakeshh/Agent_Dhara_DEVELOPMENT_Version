@@ -136,15 +136,17 @@ class TestScenarioMatrix(unittest.TestCase):
 
     def test_transform_only(self):
         df = self._load_fixture("transform_only.json")
-        # Supply business notes that trigger PII hashing steps (transform phase)
+        # Supply business notes that trigger PII hashing steps (now Phase 1 preparation phase)
         rules = {
             "notes": "hash ssn and credit card columns for privacy compliance"
         }
         res = self._run_pipeline(df, "dbo.transform_only", rules=rules)
-        # Mask ssn / ssn hashing is transform phase
+        # Mask ssn / ssn hashing (hash_phone) is single-dataset, hence Phase 1 (cleanse)
         cleanse_plan, transform_plan = split_plan_phases(res["plan"])
+        cleanse_steps = cleanse_plan.get("datasets", {}).get("dbo.transform_only", {}).get("steps", [])
         transform_steps = transform_plan.get("datasets", {}).get("dbo.transform_only", {}).get("steps", [])
-        self.assertTrue(len(transform_steps) > 0, "Expected transform-phase steps (e.g. hash_phone for SSN/CC masking)")
+        self.assertTrue(len(cleanse_steps) > 0, "Expected preparation-phase steps (e.g. hash_phone for SSN/CC masking)")
+        self.assertEqual(len(transform_steps), 0, "Single-dataset pipelines have exactly zero cross-dataset Phase 2 steps")
 
     def test_mixed_dq_rating(self):
         df = self._load_fixture("mixed_dq_rating.json")

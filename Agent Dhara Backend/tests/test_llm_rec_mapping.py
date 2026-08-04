@@ -167,16 +167,29 @@ class TestPlannerIntegration(unittest.TestCase):
             dq_recommendations=dq_recs,
         )
 
-        # High confidence -> should auto-apply
+        # Under the new trust boundary security policy, AI recommendations must route to manual review first
+        self.assertEqual(len(plan.get("manual_review", [])), 1)
+        mr_item = plan["manual_review"][0]
+        self.assertEqual(mr_item["suggested_action"], "review_manually")
+        self.assertEqual(mr_item["llm_recommendation"]["suggested_fix"], "Trim name values")
+
+        # Resolve the manual review item to confirm it
+        from agent.etl_pipeline.manual_review_promote import apply_manual_resolutions
+        res_opt = next(o for o in mr_item["resolution_options"] if o["id"] == "llm_suggested")
+        plan, _ = apply_manual_resolutions(
+            plan, 
+            [{"item_id": mr_item["id"], "resolution_id": res_opt["id"]}],
+            business_rules=plan.get("business_rules")
+        )
+
+        # After user confirmation/approval, it should be promoted to steps
         steps = plan["datasets"]["dbo.customers"]["steps"]
         self.assertEqual(len(steps), 1)
         step = steps[0]
         self.assertEqual(step["action"], "trim")
         self.assertIn("llm_recommendation", step)
         self.assertEqual(step["llm_recommendation"]["suggested_fix"], "Trim name values")
-
-        # manual_review should be empty
-        self.assertEqual(len(plan.get("manual_review", [])), 0)
+        self.assertEqual(len([m for m in plan.get("manual_review", []) if m["status"] == "pending"]), 0)
 
     def test_planner_integrates_low_confidence_llm_rec(self) -> None:
         assessment = {

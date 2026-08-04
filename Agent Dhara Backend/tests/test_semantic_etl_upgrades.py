@@ -300,6 +300,10 @@ class TestSemanticEtlUpgrades(unittest.TestCase):
             }
         )
         
+        # Validate the plan to attach validation certificate per the new pre-codegen validation gate
+        from agent.etl_pipeline.validate_plan import validate_etl_plan
+        validate_etl_plan(plan, assessment, {"auto_resolve_pending": False})
+        
         flow = {
             "phase": "approved",
             "plan": plan,

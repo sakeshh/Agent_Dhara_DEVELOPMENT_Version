@@ -688,6 +688,7 @@ def etl_plan_start(
         flow.setdefault("narration_cache", {})[cache_key] = plan["narration"]
 
     plan_ok, plan_errs = validate_etl_plan(plan, assess, rules_merged)
+    plan["build_warnings"] = list(set((plan.get("build_warnings") or []) + plan_errs))
 
     eng_rec = plan.get("engine_recommendation") or {}
     if engine_user_override:
@@ -817,7 +818,7 @@ def etl_apply_manual_resolutions(
     
     # We also apply manual resolutions to the current rules in flow
     rules = flow.get("business_rules") or plan.get("business_rules") or {}
-    updated, apply_errs = apply_manual_resolutions(plan, resolutions, business_rules=rules)
+    updated, apply_errs = apply_manual_resolutions(plan, resolutions, business_rules=rules, assessment=assess)
     if apply_errs:
         logger.warning(f"etl_apply_manual_resolutions: Errors applying resolutions: {apply_errs}")
     
@@ -891,6 +892,20 @@ def etl_apply_manual_resolutions(
     from agent.etl_pipeline.classify_steps import tag_plan_step_buckets
     updated = tag_plan_step_buckets(updated, rules)
 
+    # Re-evaluate projected column certificates, Phase 2 gates, and readiness scorecard post-resolutions
+    from agent.etl_pipeline.readiness_engine import (
+        build_projected_column_certificates,
+        evaluate_all_operation_gates,
+        recompute_readiness_scorecard
+    )
+    approved_waivers = rules.get("approved_waivers") or []
+    updated["projected_column_readiness"] = build_projected_column_certificates(updated, assess or {})
+    joins_list = updated.get("relationships", {}).get("joins") or []
+    updated["projected_phase2_gates"] = evaluate_all_operation_gates(
+        updated["projected_column_readiness"], joins_list, approved_waivers
+    )
+    updated["readiness_scorecard"] = recompute_readiness_scorecard(updated, assess or {}, rules)
+
     # Run validation on the resolved plan
     from agent.etl_pipeline.validate_plan import validate_etl_plan
     plan_ok, plan_errs = validate_etl_plan(updated, assess or {}, rules)
@@ -906,6 +921,7 @@ def etl_apply_manual_resolutions(
     cov_report = build_coverage_report(assess or {}, updated)
     updated["coverage_report"] = cov_report
 
+    updated["build_warnings"] = plan_errs
     flow["plan"] = updated
     flow["plan_validation_ok"] = plan_ok
     flow["plan_validation_errors"] = plan_errs
@@ -1266,6 +1282,54 @@ def etl_generate_code(
         }
     plan = _rehydrate_plan(plan, ctx, assess=assess)
     
+    from agent.etl_pipeline.plan_coverage_report import build_coverage_report
+    cov_report = build_coverage_report(assess, plan)
+    allow_uncovered = bool(flow.get("allow_uncovered") or plan.get("allow_uncovered"))
+    if cov_report.get("uncovered") and not allow_uncovered:
+        # Only block on HIGH severity uncovered issues — LOW/MEDIUM proceed with warnings
+        high_uncovered = [u for u in cov_report["uncovered"] if str(u.get("severity", "")).upper() == "HIGH"]
+        if high_uncovered:
+            return {
+                "ok": False,
+                "error": "UNCOVERED_ISSUES",
+                "message": f"Cannot generate code: {len(high_uncovered)} HIGH severity issue(s) in the assessment are not mapped to any ETL step, manual review, or non-fixable resolution.",
+                "uncovered": high_uncovered,
+            }
+        # LOW/MEDIUM uncovered: log a warning but allow generation to proceed
+        
+    # Verify plan validation is cryptographically bound
+    val_cert = plan.get("validation_certificate")
+    if not val_cert:
+        return {
+            "ok": False,
+            "error": "PLAN_NOT_VALIDATED",
+            "message": "The plan has not been validated. Confirm and validate the plan before generating code.",
+        }
+        
+    import hashlib
+    import json
+    
+    # Hash only user-editable configuration keys to be stable under rehydration
+    core_plan = {
+        "datasets": plan.get("datasets") or {},
+        "business_rules": plan.get("business_rules") or {},
+        "relationships": plan.get("relationships") or {},
+        "global_steps": plan.get("global_steps") or [],
+        "manual_review": plan.get("manual_review") or [],
+    }
+    try:
+        blob = json.dumps(core_plan, sort_keys=True, default=str)
+    except Exception:
+        blob = str(core_plan)
+    expected_hash = "sha256:" + hashlib.sha256(blob.encode("utf-8", errors="ignore")).hexdigest()
+    
+    if val_cert.get("validated_plan_hash") != expected_hash:
+        return {
+            "ok": False,
+            "error": "PLAN_MODIFIED",
+            "message": "The plan has been modified since it was last validated. Please re-run confirmation/validation.",
+        }
+        
     # Gate check: check for any pending complex or non-fixable issues
     from agent.etl_pipeline.planner import get_unacknowledged_blockers
     blockers = get_unacknowledged_blockers(plan)
@@ -1283,21 +1347,6 @@ def etl_generate_code(
     if non_fixable:
         from agent.etl_pipeline.manual_review_promote import promote_non_fixable_resolutions
         plan = promote_non_fixable_resolutions(plan, non_fixable)
-        
-    from agent.etl_pipeline.plan_coverage_report import build_coverage_report
-    cov_report = build_coverage_report(assess, plan)
-    allow_uncovered = bool(flow.get("allow_uncovered") or plan.get("allow_uncovered"))
-    if cov_report.get("uncovered") and not allow_uncovered:
-        # Only block on HIGH severity uncovered issues — LOW/MEDIUM proceed with warnings
-        high_uncovered = [u for u in cov_report["uncovered"] if str(u.get("severity", "")).upper() == "HIGH"]
-        if high_uncovered:
-            return {
-                "ok": False,
-                "error": "UNCOVERED_ISSUES",
-                "message": f"Cannot generate code: {len(high_uncovered)} HIGH severity issue(s) in the assessment are not mapped to any ETL step, manual review, or non-fixable resolution.",
-                "uncovered": high_uncovered,
-            }
-        # LOW/MEDIUM uncovered: log a warning but allow generation to proceed
         
     if plan.get("_manifest_missing"):
         return {
@@ -1711,7 +1760,7 @@ def etl_execute_sql(
         }
 
     from agent.sql_preflight import lint_generated_sql
-    lint_res = lint_generated_sql(sql, dialect="tsql")
+    lint_res = lint_generated_sql(code, dialect="tsql")
     if not lint_res.get("ok"):
         violations = lint_res.get("errors") or []
         violations_str = "; ".join(f"L{v.get('line')}:C{v.get('column')} - {v.get('description')}" for v in violations)
@@ -1736,7 +1785,7 @@ def etl_execute_sql(
 
     assess = _get_assessment(sess, None)
     result = orchestrate_sql_execution(
-        sql,
+        code,
         session_id=sid,
         run_id=None,
         approved=approved,

@@ -45,10 +45,12 @@ class TestSprint2Features(unittest.TestCase):
 
     def test_phase_classifier_actions(self):
         self.assertEqual(classify_action_phase("trim"), "cleanse")
-        self.assertEqual(classify_action_phase("hash_phone"), "transform")
-        self.assertEqual(classify_action_phase("mask_phone"), "transform")
-        self.assertEqual(classify_action_phase("replace_values"), "transform")
+        self.assertEqual(classify_action_phase("hash_phone"), "cleanse")
+        self.assertEqual(classify_action_phase("mask_phone"), "cleanse")
+        self.assertEqual(classify_action_phase("replace_values"), "cleanse")
         self.assertEqual(classify_action_phase("parse_dates"), "cleanse")
+        self.assertEqual(classify_action_phase("validate_and_partition_relationship"), "transform")
+        self.assertEqual(classify_action_phase("quarantine_orphan_fk"), "transform")
 
     def test_split_plan_phases(self):
         plan = {
@@ -57,7 +59,7 @@ class TestSprint2Features(unittest.TestCase):
                 "dbo.Customers_Raw": {
                     "steps": [
                         {"order": 1, "action": "trim", "column": "CustomerName"},
-                        {"order": 2, "action": "hash_phone", "column": "Phone"},
+                        {"order": 2, "action": "validate_and_partition_relationship", "column": "Phone"},
                         {"order": 3, "action": "parse_dates", "column": "CreatedDate"},
                     ]
                 }
@@ -76,7 +78,7 @@ class TestSprint2Features(unittest.TestCase):
         # Verify transform plan steps
         transform_steps = transform_plan["datasets"]["dbo.Customers_Raw"]["steps"]
         self.assertEqual(len(transform_steps), 1)
-        self.assertEqual(transform_steps[0]["action"], "hash_phone")
+        self.assertEqual(transform_steps[0]["action"], "validate_and_partition_relationship")
         self.assertEqual(transform_steps[0]["order"], 1)
 
     def test_planner_generation_mode_warning(self):

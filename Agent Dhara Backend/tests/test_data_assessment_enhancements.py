@@ -430,13 +430,13 @@ class TestDataAssessmentEnhancements(unittest.TestCase):
         issue_types = [it.get("type") for it in issues]
         
         self.assertIn("suspicious_zero", issue_types)
-        self.assertIn("negative_values", issue_types)
+        self.assertIn("negative_values_review_required", issue_types)
         
         zero_issue = next(it for it in issues if it["type"] == "suspicious_zero")
         self.assertEqual(zero_issue["count"], 1) # 0
         self.assertEqual(zero_issue["column"], "order_id")
         
-        neg_issue = next(it for it in issues if it["type"] == "negative_values")
+        neg_issue = next(it for it in issues if it["type"] == "negative_values_review_required")
         self.assertEqual(neg_issue["count"], 1) # -10.0
         self.assertEqual(neg_issue["column"], "price")
 

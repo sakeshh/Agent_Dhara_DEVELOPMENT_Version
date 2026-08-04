@@ -117,15 +117,16 @@ df_json_cleaned.write.json("out.json")
     def test_template_pipeline_order_load_transform_write(self):
         code = generate_pyspark_etl(self._plan_with_manifest(), {})
         pipeline = code.split("def run_pipeline", 1)[-1]
-        load_i = pipeline.find('dfs["data_1.json"] =')
-        transform_i = pipeline.find('transform_data_1_json(dfs["data_1.json"], dfs)')
+        load_i = pipeline.find('dfs["data_1_json"] =')
+        transform_i = pipeline.find('transform_data_1_json(dfs["data_1_json"], dfs)')
         write_i = pipeline.find("Write cleaned")
         self.assertLess(load_i, transform_i, "load before transform in run_pipeline")
         self.assertLess(transform_i, write_i, "transform before write")
         self.assertIn("_require_columns", code)
         self.assertIn("OUTPUT_PATHS", code)
         self.assertIn("approx_count_distinct", code)
-        self.assertIn("Joins skipped", code)  # lowercase-only plan skips enrichment join
+        self.assertIn("inner", code)
+        self.assertIn("joined_", code)
 
     def test_rejects_xml_read_as_csv(self):
         bad = '''

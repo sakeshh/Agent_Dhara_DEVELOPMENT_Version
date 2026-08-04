@@ -31,6 +31,9 @@ class TestCodegenCombination(unittest.TestCase):
                 "plan_id": "test_plan",
                 "datasets": {
                     "dbo.Accounts": {}
+                },
+                "validation_certificate": {
+                    "validated_plan_hash": "sha256:bbbe53926cb6654fc07aa6eb552295f9fd9ee72f70b5bbb1000355d1b7b27218"
                 }
             }
         }

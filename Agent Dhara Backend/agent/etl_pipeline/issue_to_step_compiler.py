@@ -10,19 +10,20 @@ logger = logging.getLogger("agent.etl_pipeline.issue_to_step_compiler")
 from agent.transformation_suggester import ISSUE_TO_ACTION
 _ISSUE_TO_ACTION_MAP = dict(ISSUE_TO_ACTION)
 _ISSUE_TO_ACTION_MAP.update({
-    "nulls": "fill_or_drop",
-    "null_values": "fill_or_drop",
+    # Null handling: optional fields flag + noop, key fields flag_missing_key via governance override
+    "nulls": "fill_nulls_flag",
+    "null_values": "fill_nulls_flag",
     "type_mismatch": "cast_type",
     "invalid_type": "cast_type",
-    "outliers": "clip_or_flag",
-    "numeric_outliers": "clip_or_flag",
-    "duplicate": "deduplicate",
-    "duplicates": "deduplicate",
-    "near_duplicate_rows": "deduplicate",
-    "numeric_outliers_iqr": "clip_or_flag",
+    "outliers": "flag_outliers",
+    "numeric_outliers": "flag_outliers",
+    "duplicate": "flag_duplicate_candidates",
+    "duplicates": "flag_duplicate_candidates",
+    "near_duplicate_rows": "flag_near_duplicate_cluster",
+    "numeric_outliers_iqr": "flag_outliers",
     # duplicate_primary_key is a COMPLEX issue — always routes to manual review,
     # never auto-deduped without explicit user acknowledgment
-    "duplicate_primary_key": "review_manually",
+    "duplicate_primary_key": "flag_business_key_duplicate",
     "invalid_gstin": "regex_replace",
     "invalid_pan": "regex_replace",
     "invalid_aadhaar": "regex_replace",
@@ -49,10 +50,10 @@ _ISSUE_TO_ACTION_MAP.update({
     "placeholder_detected":               "nullify_punctuation",
     # Categorical column contains only-digit strings — flag it, do NOT cast to numeric
     "string_with_only_digits_in_text_column": "flag_domain_violation",
-    # Numeric
-    "negative_values":               "range_clip",
+    # Numeric — flag violations, do NOT clip in Phase 1
+    "negative_values":               "flag_range_violation",
     "zero_values":                   "zero_to_null",
-    "impossible_values":             "range_clip",
+    "impossible_values":             "flag_range_violation",
     "precision_loss":                "cast_type",
     # Date/time
     # invalid_date_format: use parse_dates_safe which emits both a flag column
@@ -61,10 +62,10 @@ _ISSUE_TO_ACTION_MAP.update({
     "dummy_dates":                   "nullify_dummy_dates",
     "invalid_date_format":           "parse_dates_safe",
     "date_range_violation":          "nullify_future_dates",
-    # Boolean/categorical
+    # Boolean/categorical — flag, do NOT replace values in Phase 1
     "boolean_inconsistency":         "standardize_boolean",
-    "invalid_category":              "replace_values",
-    "enum_violation":                "replace_values",
+    "invalid_category":              "flag_domain_violation",
+    "enum_violation":                "flag_domain_violation",
     "inconsistent_boolean":          "standardize_boolean",
     # PII / privacy
     "pii_email":                     "sanitize_email",
@@ -77,8 +78,33 @@ _ISSUE_TO_ACTION_MAP.update({
     # Invalid numerics in named numeric columns (e.g. amount='error') — flag + leave raw
     "invalid_numeric_values":        "fill_nulls_flag",
     # Sentinel date strings (00/00/0000, 99/99/9999) → nullify
-    "invalid_date_format":           "parse_dates_safe",
+    "near_duplicate_rows":           "flag_near_duplicate_cluster",
+    "exact_duplicate_rows":          "flag_duplicate_candidates",
+    "declared_key_null_violation":   "flag_missing_declared_key",
+    "orphan_foreign_key_rows":       "validate_and_partition_relationship",
+    "cross_field_non_negative":      "flag_cross_field_violation",
+    "numeric_value_serialized_as_string": "coerce_numeric",
 })
+
+
+_BUSINESS_KEY_PATTERNS = ("id", "key", "code", "ref", "num", "no", "nbr", "uuid", "guid", "sku", "ean", "isbn", "asin")
+_NAME_FIELD_PATTERNS = ("name", "title", "description", "label", "machine", "customer", "vendor", "supplier", "employee", "owner")
+
+def _is_business_key(col: str) -> bool:
+    col_l = str(col).lower()
+    return any(k in col_l for k in _BUSINESS_KEY_PATTERNS)
+
+def _is_name_field(col: str) -> bool:
+    col_l = str(col).lower()
+    return any(k in col_l for k in _NAME_FIELD_PATTERNS)
+
+
+# Flag-only issues that must never auto-dedup
+_FLAG_ONLY_ISSUE_TYPES = frozenset({
+    "near_duplicate_rows",
+    "exact_duplicate_rows",
+})
+
 
 
 _NON_FIXABLE_ISSUE_TYPES = frozenset({
@@ -201,6 +227,27 @@ def _apply_three_pass_overrides(
     elif sub_type == "boolean_int" and action in ("coerce_numeric", "review_manually"):
         action = "standardize_boolean"
         note = "Semantic refinement: standardize_boolean for boolean_int sub_type"
+    # Pass 4: Governance guards
+    if action == "lowercase" and (_is_name_field(col) or _is_business_key(col)):
+        action = "trim_preserve_case"
+        note = f"Governance override: replaced lowercase with trim_preserve_case for name/key column {col}"
+        
+    if it == "declared_key_null_violation":
+        action = "flag_missing_declared_key"
+        note = f"Governance override: replaced null imputation with flag_missing_declared_key for declared key {col}"
+    elif it in ("exact_duplicate_rows", "duplicate_primary_key", "near_duplicate_rows") or action == "deduplicate":
+        if it == "near_duplicate_rows":
+            action = "flag_near_duplicate_cluster"
+            note = "Governance override: replaced deduplicate with flag_near_duplicate_cluster for near duplicates"
+        elif it == "duplicate_primary_key":
+            action = "flag_business_key_duplicate"
+            note = "Governance override: replaced deduplicate with flag_business_key_duplicate for primary/business key duplicates"
+        else:
+            action = "flag_duplicate_candidates"
+            note = "Governance override: replaced deduplicate with flag_duplicate_candidates for exact duplicates"
+    elif action in ("fill_nulls_simple", "fill_or_drop") and (_is_business_key(col) or sub_type in ("identifier", "key")):
+        action = "flag_missing_key"
+        note = f"Governance override: replaced null imputation with flag_missing_key for key column {col}"
 
     # Enforce manual intent preservation if semantic confidence is low
     if was_manual and action != "review_manually" and sem_confidence < 0.85:
@@ -208,10 +255,20 @@ def _apply_three_pass_overrides(
         note = f"Preserved manual review: semantic confidence {sem_confidence:.2f} < 0.85"
 
     # Determine auto_fixable
-    is_risky = action in ("drop_column", "exclude_column", "clip_outliers", "cap_outliers", "review_manually")
+    from agent.etl_pipeline.action_registry import ACTION_REGISTRY
+    meta = ACTION_REGISTRY.get(action) or {}
+    is_risky = (
+        action in ("drop_column", "exclude_column", "clip_outliers", "cap_outliers", "review_manually")
+        or meta.get("invalid")
+        or meta.get("auto_eligible") is False
+    )
     auto_fixable = sug.get("auto_fixable")
     if auto_fixable is None:
-        auto_fixable = action not in ("review_manually", "noop")
+        auto_fixable = (
+            action not in ("review_manually", "noop")
+            and not meta.get("invalid")
+            and meta.get("auto_eligible") is not False
+        )
     if is_risky:
         auto_fixable = False
 
@@ -219,9 +276,19 @@ def _apply_three_pass_overrides(
     from agent.etl_pipeline.rule_provenance import RuleProvenance
     is_llm_inferred = sug.get("llm_recommendation") is not None and sug.get("provenance") != RuleProvenance.AUTO_DETECTED
     if is_llm_inferred:
-        confidence = sug.get("llm_confidence") or 1.0
-        if confidence < 0.65:
-            auto_fixable = False
+        # LLM suggestions are always advisory and require review (Patch 5)
+        auto_fixable = False
+        sug["authority_source"] = "LLM_ADVISORY"
+
+    # Populate required action params with safe Phase 1 defaults
+    if action == "cast_type":
+        params.setdefault("target_type", sug.get("target_type") or sug.get("target_dtype") or "string")
+        params.setdefault("preserve_raw", True)
+    elif action == "coerce_numeric":
+        params.setdefault("target_type", sug.get("target_type") or sug.get("target_dtype") or "double")
+        params.setdefault("preserve_raw", True)
+    elif action in ("parse_dates", "parse_dates_safe"):
+        params.setdefault("accepted_formats", ["yyyy-MM-dd", "yyyy/MM/dd", "MM/dd/yyyy", "dd-MM-yyyy"])
 
     return action, auto_fixable, note, params
 

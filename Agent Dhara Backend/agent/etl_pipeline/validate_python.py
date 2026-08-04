@@ -72,6 +72,15 @@ _ACTION_CODE_MARKERS: Dict[str, List[str]] = {
     "noop": ["no transform", "noop"],
     "at_least_one": ["isna().all(axis=1)", "at_least_one"],
     "cast_type": ["cast(", "astype(", ".astype", "astype", "cast_type", "cast type"],
+    "trim_preserve_case": ["trim_preserve_case", "trim_preserve", "trim(", "F.trim("],
+    "preserve_null": ["preserve_null", "coalesce", "fillna", "col(", "noop", "no transform"],
+    "preserve_null_and_flag": ["preserve_null_and_flag", "is_missing_", "coalesce", "fillna"],
+    "flag_missing_key": ["flag_missing_key", "is_missing_", "isnull(", ".isnull()", "is_null()"],
+    "flag_missing_declared_key": ["flag_missing_declared_key", "is_missing_", "isnull(", ".isnull()", "is_null()"],
+    "create_normalized_match_key": ["create_normalized_match_key", "_match_key", "regexp_replace", "trim("],
+    "flag_duplicate_candidates": ["flag_duplicate_candidates", "row_number", "duplicate_candidate", "duplicate_candidates"],
+    "flag_business_key_duplicate": ["flag_business_key_duplicate", "duplicate_candidate", "row_number"],
+    "flag_near_duplicate_cluster": ["flag_near_duplicate_cluster", "levenshtein", "soundex", "cluster"],
 }
 
 

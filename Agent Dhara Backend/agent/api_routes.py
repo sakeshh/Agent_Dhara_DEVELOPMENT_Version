@@ -741,6 +741,18 @@ def api_etl_generate(payload: EtlGeneratePayload, request: Request, _auth: None 
     return result
 
 
+@router.post("/etl/flush-codegen-cache")
+def api_flush_codegen_cache(_auth: None = Depends(require_backend_token)) -> Dict[str, Any]:
+    """Admin: flush all in-memory codegen caches (circuit-breaker, failure-cache, code-cache).
+
+    Call this immediately after deploying validator or codegen fixes to prevent stale
+    pre-fix failures from blocking LLM generation for the next 30 seconds.
+    """
+    from agent.etl_pipeline.llm_codegen import clear_codegen_caches
+    clear_codegen_caches()
+    return {"ok": True, "message": "All codegen caches flushed — LLM path is unblocked."}
+
+
 class GenerateEtlRequest(BaseModel):
     plan: Dict[str, Any]
     assessment: Dict[str, Any]

@@ -5,45 +5,16 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-_AUTO_ACTIONS = frozenset(
-    {
-        "trim",
-        "lowercase",
-        "uppercase",
-        "fill_nulls_simple",
-        "fill_or_drop",
-        "cast_type",
-        "coerce_numeric",
-        "parse_dates",
-        "parse_dates_safe",        # safe date parse with audit flag
-        "flag_domain_violation",   # domain violation flagging (no data loss)
-        "fill_nulls_flag",         # flag + preserve invalid numeric values
-        "sanitize_email",
-        "normalize_phone",
-        "regex_replace",
-        "range_clip",
-        "clip_or_flag",
-        "flag_outliers",
-        "clip_outliers",
-        "cap_outliers",
-        "standardize_boolean",
-        "replace_values",
-        "zero_to_null",
-        "deduplicate",
-        "join_datasets",
-        "hash_phone",
-        "mask_phone",
-        "drop_column",
-        "exclude_column",
-        "nullify_future_dates",
-        "nullify_punctuation",
-        "nullify_dummy_dates",
-        "noop",
-        "replace_sentinel_values",
-    }
+from agent.etl_pipeline.action_registry import (
+    ACTION_REGISTRY,
+    AUTO_ELIGIBLE_ACTIONS as _AUTO_ACTIONS,
+    ALWAYS_REVIEW_ACTIONS as _REVIEW_ACTIONS,
+    get_action_meta,
 )
 
-_REVIEW_ACTIONS = frozenset({"review_manually", "validate_referential_integrity_or_stage"})
+# Export lists for backward compatibility tests
+_AUTO_ACTIONS = _AUTO_ACTIONS
+_REVIEW_ACTIONS = _REVIEW_ACTIONS
 
 
 def classify_step_bucket(
@@ -58,29 +29,35 @@ def classify_step_bucket(
     """
     act = (action or "").strip().lower()
     sev = (severity or "medium").lower()
+    meta = get_action_meta(act)
 
+    if meta.get("invalid"):
+        return {"bucket": "blocked", "phase": "invalid"}
+
+    # Special rules:
+    # 1. drop_rows
     if act == "drop_rows":
         bucket = "blocked" if never_drop_rows else "review"
+    # 2. fill_or_drop or other conditional auto actions
     elif act == "fill_or_drop" and null_percentage is not None and null_percentage > 30:
         bucket = "review"
-    elif act in _REVIEW_ACTIONS or sev == "high":
+    elif meta.get("requires_review") or sev == "high":
         bucket = "review"
-    elif act in _AUTO_ACTIONS:
+    elif meta.get("auto_eligible") is True:
+        bucket = "auto"
+    elif meta.get("auto_eligible") == "CONDITIONAL":
+        # Safe defaults for conditional actions
         bucket = "auto"
     else:
         bucket = "review"
 
-    # Define cleanse-phase vs transform-phase actions
-    cleanse_actions = {
-        "trim", "lowercase", "uppercase", "fill_nulls_simple", "fill_or_drop",
-        "cast_type", "coerce_numeric", "parse_dates", "sanitize_email",
-        "normalize_phone", "range_clip", "clip_or_flag", "flag_outliers",
-        "clip_outliers", "cap_outliers", "standardize_boolean", "zero_to_null",
-        "deduplicate", "drop_column", "exclude_column", "nullify_future_dates",
-        "nullify_punctuation", "nullify_dummy_dates",
-        "noop", "drop_rows"
-    }
-    phase = "cleanse" if act in cleanse_actions else "transform"
+    phase_num = meta.get("phase")
+    if phase_num == 1:
+        phase = "cleanse"
+    elif phase_num == 2:
+        phase = "transform"
+    else:
+        phase = "transform"
 
     return {"bucket": bucket, "phase": phase}
 

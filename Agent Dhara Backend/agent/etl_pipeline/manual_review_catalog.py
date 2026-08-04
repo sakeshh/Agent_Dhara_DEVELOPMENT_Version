@@ -10,6 +10,45 @@ ResolutionOption = Dict[str, Any]
 
 _SKIP_ACTIONS = frozenset({"noop", "keep_as_is"})
 
+RESOLUTION_TO_ACTION_MAP: Dict[str, str] = {
+    # ── Legacy dedup resolution IDs → Phase 1 preparation actions ─────────────
+    "deduplicate_last":               "deduplicate",
+    "deduplicate_first":              "deduplicate",
+    "deduplicate_near_duplicates":    "flag_near_duplicate_cluster",
+    "deduplicate_business_key":       "flag_business_key_duplicate",
+    "deduplicate_insensitive_values": "create_normalized_match_key",
+    # ── Legacy null resolution IDs → Phase 1 preparation actions ──────────────
+    "fill_nulls":                     "fill_nulls_simple",
+    "fill_null":                      "fill_nulls_simple",
+    "fill_nulls_simple":              "fill_nulls_simple",
+    "fill_or_drop":                   "fill_nulls_simple",
+    # ── Legacy outlier resolution IDs → Phase 1 preparation actions ───────────
+    "flag":                           "clip_or_flag",
+    "flag_outliers":                  "flag_outliers",
+    "clip_or_flag":                   "clip_or_flag",
+    # ── Relationship resolution IDs (Phase 2 cross-dataset integration) ────────
+    "quarantine_all_null":            "validate_and_partition_relationship",
+    "reject_orphans":                 "validate_and_partition_relationship",
+    "validate_referential_integrity_or_stage": "validate_and_partition_relationship",
+    # ── Phase 1 canonical IDs (pass-through) ──────────────────────────────────
+    "flag_near_duplicate_cluster":         "flag_near_duplicate_cluster",
+    "flag_duplicate_candidates":           "flag_duplicate_candidates",
+    "flag_business_key_duplicate":         "flag_business_key_duplicate",
+    "flag_missing_declared_key":           "flag_missing_declared_key",
+    "flag_missing_key":                    "flag_missing_key",
+    "create_normalized_match_key":         "create_normalized_match_key",
+    "validate_and_partition_relationship": "validate_and_partition_relationship",
+    "coerce_numeric":                      "coerce_numeric",
+    "parse_dates_safe":                    "parse_dates_safe",
+    "trim_preserve_case":                  "trim_preserve_case",
+    # ── No-ops / policy-only actions ──────────────────────────────────────────
+    "abort_pipeline":    "noop",
+    "accept_risk":       "noop",
+    "force_unlock":      "force_unlock",
+    "skip_requirement":  "skip_requirement",
+    "keep_as_is":        "noop",
+}
+
 
 def _opt(
     opt_id: str,
@@ -50,6 +89,26 @@ _CATALOG: Dict[str, List[ResolutionOption]] = {
     "date_range_violation": [
         _opt("nullify_out_of_range", "Nullify out-of-range dates", "nullify_future_dates", recommended=True),
         _opt("keep_as_is", "Keep as-is (skip)", "noop"),
+    ],
+    # invalid_numeric: values that cannot be parsed as declared numeric type
+    # Phase 1: coerce with preserve_raw=True (keep original for audit)
+    "invalid_numeric": [
+        _opt("coerce_numeric", "Coerce to numeric (preserve raw)", "coerce_numeric", recommended=True,
+             description="Attempt numeric parse; keep original value in raw column for audit."),
+        _opt("fill_nulls_flag", "Flag as invalid and preserve raw", "fill_nulls_flag",
+             description="Mark value as invalid, keep raw value unchanged."),
+        _opt("keep_as_is", "Keep as-is (accept risk)", "noop"),
+    ],
+    # duplicate_insensitive_values: multiple text values that normalize to the same
+    # comparison form (e.g. "Email" / "email" / " email "). Phase 1: create a
+    # normalized companion key — do NOT remove rows.
+    "duplicate_insensitive_values": [
+        _opt("create_normalized_match_key", "Create normalized match key (preserve raw)", "create_normalized_match_key",
+             recommended=True,
+             description="Add a lowercased, trimmed companion column for matching. Original value is preserved."),
+        _opt("trim_preserve_case", "Trim whitespace only (preserve case)", "trim_preserve_case",
+             description="Remove leading/trailing whitespace. Case is preserved for display fields."),
+        _opt("keep_as_is", "Keep as-is (accept risk)", "noop"),
     ],
     "constant_column": [
         _opt("drop_column", "Drop column", "drop_column", recommended=True),
@@ -185,11 +244,6 @@ _CATALOG: Dict[str, List[ResolutionOption]] = {
     "all_caps_values": [
         _opt("lowercase", "Standardize to lowercase", "lowercase", recommended=True, description="Convert all values in this column to lowercase."),
         _opt("uppercase", "Standardize to uppercase", "uppercase", description="Convert all values in this column to uppercase."),
-        _opt("keep_as_is", "Keep as-is (skip in ETL)", "noop"),
-    ],
-    "duplicate_insensitive_values": [
-        _opt("lowercase", "Standardize case (lowercase) and trim", "lowercase", recommended=True, description="Trim whitespace and standardize case to lowercase to eliminate duplicates."),
-        _opt("uppercase", "Standardize case (uppercase) and trim", "uppercase", description="Trim whitespace and standardize case to uppercase to eliminate duplicates."),
         _opt("keep_as_is", "Keep as-is (skip in ETL)", "noop"),
     ],
     "numeric_outliers_zscore": [
@@ -340,6 +394,64 @@ _CATALOG: Dict[str, List[ResolutionOption]] = {
         _opt("nullify_dummy_dates", "Nullify dummy Jan 1st dates", "nullify_dummy_dates", recommended=True, description="Nullify dates that clump on Jan 1st or are exactly 1900-01-01."),
         _opt("keep_as_is", "Keep as-is", "noop"),
     ],
+    "exact_duplicate_rows": [
+        _opt("flag_duplicate_candidates", "Flag exact duplicate group membership", "flag_duplicate_candidates", recommended=True, description="Flag group members; preserve all source rows; write review evidence."),
+        _opt("preserve_all_rows", "Preserve all source rows", "noop"),
+        _opt("write_review_evidence", "Write review evidence", "noop"),
+    ],
+    "near_duplicate_rows": [
+        _opt("flag_near_duplicate_cluster", "Retain all rows and attach near-duplicate cluster evidence", "flag_near_duplicate_cluster", recommended=True, description="Attach near-duplicate cluster ID metadata; preserve all rows."),
+        _opt("retain_without_meta", "Keep rows without attaching review metadata", "noop", description="Retain rows without flags."),
+    ],
+    "duplicate_primary_key": [
+        _opt("flag_duplicate_candidates", "Flag business-key duplicates", "flag_duplicate_candidates", recommended=True, description="Flag primary key duplicates; retain all rows; accept duplicates with warning."),
+        _opt("retain_all_rows", "Retain all rows", "noop"),
+        _opt("accept_with_warning", "Accept duplicate keys with documented warning", "noop"),
+    ],
+    "business_key_duplicate": [
+        _opt("flag_duplicate_candidates", "Flag business-key duplicates", "flag_duplicate_candidates", recommended=True, description="Flag primary key duplicates; retain all rows; accept duplicates with warning."),
+        _opt("retain_all_rows", "Retain all rows", "noop"),
+        _opt("accept_with_warning", "Accept duplicate keys with documented warning", "noop"),
+    ],
+    "suspected_key_high_null_ratio": [
+        _opt("flag_missing_key", "Flag missing identifier and preserve null", "flag_missing_key", recommended=True, description="Add flag indicating missing suspected identifier; preserve the null value."),
+        _opt("accept_optional", "Accept as optional for this run", "noop", description="Accept null identifiers as optional."),
+        _opt("request_owner_declaration", "Request owner declaration", "noop", description="Hold for owner clarification."),
+    ],
+    "declared_key_null_violation": [
+        _opt("flag_missing_declared_key", "Flag missing declared key", "flag_missing_declared_key", recommended=True, description="Add flag indicating missing declared mandatory key."),
+        _opt("quarantine_missing_key_rows", "Quarantine missing-key rows", "noop", description="Separate rows with missing declared key into quarantine partition."),
+        _opt("accept_waiver", "Accept under approved waiver", "noop", description="Accept missing declared key under official waiver document."),
+    ],
+    "declared_key_high_null_ratio": [
+        _opt("flag_missing_declared_key", "Flag missing declared key", "flag_missing_declared_key", recommended=True, description="Add flag indicating missing declared mandatory key."),
+        _opt("quarantine_missing_key_rows", "Quarantine missing-key rows", "noop", description="Separate rows with missing declared key into quarantine partition."),
+        _opt("accept_waiver", "Accept under approved waiver", "noop", description="Accept missing declared key under official waiver document."),
+    ],
+    "placeholder_detected": [
+        _opt("normalize_registered_placeholder", "Replace placeholder with NULL", "normalize_registered_placeholder", recommended=True, description="Replace registered placeholders (e.g., 'NA', '?', '-1') with NULL in Phase 1."),
+        _opt("keep_as_is", "Keep as-is (allow placeholder)", "noop"),
+    ],
+    "numeric_value_serialized_as_string": [
+        _opt("coerce_numeric", "Coerce numeric values", "coerce_numeric", recommended=True, description="Coerce numeric strings to actual numbers and preserve raw source."),
+        _opt("keep_as_is", "Keep as-is", "noop"),
+    ],
+    "cross_field_non_negative": [
+        _opt("flag_cross_field_violation", "Flag negative value rule violation", "flag_cross_field_violation", recommended=True, description="Flag negative numeric violations; preserve values in Phase 1."),
+        _opt("keep_as_is", "Keep as-is", "noop"),
+    ],
+    "negative_values_in_non_negative_measure": [
+        _opt("flag_cross_field_violation", "Flag negative value rule violation", "flag_cross_field_violation", recommended=True, description="Flag negative numeric violations; preserve values in Phase 1."),
+        _opt("keep_as_is", "Keep as-is", "noop"),
+    ],
+    "negative_values_review_required": [
+        _opt("flag_cross_field_violation", "Flag negative value rule violation", "flag_cross_field_violation", recommended=True, description="Flag negative numeric violations; preserve values in Phase 1."),
+        _opt("keep_as_is", "Keep as-is", "noop"),
+    ],
+    "orphan_foreign_key_rows": [
+        _opt("validate_and_partition_relationship", "Flag relationship orphans", "validate_and_partition_relationship", recommended=True, description="Validate relationship key; partition into valid and quarantine tables."),
+        _opt("keep_as_is", "Keep as-is", "noop"),
+    ],
 }
 
 
@@ -352,12 +464,39 @@ def manual_review_item_id(dataset: Optional[str], column: Optional[str], issue_t
     return f"{ds}|{col}|{it}"
 
 
-def get_resolution_options(issue_type: Optional[str]) -> List[ResolutionOption]:
-    it = (issue_type or "").strip().lower()
-    opts = list(_CATALOG.get(it) or _DEFAULT_OPTIONS)
-    if not any(o.get("recommended") for o in opts):
-        opts[0] = {**opts[0], "recommended": True}
-    return opts
+def get_resolution_options(issue_type: Optional[str], *, phase: int = 1) -> List[ResolutionOption]:
+    from agent.etl_pipeline.issue_registry import canonicalize_issue_type
+    from agent.etl_pipeline.action_registry import ACTION_REGISTRY
+    norm_type = canonicalize_issue_type(issue_type)
+    opts = list(_CATALOG.get(norm_type) or _DEFAULT_OPTIONS)
+    
+    # In Phase 1: mark Phase 2 options as disabled (not selectable) rather than removing them.
+    # This preserves option count for UI display while preventing Phase 2 selection.
+    result = []
+    for o in opts:
+        act = o.get("action")
+        act_defn = ACTION_REGISTRY.get(act)
+        if act_defn and act_defn.get("phase") is not None:
+            if phase == 1 and act_defn.get("phase") != 1:
+                # Mark as Phase 2 only — disabled in Phase 1
+                o = dict(o)
+                o["disabled"] = True
+                o["disabled_reason"] = "Available in Phase 2 only"
+                o["recommended"] = False
+        result.append(o)
+        
+    if not result:
+        result = list(_DEFAULT_OPTIONS)
+        
+    if not any(o.get("recommended") for o in result):
+        # Prefer first non-disabled option as recommended
+        for i, o in enumerate(result):
+            if not o.get("disabled"):
+                result[i] = {**o, "recommended": True}
+                break
+        else:
+            result[0] = {**result[0], "recommended": True}
+    return result
 
 
 def enrich_manual_review_item(
@@ -472,12 +611,92 @@ def enrich_manual_review_item(
         out["resolution_options"] = opts
         out["conflict_info"] = conflict.model_dump() if hasattr(conflict, "model_dump") else conflict
     else:
-        if issue_type.strip().lower() in _CATALOG:
-            opts = get_resolution_options(issue_type)
+        from agent.etl_pipeline.issue_registry import canonicalize_issue_type
+        norm_type = canonicalize_issue_type(issue_type)
+        col_name = str(out.get("column") or "")
+        is_key = any(k in col_name.lower() for k in ("id", "key", "code", "ref"))
+        
+        if norm_type in ("nulls", "null_values", "high_null_percentage", "empty_string_values", "declared_key_null_violation", "suspected_key_high_null_ratio"):
+            if is_key or norm_type in ("declared_key_null_violation", "suspected_key_high_null_ratio"):
+                # Key null resolutions: flag, quarantine, or preserve raw
+                opts = [
+                    _opt("flag_missing_key" if norm_type != "declared_key_null_violation" else "flag_missing_declared_key",
+                         "Flag missing key (preserve NULL)",
+                         "flag_missing_key" if norm_type != "declared_key_null_violation" else "flag_missing_declared_key",
+                         recommended=True,
+                         description="Flag the missing key with a companion column. Original NULL is preserved."),
+                    _opt("quarantine_missing_key", "Quarantine missing key rows", "quarantine_missing_key",
+                         description="Route rows with missing keys to rejects output."),
+                    _opt("preserve_missing_suspected_key", "Preserve missing key as-is", "preserve_missing_suspected_key",
+                         description="Keep the key as-is for downstream processing."),
+                ]
+            else:
+                # Non-key null resolutions: preserve, impute or constant
+                is_numeric = any(n in col_name.lower() for n in ("qty", "qty_clean", "amount", "price", "total", "count", "quantity", "number", "budget"))
+                is_date = any(d in col_name.lower() for d in ("date", "time", "inspection", "inspected"))
+                if is_numeric:
+                    opts = [
+                        _opt("preserve_null_and_flag", "Preserve NULL and flag indicator", "preserve_null_and_flag", recommended=True,
+                             description="Add boolean flag and preserve NULL value."),
+                        _opt("impute_numeric", "Impute numeric (approved median/mean/mode)", "impute_numeric",
+                             description="Impute NULL value with explicit strategy and grouping."),
+                        _opt("keep_as_is", "Keep as-is (accept risk)", "noop"),
+                    ]
+                elif is_date:
+                    opts = [
+                        _opt("preserve_null_and_flag", "Preserve NULL and flag indicator", "preserve_null_and_flag", recommended=True,
+                             description="Add boolean flag and preserve NULL value."),
+                        _opt("impute_date", "Impute date (approved deterministic policy)", "impute_date",
+                             description="Impute NULL date under an approved deterministic policy."),
+                        _opt("keep_as_is", "Keep as-is (accept risk)", "noop"),
+                    ]
+                else:
+                    opts = [
+                        _opt("preserve_null", "Preserve NULL (no transform)", "preserve_null", recommended=True,
+                             description="Keep NULL values as-is. Original string value is preserved."),
+                        _opt("fill_constant", "Fill with approved constant", "fill_constant",
+                             description="Replace NULL value with an explicit constant."),
+                        _opt("keep_as_is", "Keep as-is (accept risk)", "noop"),
+                    ]
+        elif norm_type in ("exact_duplicate_rows", "duplicate_rows", "near_duplicate_rows", "business_key_duplicate", "duplicate_primary_key"):
+            if norm_type == "near_duplicate_rows":
+                opts = [
+                    _opt("flag_near_duplicate_cluster", "Flag near-duplicate cluster (preserve raw)", "flag_near_duplicate_cluster", recommended=True,
+                         description="Assign near_dup_cluster_id and similarity metadata. Never drop rows."),
+                    _opt("keep_as_is", "Keep duplicates as-is (accept risk)", "noop"),
+                ]
+            elif norm_type in ("business_key_duplicate", "duplicate_primary_key"):
+                opts = [
+                    _opt("flag_business_key_duplicate", "Flag business-key duplicates (preserve raw)", "flag_business_key_duplicate", recommended=True,
+                         description="Flag duplicate business keys with stable group IDs. No survivorship."),
+                    _opt("deduplicate_last", "Deduplicate — keep latest record", "deduplicate",
+                         description="Dedup by business key, keeping the most recent record."),
+                    _opt("deduplicate_first", "Deduplicate — keep first record", "deduplicate",
+                         description="Keep oldest record per business key."),
+                    _opt("keep_as_is", "Keep duplicates as-is (accept risk)", "noop"),
+                ]
+            else:
+                opts = [
+                    _opt("flag_duplicate_candidates", "Flag duplicate candidates (preserve raw)", "flag_duplicate_candidates", recommended=True,
+                         description="Assign duplicate_group_id. Never drop rows."),
+                    _opt("deduplicate", "Deduplicate (keep first row)", "deduplicate",
+                         description="Remove exact duplicate rows, keeping only the first occurrence."),
+                    _opt("keep_as_is", "Keep duplicates as-is (accept risk)", "noop"),
+                ]
         else:
-            opts = get_dynamic_resolution_options(issue_type, out)
+            if norm_type in _CATALOG:
+                opts = get_resolution_options(norm_type)
+            else:
+                opts = get_dynamic_resolution_options(issue_type, out)
 
         if llm_recommendation:
+            if isinstance(llm_recommendation, str):
+                llm_recommendation = {
+                    "suggested_fix": llm_recommendation,
+                    "why_it_matters": f"LLM recommended fix: {llm_recommendation}",
+                    "risk": "standard",
+                    "mapped_action": llm_recommendation
+                }
             out["llm_recommendation"] = llm_recommendation
             from agent.etl_pipeline.llm_rec_mapper import map_llm_recommendation_to_action, compute_llm_confidence
             llm_action = map_llm_recommendation_to_action(llm_recommendation)
@@ -486,16 +705,24 @@ def enrich_manual_review_item(
             for opt in opts:
                 opt["recommended"] = False
 
+            authority = llm_recommendation.get("authority_source") or "LLM_ADVISORY"
+            is_llm_advisory = authority == "LLM_ADVISORY"
+            rec_label = (
+                f"AI Recommended: {llm_recommendation.get('suggested_fix')}"
+                if is_llm_advisory
+                else f"Deterministic recommendation: {llm_recommendation.get('suggested_fix')}"
+            )
             llm_opt = {
                 "id": "llm_suggested",
-                "label": f"AI Recommended: {llm_recommendation.get('suggested_fix')}",
+                "label": rec_label,
                 "action": llm_action or "noop",
                 "recommended": True,
                 "description": f"Why it matters: {llm_recommendation.get('why_it_matters')}. Risk: {llm_recommendation.get('risk')}",
+                "authority_source": authority,
                 "llm_metadata": {
                     "example_sql": llm_recommendation.get("example_sql"),
                     "example_pandas": llm_recommendation.get("example_pandas"),
-                    "confidence": confidence,
+                    "confidence": confidence if is_llm_advisory else None,
                 }
             }
             opts = [llm_opt] + [opt for opt in opts if opt.get("id") != "llm_suggested"]
@@ -703,29 +930,9 @@ def action_for_resolution(issue_type: str, resolution_id: str, options: Optional
                 if o.get("action") in ("noop", "keep_as_is") or o.get("id") in ("keep_as_is", "skip_requirement"):
                     return str(o.get("action") or "noop")
         return "noop"
-
-    # Alias map for option IDs that do not match action names
-    _RESOLUTION_ID_FALLBACK: Dict[str, str] = {
-        "deduplicate_last":  "deduplicate",
-        "deduplicate_first": "deduplicate",
-        "fill_nulls":        "fill_nulls_simple",
-        "abort_pipeline":    "noop",
-        "accept_risk":       "noop",
-        "quarantine_all_null": "validate_referential_integrity_or_stage",
-        "reject_orphans":    "validate_referential_integrity_or_stage",
-        "flag_outliers":     "flag_outliers",
-        "flag":              "clip_or_flag",
-        "fill_null":         "fill_or_drop",
-        "force_unlock":      "force_unlock",
-        "skip_requirement":  "skip_requirement",
-        "keep_as_is":        "noop",
-    }
-    if rid in _RESOLUTION_ID_FALLBACK:
-        return _RESOLUTION_ID_FALLBACK[rid]
-    
+    if rid in RESOLUTION_TO_ACTION_MAP:
+        return RESOLUTION_TO_ACTION_MAP[rid]
     return None
-
-
 def is_skip_action(action: str) -> bool:
     return (action or "").strip().lower() in _SKIP_ACTIONS
 

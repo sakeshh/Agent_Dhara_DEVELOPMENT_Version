@@ -346,8 +346,14 @@ def _emit_ri(col: str, ds_var: str, p: Dict[str, Any]) -> List[str]:
         f"if all_dfs is not None and {repr(rel_ds)} in all_dfs:",
         f"    _parent_df = all_dfs[{repr(rel_ds)}]",
         f"    if {repr(rel_col)} in _parent_df.columns:",
-        f"        _parent_keys = set(_parent_df[{repr(rel_col)}].dropna().unique())",
-        f"        _is_orphan = ~{ds_var}[{c}].isin(_parent_keys) & {ds_var}[{c}].notna()",
+        f"        from agent.etl_pipeline.relationship_key_contract import DEFAULT_CONTRACT",
+        f"        from agent.etl_pipeline.relationship_key_normalization_pandas import normalize_relationship_key_pandas",
+        # Normalize parent key
+        f"        _norm_parent_keys = normalize_relationship_key_pandas(_parent_df[{repr(rel_col)}], DEFAULT_CONTRACT)",
+        f"        _parent_keys = set(_norm_parent_keys.dropna().unique())",
+        # Normalize child key
+        f"        _norm_child_keys = normalize_relationship_key_pandas({ds_var}[{c}], DEFAULT_CONTRACT)",
+        f"        _is_orphan = ~_norm_child_keys.isin(_parent_keys) & _norm_child_keys.notna()",
         f"        _orphan_count = _is_orphan.sum()",
         f"        if _orphan_count > 0:",
         f"            logging.warning(f'Found {{_orphan_count}} orphan values in {col} referencing {rel_ds}.{rel_col}')",
@@ -355,7 +361,6 @@ def _emit_ri(col: str, ds_var: str, p: Dict[str, Any]) -> List[str]:
     
     if fk_action == "reject_orphans":
         lines.extend([
-            f"            # Action: reject_orphans",
             f"            {ds_var} = {ds_var}[~_is_orphan]",
             f"            logging.info(f'Dropped {{_orphan_count}} orphan rows')",
         ])
@@ -412,6 +417,47 @@ def _emit_review_manually(col: str, ds_var: str, _p: Dict[str, Any]) -> List[str
     ]
 
 
+def _emit_preserve_null(col: str, ds_var: str, _p: Dict[str, Any]) -> List[str]:
+    return [f"# preserve_null on {col}: column passes through null unchanged"]
+
+def _emit_fill_constant(col: str, ds_var: str, params: Dict[str, Any]) -> List[str]:
+    const_val = params.get("constant_value") or "unknown"
+    return [f"{ds_var}[{repr(col)}] = {ds_var}[{repr(col)}].fillna({repr(const_val)})"]
+
+def _emit_preserve_null_and_flag(col: str, ds_var: str, _p: Dict[str, Any]) -> List[str]:
+    return [f"{ds_var}[{repr(f'is_missing_{col}')}] = {ds_var}[{repr(col)}].isna()"]
+
+def _emit_impute_numeric(col: str, ds_var: str, params: Dict[str, Any]) -> List[str]:
+    strategy = params.get("strategy") or "median"
+    fill_val = params.get("value") or 0.0
+    return [
+        f"# Impute numeric column: strategy={strategy}",
+        f"{ds_var}[{repr(f'is_imputed_{col}')}] = {ds_var}[{repr(col)}].isna()",
+        f"{ds_var}[{repr(col)}] = {ds_var}[{repr(col)}].fillna({repr(fill_val)})"
+    ]
+
+def _emit_impute_date(col: str, ds_var: str, params: Dict[str, Any]) -> List[str]:
+    strategy = params.get("strategy") or "constant"
+    fill_val = params.get("value") or "1970-01-01"
+    return [
+        f"# Impute date column: strategy={strategy}",
+        f"{ds_var}[{repr(f'is_imputed_{col}')}] = {ds_var}[{repr(col)}].isna()",
+        f"{ds_var}[{repr(col)}] = pd.to_datetime({ds_var}[{repr(col)}].fillna({repr(fill_val)}))"
+    ]
+
+def _emit_quarantine_missing_key(col: str, ds_var: str, _p: Dict[str, Any]) -> List[str]:
+    return [
+        f"# Quarantine missing key: routing rows with missing '{col}' keys to quarantine",
+        f"{ds_var}[{repr(f'_is_missing_{col}')}] = {ds_var}[{repr(col)}].isna()"
+    ]
+
+def _emit_preserve_missing_suspected_key(col: str, ds_var: str, _p: Dict[str, Any]) -> List[str]:
+    return [
+        f"# Preserve suspected missing key: flagging without quarantine",
+        f"{ds_var}[{repr(f'is_missing_{col}')}] = {ds_var}[{repr(col)}].isna()"
+    ]
+
+
 def _emit_deduplicate_ds(ds_var: str) -> List[str]:
     return [f"{ds_var} = {ds_var}.drop_duplicates()"]
 
@@ -421,6 +467,19 @@ _ACTION_REGISTRY: Dict[str, Callable[[str, str, Dict[str, Any]], List[str]]] = {
     "trim": _emit_trim,
     "fill_or_drop": _emit_fill_step,
     "fill_nulls_simple": _emit_fill_step,
+    "preserve_null": _emit_preserve_null,
+    "fill_constant": _emit_fill_constant,
+    "preserve_null_and_flag": _emit_preserve_null_and_flag,
+    "impute_numeric": _emit_impute_numeric,
+    "impute_date": _emit_impute_date,
+    "quarantine_missing_key": _emit_quarantine_missing_key,
+    "preserve_missing_suspected_key": _emit_preserve_missing_suspected_key,
+    "flag_missing_key": _emit_preserve_null_and_flag,
+    "flag_missing_declared_key": _emit_preserve_null_and_flag,
+    "trim_preserve_case": _emit_trim,
+    "flag_duplicate_candidates": lambda c, v, p: [f"{v}[{repr(f'is_duplicate_{c}')}] = True"],
+    "flag_near_duplicate_cluster": lambda c, v, p: [f"{v}[{repr(f'is_duplicate_{c}')}] = True"],
+    "flag_business_key_duplicate": lambda c, v, p: [f"{v}[{repr(f'is_duplicate_{c}')}] = True"],
     "coerce_numeric": _emit_coerce_numeric,
     "cast_type": _emit_cast_type,
     "parse_dates": _emit_parse_dates,
@@ -448,9 +507,9 @@ _ACTION_REGISTRY: Dict[str, Callable[[str, str, Dict[str, Any]], List[str]]] = {
     "exclude_column": _emit_drop_column,
     "nullify_future_dates": _emit_nullify_future_dates,
     "nullify_punctuation": _emit_nullify_punctuation,
-    "nullify_dummy_dates": _emit_nullify_dummy_dates,
-    "noop": _emit_noop,
+        "noop": _emit_noop,
     "validate_referential_integrity_or_stage": _emit_ri,
+    "validate_and_partition_relationship": _emit_ri,
     "at_least_one": _emit_at_least_one,
 }
 
@@ -662,7 +721,7 @@ def generate_python_etl(plan: Dict[str, Any], assessment: Dict[str, Any]) -> str
     lines.append("")
 
     manifest = plan.get("connector_manifest") or {}
-    if manifest.get("datasets"):
+    if plan.get("datasets") or manifest.get("datasets"):
         lines.append(resolve_path_python_helper())
         lines.append("")
     lines.extend(emit_python_load_and_join(plan, manifest))

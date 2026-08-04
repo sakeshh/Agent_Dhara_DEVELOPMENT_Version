@@ -370,10 +370,13 @@ class TestIssueCompilerMappings:
         return _ISSUE_TO_ACTION_MAP.get(issue_type, "noop")
 
     def test_duplicate_primary_key_routes_to_manual(self):
-        """duplicate_primary_key must map to review_manually, never deduplicate."""
+        """duplicate_primary_key must map to a Phase 1 safe flag action, never deduplicate.
+        flag_business_key_duplicate is the correct Phase 1 equivalent: it flags the duplicate
+        candidate rows without removing them, keeping the decision for human review.
+        """
         action = self._get_action("duplicate_primary_key")
-        assert action == "review_manually", (
-            f"duplicate_primary_key must map to review_manually, got '{action}'"
+        assert action == "flag_business_key_duplicate", (
+            f"duplicate_primary_key must map to flag_business_key_duplicate (Phase 1 safe), got '{action}'"
         )
 
     def test_mixed_case_routes_to_trim(self):

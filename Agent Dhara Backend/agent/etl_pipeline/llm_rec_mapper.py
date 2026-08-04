@@ -7,11 +7,15 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 
-def map_llm_recommendation_to_action(rec: Dict[str, Any]) -> Optional[str]:
+def map_llm_recommendation_to_action(rec: Any) -> Optional[str]:
     """
     Maps an LLM recommendation's suggested_fix or mapped_action to a standard ETL action.
     Returns: action string or 'noop' if unmappable.
     """
+    if isinstance(rec, str):
+        return rec.strip().lower()
+    if not isinstance(rec, dict):
+        return "noop"
     action = rec.get("mapped_action")
     if action and isinstance(action, str):
         action = action.strip().lower()
@@ -56,11 +60,15 @@ def map_llm_recommendation_to_action(rec: Dict[str, Any]) -> Optional[str]:
     return "noop"
 
 
-def compute_llm_confidence(rec: Dict[str, Any]) -> float:
+def compute_llm_confidence(rec: Any) -> float:
     """
     Computes a confidence score [0.0 - 1.0] for the LLM recommendation.
     Derived from severity, specificity of suggestion, and existence of examples.
     """
+    if isinstance(rec, str):
+        return 0.99  # default high confidence for string actions
+    if not isinstance(rec, dict):
+        return 0.50
     severity = str(rec.get("severity") or "medium").lower().strip()
     base_conf = 0.50
     if severity == "high":

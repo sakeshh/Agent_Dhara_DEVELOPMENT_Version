@@ -427,6 +427,11 @@ def suggest_transformations(
 
             # 4. Categorical and text columns -> trim and case normalization (trim + lowercase)
             elif sem_type in ("categorical", "text") or any(x in col_lower for x in ("city", "status", "state", "category", "gender", "country", "name")):
+                is_protected = (
+                    sem_type in ("numeric_measure", "numeric", "date", "datetime", "timestamp", "identifier", "primary_key", "foreign_key")
+                    or col_lower.endswith(("_id", "_key", "id", "key", "code"))
+                    or any(x in col_lower for x in ("name", "first_name", "last_name", "fullname", "desc", "description"))
+                )
                 if not any(s["dataset"] == ds_name and s["column"] == col_name and s["suggested_action"] == "trim" for s in suggested):
                     suggested.append({
                         "dataset": ds_name,
@@ -440,7 +445,7 @@ def suggest_transformations(
                         "auto_fixable": True,
                         "provenance": RuleProvenance.AUTO_DETECTED,
                     })
-                if not any(s["dataset"] == ds_name and s["column"] == col_name and s["suggested_action"] == "lowercase" for s in suggested):
+                if not is_protected and not any(s["dataset"] == ds_name and s["column"] == col_name and s["suggested_action"] == "lowercase" for s in suggested):
                     suggested.append({
                         "dataset": ds_name,
                         "column": col_name,
