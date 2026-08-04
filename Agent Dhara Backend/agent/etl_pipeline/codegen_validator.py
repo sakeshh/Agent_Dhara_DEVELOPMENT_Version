@@ -111,11 +111,30 @@ def validate_pyspark(code: str, never_drop_rows: bool = False) -> Tuple[bool, Li
     if "_resolve_data_path" not in code and "abfss://" not in code:
         warnings.append("Advisory: Missing _resolve_data_path or direct ABFSS path — verify blob access")
         
+    is_cleanse_only = "cleanse_only" in code.lower() or "phase_1_cleanse_only" in code.lower() or "cleanse" in code.lower()
+    
+    if is_cleanse_only:
+        # Error if inner join is used in Phase 1
+        if ".join(" in code and ("'inner'" in code or '"inner"' in code):
+            errors.append("Validation failed: Inner join is forbidden in Phase 1 (cleanse-only) mode.")
+            
+        # Error if row_number() with lit(1) in a window context
+        if "row_number()" in code and "lit(1)" in code:
+            errors.append("Validation failed: Nondeterministic duplicate survivorship selection row_number().orderBy(lit(1)) is forbidden in Phase 1.")
+            
+        # Warning if fillna / fill_nulls on business key is found
+        from agent.etl_pipeline.issue_to_step_compiler import _BUSINESS_KEY_PATTERNS
+        for pattern in _BUSINESS_KEY_PATTERNS:
+            if f"fillna" in code or "fill_nulls" in code:
+                warnings.append(f"Advisory: Potential null imputation on business key pattern '{pattern}' detected.")
+                break
+
     if never_drop_rows:
         if ".dropna(" in code or "dropna" in code:
             errors.append("Validation failed: '.dropna()' is forbidden when never_drop_rows is enabled.")
             
     return len(errors) == 0, errors, warnings
+
 
 def validate_adf(obj: dict, never_drop_rows: bool = False) -> Tuple[bool, List[str], List[str]]:
     errors = []

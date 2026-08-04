@@ -250,8 +250,49 @@ def _recommend_engine(
     """Engine recommendation from source type + data scale."""
     ctx = source_context or {}
     src_type = str(ctx.get("type") or "unknown").lower()
+    target_platform = str(ctx.get("target_platform") or "").lower()
+    target_format = str(ctx.get("target_format") or "").lower()
+    dataset_count = int(ctx.get("dataset_count") or ctx.get("source_count") or len(assessment.get("datasets") or {}) or 1)
+    rels = assessment.get("relationships") or {}
+    if isinstance(rels, list):
+        rels_len = len(rels)
+    else:
+        rels_len = len(rels.get("joins", []))
+    relationship_count = int(ctx.get("relationship_count") or rels_len or 0)
     size_mb = float(ctx.get("size_mb") or 0)
     row_count = int(ctx.get("row_count") or 0)
+
+    # Fabric Lakehouse / Delta always requires PySpark
+    if target_platform in ("fabric_lakehouse", "fabric", "delta_lake", "synapse") or target_format in ("delta", "parquet"):
+        return {
+            "engine": "pyspark",
+            "scope": "plan",
+            "dataset_count": dataset_count,
+            "relationship_count": relationship_count,
+            "target_platform": target_platform or "fabric_lakehouse",
+            "reason": (
+                f"Target platform is {target_platform or 'fabric_lakehouse'} with {target_format or 'delta'} format — "
+                f"PySpark is the only supported engine."
+            ),
+            "alternatives": [],
+            "warning": None,
+        }
+
+    # Multi-dataset with relationships always requires PySpark
+    if dataset_count > 1 and relationship_count > 0:
+        return {
+            "engine": "pyspark",
+            "scope": "plan",
+            "dataset_count": dataset_count,
+            "relationship_count": relationship_count,
+            "target_platform": target_platform or "general",
+            "reason": (
+                f"Multi-dataset plan ({dataset_count} sources, {relationship_count} relationship(s)) — "
+                f"PySpark is required for distributed join partitioning."
+            ),
+            "alternatives": ["Python/Pandas — only for single-dataset with no joins"],
+            "warning": None,
+        }
 
     if row_count == 0:
         for ds in (assessment.get("datasets") or {}).values():
@@ -652,9 +693,10 @@ class PlanBuilder:
                     if matched_sug:
                         matched_sug["llm_recommendation"] = rec
                         matched_sug["llm_confidence"] = confidence
-                        if confidence >= 0.80 and mapped_action and mapped_action != "noop":
+                        if mapped_action and mapped_action != "noop":
                             matched_sug["suggested_action"] = mapped_action
-                            matched_sug["auto_fixable"] = True
+                            matched_sug["auto_fixable"] = False
+                            matched_sug["authority_source"] = "LLM_ADVISORY"
                     else:
                         new_sug = {
                             "dataset": ds,
@@ -665,7 +707,8 @@ class PlanBuilder:
                             "suggested_action": mapped_action or "noop",
                             "manual_guidance": rec.get("suggested_fix") or "",
                             "row_count_affected": None,
-                            "auto_fixable": confidence >= 0.80 and mapped_action not in ("noop", None),
+                            "auto_fixable": False,
+                            "authority_source": "LLM_ADVISORY",
                             "llm_recommendation": rec,
                             "llm_confidence": confidence,
                         }
@@ -958,13 +1001,17 @@ class PlanBuilder:
         rel_plan = enrich_relationship_plan_joins(rel_plan, rules)
 
         engine_rec = _recommend_engine(source_context, assessment)
-        if rel_plan.get("join_count", 0) > 0 and engine_rec.get("engine") == "python":
+        if rel_plan.get("join_count", 0) > 0 and engine_rec.get("engine") not in ("pyspark", "adf"):
             ds_count = len(datasets_known)
             if ds_count > 1:
                 engine_rec = dict(engine_rec)
+                engine_rec["engine"] = "pyspark"
+                engine_rec["scope"] = "plan"
+                engine_rec["dataset_count"] = ds_count
+                engine_rec["relationship_count"] = rel_plan.get("join_count", 0)
                 engine_rec["reason"] = (
-                    str(engine_rec.get("reason", ""))
-                    + f" Multi-dataset ({ds_count} sources, {rel_plan['join_count']} join(s) detected)."
+                    f"Multi-dataset ({ds_count} sources, {rel_plan['join_count']} join(s) detected) — "
+                    f"PySpark required for distributed join partitioning."
                 )
 
         # Append DQ warning blocker if failed
@@ -1052,13 +1099,91 @@ class PlanBuilder:
             "invariants": build_plan_invariants(rules),
             "suggestions_summary": sug_pkg.get("summary") or {},
             "engine_recommendation": engine_rec,
-            "source_context": source_context or {},
             "relationships": rel_plan,
             "semantic_schema": {k: v for k, v in sem_schema.items()},
             "dq_gate_summary": dq_gate_summary,
             "build_warnings": self.build_warnings,
         }
+        # Provenance signature block
+        prov_data = {
+            "business_rules": rules,
+            "semantic_schema": sem_schema,
+            "assessment_signature": plan.get("assessment_signature")
+        }
+        try:
+            prov_blob = json.dumps(prov_data, sort_keys=True, default=str)
+        except Exception:
+            prov_blob = str(prov_data)
+        plan["provenance_signature"] = "sha256:" + hashlib.sha256(prov_blob.encode("utf-8", errors="ignore")).hexdigest()
 
+        # Calculate dataset-level readiness scores scorecard
+        readiness_scorecard = {}
+        total_rows = 0
+        weighted_score_sum = 0.0
+        
+        from agent.etl_pipeline.dq_gate import calculate_dataset_dq_score
+        for ds_name in datasets_known:
+            row_count = float((assessment.get("datasets") or {}).get(ds_name, {}).get("row_count") or 1000)
+            score_res = calculate_dataset_dq_score(assessment, ds_name)
+            score = round(score_res.get("score") or 0.0, 1)
+            
+            # Determine readiness status
+            has_high_gating = False
+            for mr in plan.get("manual_review", []):
+                if mr.get("dataset") == ds_name and mr.get("severity") == "high":
+                    has_high_gating = True
+                    break
+            
+            if score < 70.0 or has_high_gating:
+                readiness = "NEEDS_WORK"
+                reason = "Required datasets include gating HIGH failures" if has_high_gating else f"DQ score ({score}) below threshold (70.0)"
+            elif score < 90.0:
+                readiness = "READY_WITH_WARNINGS"
+                reason = "No HIGH findings, but extensive MEDIUM findings"
+            else:
+                readiness = "READY"
+                reason = "Dataset meets quality standards"
+                
+            readiness_scorecard[ds_name] = {
+                "score": score,
+                "readiness": readiness,
+                "primary_reason": reason,
+                "row_count": row_count
+            }
+            total_rows += row_count
+            weighted_score_sum += score * row_count
+            
+        overall_score = round(weighted_score_sum / max(total_rows, 1), 1)
+        any_needs_work = any(card["readiness"] == "NEEDS_WORK" for card in readiness_scorecard.values())
+        overall_readiness = "NEEDS_WORK" if any_needs_work else ("READY_WITH_WARNINGS" if any(card["readiness"] == "READY_WITH_WARNINGS" for card in readiness_scorecard.values()) else "READY")
+        
+        readiness_scorecard["Overall"] = {
+            "score": overall_score,
+            "readiness": overall_readiness,
+            "primary_reason": "Required datasets include gating HIGH failures" if any_needs_work else "All datasets ready or with warnings",
+            "row_count": total_rows
+        }
+        
+        plan["readiness_scorecard"] = readiness_scorecard
+        
+        # Calculate projected column-level readiness certificates and Phase 2 gates
+        try:
+            from agent.etl_pipeline.readiness_engine import (
+                build_projected_column_certificates,
+                evaluate_all_operation_gates
+            )
+            approved_waivers = rules.get("approved_waivers") or []
+            projected_certs = build_projected_column_certificates(plan, assessment)
+            plan["projected_column_readiness"] = projected_certs
+            
+            joins_list = joins
+            projected_gates = evaluate_all_operation_gates(projected_certs, joins_list, approved_waivers)
+            plan["projected_phase2_gates"] = projected_gates
+            
+            blocked_gates = [g for g in projected_gates if g["gate_status"] == "BLOCKED"]
+            plan["overall_gate_status"] = "BLOCKED" if blocked_gates else "READY"
+        except Exception as e:
+            self.build_warnings.append(f"Failed to calculate projected column readiness/gates: {e}")
         # 4.4 Resolution errors for auto_resolve_pending
         if rules.get("auto_resolve_pending") and plan.get("manual_review"):
             try:
@@ -1069,7 +1194,7 @@ class PlanBuilder:
                         "item_id": m.get("id"),
                         "resolution_id": m.get("default_resolution")
                     })
-                plan, _ = apply_manual_resolutions(plan, resolutions, business_rules=rules)
+                plan, _ = apply_manual_resolutions(plan, resolutions, business_rules=rules, assessment=assessment)
             except Exception as e:
                 self.build_warnings.append(f"auto_resolve_pending failed: {e}")
 
@@ -1137,8 +1262,10 @@ class PlanBuilder:
             plan["datasets"] = _consolidate_and_filter_datasets(
                 plan.get("datasets") or {}, source_metadata_filt, sem_schema_filt, strict_mode=strict
             )
+            from agent.etl_pipeline.manual_review_promote import canonicalize_promoted_plan
+            plan = canonicalize_promoted_plan(plan, assessment, rules)
         except Exception as e:
-            logger.warning(f"Plan step consolidation during build_etl_plan skipped: {e}")
+            logger.warning(f"Plan step consolidation/canonicalization during build_etl_plan skipped: {e}")
 
         return plan
 

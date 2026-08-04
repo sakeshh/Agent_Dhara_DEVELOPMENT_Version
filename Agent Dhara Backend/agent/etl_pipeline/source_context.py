@@ -142,6 +142,33 @@ def build_source_context(
     sources = _build_sources_list(ctx, assessment)
     row_count, size_mb = _totals_from_assessment(assessment)
 
+    # Auto-detect Fabric Lakehouse workspace context
+    workspace_id = os.getenv("FABRIC_WORKSPACE_ID") or ctx.get("workspace_id")
+    lakehouse_id = os.getenv("FABRIC_LAKEHOUSE_NAME") or os.getenv("FABRIC_LAKEHOUSE_ID") or ctx.get("lakehouse_id")
+    
+    target_platform = ctx.get("target_platform") or ovr.get("target_platform")
+    if not target_platform and (workspace_id or lakehouse_id):
+        target_platform = "fabric_lakehouse"
+        
+    target_format = ctx.get("target_format") or ovr.get("target_format")
+    if not target_format and target_platform == "fabric_lakehouse":
+        target_format = "delta"
+
+    # Derive dataset and relationship counts
+    rel = assessment.get("relationships") or []
+    if isinstance(rel, dict):
+        joins = rel.get("joins") or rel.get("dependencies") or []
+    else:
+        joins = list(rel)
+    rel_count = len(joins)
+
+    base_context = {
+        "target_platform": target_platform,
+        "target_format": target_format,
+        "dataset_count": len(sources) if sources else len(assessment.get("datasets") or {}),
+        "relationship_count": rel_count,
+    }
+
     if ovr.get("type"):
         base = dict(ovr)
         base.setdefault("row_count", row_count)
@@ -152,6 +179,9 @@ def build_source_context(
             base["sources"] = sources
             base["source_count"] = len(sources)
             base["is_multi_source"] = len(sources) > 1
+        for k, v in base_context.items():
+            if v is not None:
+                base.setdefault(k, v)
         return base
 
     if sources:
@@ -169,6 +199,7 @@ def build_source_context(
             "is_multi_source": len(sources) > 1,
             "source_mix": mix,
         }
+        res.update(base_context)
         res.update(ovr)
         return res
 
@@ -182,5 +213,6 @@ def build_source_context(
         "source_count": 0,
         "is_multi_source": False,
     }
+    res.update(base_context)
     res.update(ovr)
     return res

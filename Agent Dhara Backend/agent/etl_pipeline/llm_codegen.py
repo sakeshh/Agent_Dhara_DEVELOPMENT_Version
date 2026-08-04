@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # Per-plan-id locks — process-wide cross-thread coordination
 _PLAN_LOCKS: dict[str, threading.Lock] = defaultdict(threading.Lock)
 _PLAN_FAILURE_COUNTS: dict[str, int] = defaultdict(int)
-_MAX_PLAN_FAILURES = 3  # after this, circuit-open for 5 min
+_MAX_PLAN_FAILURES = 3  # after this, circuit-open for 30s (reduced from 5 min so a code fix clears it quickly)
 
 try:
     from openai import AzureOpenAI, OpenAI, RateLimitError, APITimeoutError
@@ -52,6 +52,18 @@ _CACHE_MAX_SIZE = 512
 _CODE_CACHE: OrderedDict[str, Any] = OrderedDict()
 _VALIDATOR_ACCEPTS_NDR: dict[str, bool] = {}
 _FAILURE_CACHE: OrderedDict[str, tuple[str, float]] = OrderedDict()  # key -> (error_msg, expiry_time)
+
+def clear_codegen_caches() -> None:
+    """Flush all in-memory codegen caches (CODE_CACHE, FAILURE_CACHE, PLAN_FAILURE_COUNTS).
+
+    Call this after deploying validator or codegen fixes so the circuit breaker
+    and failure cache don't serve stale pre-fix errors.
+    """
+    _CODE_CACHE.clear()
+    _FAILURE_CACHE.clear()
+    _PLAN_FAILURE_COUNTS.clear()
+    logger.info("[clear_codegen_caches] All codegen caches flushed.")
+
 
 def _code_cache_put(cache_key: str, value: Any) -> None:
     if cache_key in _CODE_CACHE:
@@ -1107,6 +1119,34 @@ def _enforce_plan_steps_in_code(code: str, plan: Dict[str, Any]) -> str:
                             injections.append(f"    # Step: trim on [{col}] (Restored)")
                             injections.append(f"    df = df.withColumn({repr(col)}, F.trim(F.col({repr(col)}).cast('string')))")
 
+                    elif act == "trim_preserve_case":
+                        if f"'{col}'" not in body_str and f'"{col}"' not in body_str or "trim" not in body_str:
+                            injections.append(f"    # Step: trim_preserve_case on [{col}] (Restored)")
+                            injections.append(f"    df = df.withColumn({repr(col)}, F.trim(F.col({repr(col)}).cast('string')))")
+
+                    elif act == "preserve_null_and_flag":
+                        if f"is_missing_{col}" not in body_str:
+                            injections.append(f"    # Step: preserve_null_and_flag on [{col}] (Restored)")
+                            injections.append(f"    df = df.withColumn('is_missing_{col}', F.col({repr(col)}).isNull().cast('boolean'))")
+
+                    elif act in ("flag_missing_key", "flag_missing_declared_key"):
+                        if f"is_missing_{col}" not in body_str:
+                            injections.append(f"    # Step: {act} on [{col}] (Restored)")
+                            injections.append(f"    df = df.withColumn('is_missing_{col}', F.col({repr(col)}).isNull().cast('boolean'))")
+
+                    elif act == "create_normalized_match_key":
+                        output_col = params.get("output_column") or f"{col}_match_key"
+                        if output_col not in body_str:
+                            injections.append(f"    # Step: create_normalized_match_key on [{col}] (Restored)")
+                            injections.append(f"    df = df.withColumn({repr(output_col)}, F.trim(F.lower(F.col({repr(col)}).cast('string'))))")
+
+                    elif act in ("flag_duplicate_candidates", "flag_business_key_duplicate", "flag_near_duplicate_cluster"):
+                        if f"is_duplicate" not in body_str and f"row_number()" not in body_str:
+                            injections.append(f"    # Step: {act} on [{col}] (Restored)")
+                            injections.append(f"    from pyspark.sql.window import Window")
+                            injections.append(f"    _w = Window.partitionBy({repr(col)}).orderBy(F.monotonically_increasing_id())")
+                            injections.append(f"    df = df.withColumn('is_duplicate_{col}', (F.row_number().over(_w) > 1).cast('boolean'))")
+
                     elif act == "nullify_punctuation":
                         is_num = any(k in str(col).lower() for k in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val", "production_qty", "revenue", "sales", "count", "num", "number", "rate", "ratio", "margin", "fee"))
                         if is_num:
@@ -1748,6 +1788,15 @@ def _consolidate_and_filter_datasets(
         filtered_steps = []
         seen_operations = set()
         
+        def _get_col_meta(col_name: str, step_dict: dict) -> dict:
+            meta = columns_meta.get(col_name) or {}
+            if not meta and step_dict and "params" in step_dict and isinstance(step_dict["params"], dict):
+                params_dict = step_dict["params"]
+                dtype_val = params_dict.get("dtype") or params_dict.get("target_dtype") or params_dict.get("target_type")
+                if dtype_val:
+                    meta = {"dtype": dtype_val}
+            return meta
+        
         for step in steps:
             if not isinstance(step, dict):
                 continue
@@ -1762,30 +1811,21 @@ def _consolidate_and_filter_datasets(
 
                 # A. Convert lowercase/uppercase on business keys/metric/date/metadata columns to trim
                 if col and action in ("lowercase", "uppercase"):
-                    col_meta = columns_meta.get(col) or {}
+                    col_meta = _get_col_meta(col, step)
                     col_class = _classify_column(col, col_meta, sem_schema, ds_name)
                     if is_key or col_class in ("metric", "date", "metadata") or _is_numeric_column(col, col_meta):
                         logger.info(f"[Step Filter] Converted '{action}' on column '{col}' (class={col_class}) to 'trim'")
                         step["action"] = "trim"
                         action = "trim"
 
-                # B. Convert numeric cast/coerce on categorical text columns to string cast (keep action intact for reflection audit)
-                if is_cat and action in ("coerce_type", "cast", "cast_type", "coerce_numeric"):
-                    target_type = str(step.get("type") or step.get("to_type") or (step.get("params") or {}).get("target_type") or "").strip().lower()
-                    if any(t in target_type for t in ("double", "float", "long", "int", "decimal", "numeric", "number")) or action in ("coerce_numeric", "cast_type", "cast"):
-                        logger.info(f"[Step Filter] Ensured string cast for '{action}' on categorical column '{col}'")
-                        step["type"] = "string"
-                        if "to_type" in step:
-                            step["to_type"] = "string"
-                        if "params" in step and isinstance(step["params"], dict):
-                            step["params"]["target_type"] = "string"
-                            step["params"]["cast_to"] = "string"
+                # B. preserve numeric cast on categorical text columns to trigger domain flag generation in codegen
+                pass
 
-                # C. Convert null imputation on business keys to trim (no-op safety)
+                # C. Convert null imputation on business keys to flag_missing_key
                 if is_key and action in ("fill_nulls_simple", "fill_or_drop"):
-                    logger.info(f"[Step Filter] Converted null imputation '{action}' on business key '{col}' to 'trim'")
-                    step["action"] = "trim"
-                    action = "trim"
+                    logger.info(f"[Step Filter] Converted null imputation '{action}' on business key '{col}' to 'flag_missing_key'")
+                    step["action"] = "flag_missing_key"
+                    action = "flag_missing_key"
                     step.pop("value", None)
                     step.pop("fill_value", None)
                     if "params" in step and isinstance(step["params"], dict):
@@ -1793,7 +1833,8 @@ def _consolidate_and_filter_datasets(
                         step["params"].pop("fill_value", None)
 
                 # D. Convert mean/median strategies and numeric fill values on categorical/string columns to value = 'unknown'
-                if (is_cat or not _is_numeric_column(col, columns_meta.get(col) or {})) and action in ("fill_nulls_simple", "fill_or_drop"):
+                col_meta_for_fill = _get_col_meta(col, step)
+                if (is_cat or not _is_numeric_column(col, col_meta_for_fill)) and action in ("fill_nulls_simple", "fill_or_drop"):
                     params = step.get("params") or {}
                     strat = params.get("fill_strategy") or step.get("strategy") or ""
                     fval = step.get("value") if "value" in step else step.get("fill_value")
@@ -1814,7 +1855,7 @@ def _consolidate_and_filter_datasets(
             # 1. Type-aware filtering: trim/lower/upper/sanitize_email are string-only
             if not strict_mode and action in ("trim", "lowercase", "uppercase", "sanitize_email"):
                 if col:
-                    col_meta = columns_meta.get(col) or {}
+                    col_meta = _get_col_meta(col, step)
                     col_class = _classify_column(col, col_meta, sem_schema, ds_name)
                     if col_class in ("metric", "date", "metadata"):
                         logger.info(f"[Step Filter] Dropped '{action}' on '{col}' — classifier={col_class} (ds={ds_name})")
@@ -1823,7 +1864,7 @@ def _consolidate_and_filter_datasets(
             # Type-aware filtering: outlier logic is numeric-only (always enforce regardless of strict_mode)
             if action in ("flag_outliers", "clip_or_flag", "clip_outliers", "cap_outliers"):
                 if col:
-                    col_meta = columns_meta.get(col) or {}
+                    col_meta = _get_col_meta(col, step)
                     col_str = str(col).lower()
                     is_key = any(k in col_str for k in ("id", "key", "code", "ref", "num", "no", "nbr", "uuid", "guid", "sku", "ean", "isbn", "asin"))
                     is_cat = any(k in col_str for k in ("region", "channel", "location", "category", "status", "country", "state", "city", "zone", "segment", "type", "customer", "name", "machine", "factory", "plant", "site"))
@@ -2512,7 +2553,7 @@ async def generate_etl_with_llm(
                 def reset_circuit():
                     _PLAN_FAILURE_COUNTS[plan_id] = 0
                     logger.info(f"Circuit breaker reset for plan_id: {plan_id}")
-                threading.Timer(300.0, reset_circuit).start()
+                threading.Timer(30.0, reset_circuit).start()
         else:
             _PLAN_FAILURE_COUNTS[plan_id] = 0  # reset on success
             

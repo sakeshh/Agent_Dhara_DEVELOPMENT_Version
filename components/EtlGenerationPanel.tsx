@@ -542,7 +542,7 @@ export default function EtlGenerationPanel({
           data?.message ||
             (blocked.length
               ? `Blocked: ${blocked.map((b: { message?: string }) => b.message || JSON.stringify(b)).join(' | ')}`
-              : `Plan has validation warnings (${perrs.length}). Review before confirming.`)
+              : `Plan validation FAILED — ${perrs.length} blocking error(s). Resolve before approving.`)
         );
         setStep('plan');
         return;
@@ -637,6 +637,8 @@ export default function EtlGenerationPanel({
     if (!plan) return false;
     if (Array.isArray(plan.blocked) && (plan.blocked as unknown[]).length > 0) return false;
     if (pendingManualCount > 0) return false;
+    // Validation errors are hard blockers — not warnings
+    if (planValidationErrors.length > 0) return false;
 
     // Plan coverage gating check
     const report = plan.coverage_report as any;
@@ -657,7 +659,7 @@ export default function EtlGenerationPanel({
       }
     }
     return true;
-  }, [plan, pendingManualCount]);
+  }, [plan, pendingManualCount, planValidationErrors]);
 
   const applyManualResolutions = async (
     resolutions: Array<{ item_id: string; resolution_id: string }>
@@ -1023,18 +1025,17 @@ export default function EtlGenerationPanel({
             {gateResult ? (
               <span
                 className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 ${
-                  gateResult.passed
+                  gateResult.passed && planValidationErrors.length === 0
                     ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
                     : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
                 }`}
               >
-                {gateResult.passed ? '🛡️ Phase 1 DQ Gate: Passed' : '⚠️ Phase 1 DQ Gate: Gated'} (Score: {gateResult.score}%)
+                {gateResult.passed && planValidationErrors.length === 0 ? '🛡️ Phase 1 DQ Gate: Passed' : '⚠️ Phase 1 DQ Gate: Gated'} (Score: {gateResult.score}%)
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-500/30 bg-slate-500/10 px-3 py-1 text-slate-600 dark:text-slate-400">
                 🛡️ Phase 1 DQ Gate: Ready (Score: &gt;80%)
               </span>
-
             )}
           </div>
 
@@ -1319,10 +1320,13 @@ export default function EtlGenerationPanel({
             {planValidationErrors.length > 0 ? (
               <div
                 className={`rounded-xl border px-3 py-2 text-[12px] ${
-                  dm ? 'border-amber-400/40 bg-amber-500/10 text-amber-100' : 'border-amber-200 bg-amber-50 text-amber-950'
+                  dm ? 'border-rose-400/40 bg-rose-500/10 text-rose-100' : 'border-rose-200 bg-rose-50 text-rose-950'
                 }`}
               >
-                <strong>Plan validation notes</strong>
+                <div className="flex items-center gap-2 font-bold">
+                  <span>⛔ Plan validation: FAILED</span>
+                  <span className="ml-auto text-[10px] font-semibold opacity-80">Blocking errors: {planValidationErrors.length} · Code generation eligible: NO</span>
+                </div>
                 <ul className="mt-1 list-disc pl-4">
                   {planValidationErrors.map((e, i) => (
                     <li key={i}>{e}</li>
@@ -1491,15 +1495,21 @@ export default function EtlGenerationPanel({
                 disabled={busy || !planApproveReady}
                 title={
                   !planApproveReady
-                    ? pendingManualCount > 0
-                      ? `Resolve ${pendingManualCount} manual review item(s) first`
-                      : 'Resolve blocked or review steps before approving'
+                    ? planValidationErrors.length > 0
+                      ? `Resolve ${planValidationErrors.length} blocking validation error(s) first`
+                      : pendingManualCount > 0
+                        ? `Resolve ${pendingManualCount} manual review item(s) first`
+                        : 'Resolve blocked or review steps before approving'
                     : undefined
                 }
                 onClick={() => void runConfirm()}
                 className="inline-flex items-center gap-2 rounded-xl bg-[#0070AD] px-4 py-2 text-sm font-bold text-white shadow hover:bg-[#0070AD]/90 disabled:opacity-50"
               >
-                {planApproveReady ? 'Approve & preview impact' : confirmPlanLabel}
+                {planApproveReady
+                  ? 'Approve & preview impact'
+                  : planValidationErrors.length > 0
+                    ? `Resolve ${planValidationErrors.length} blocking error(s)`
+                    : confirmPlanLabel}
                 {pendingManualCount > 0 ? ` (${pendingManualCount} review pending)` : null}{' '}
                 <FaChevronRight className="text-xs" />
               </button>

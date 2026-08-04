@@ -220,8 +220,8 @@ def validate_cross_artifact_metrics() -> bool:
             return re.sub(r'[^A-Z_]', '', v.upper().replace(' ', '_').replace('-', '_'))
 
         md_text = open(REPORT_MD, encoding="utf-8").read()
-        score_match = re.search(r"Overall DQ Score\s*\|\s*([\d\.]+)\s*/\s*100", md_text)
-        verdict_match = re.search(r"Data Quality Verdict:\s*([A-Z_ \-]+)", md_text)
+        score_match = re.search(r"Overall DQ Score(?:\s*\|\s*|:\s*\*\*?)([\d\.]+)", md_text)
+        verdict_match = re.search(r"(?:Data Quality|Readiness)\s*Verdict:\s*(?:\*\*)?([A-Z_ \-]+)", md_text)
         if not score_match:
             log_failure("Could not parse overall score from report.md")
             return False
@@ -256,8 +256,8 @@ def validate_cross_artifact_metrics() -> bool:
     # 4. Read HTML
     try:
         html_text = open(REPORT_HTML, encoding="utf-8").read()
-        score_match = re.search(r"Overall DQ score:\s*<strong[^>]*>\s*([\d\.]+)\s*</strong>", html_text, re.IGNORECASE)
-        verdict_match = re.search(r"Data quality verdict:\s*<strong[^>]*>\s*([A-Z_ \-]+)\s*</strong>", html_text, re.IGNORECASE)
+        score_match = re.search(r"(?:Overall DQ score:\s*<strong[^>]*>|class=['\"]score-num['\"]>)\s*([\d\.]+)", html_text, re.IGNORECASE)
+        verdict_match = re.search(r"(?:Data quality verdict:\s*<strong[^>]*>|Verdict:\s*)([A-Z_ \-]+)", html_text, re.IGNORECASE)
 
         if not score_match:
             log_failure("Could not parse overall score from report.html")

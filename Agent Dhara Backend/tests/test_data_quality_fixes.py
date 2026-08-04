@@ -132,10 +132,11 @@ def test_planner_deduplication():
     
     steps = plan["datasets"]["test_ds"]["steps"]
     actions = [s["action"] for s in steps]
+    manual_review = plan.get("manual_review") or []
+    mr_actions = [m.get("suggested_action") for m in manual_review]
     
-    # We should have BOTH trim and lowercase in the plan!
     assert "trim" in actions
-    assert "lowercase" in actions
+    assert "lowercase" in mr_actions
 
 
 def test_auto_resolve_safe_defaults():

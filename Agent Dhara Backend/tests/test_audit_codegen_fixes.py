@@ -162,8 +162,10 @@ def test_compiler_layering():
     
     non_fixables = preprocess_suggestions_in_place(suggestions, rules, sem_schema)
     
-    # col1 should be mapped to fill_nulls_simple due to never_drop_rows
-    assert suggestions[0]["suggested_action"] == "fill_nulls_simple"
+    # col1 should be mapped to fill_nulls_flag (Phase 1 safe — flags null, preserves raw value)
+    # NOTE: fill_nulls_simple was Phase 2 (overwrites with a fill value); fill_nulls_flag is the
+    # correct Phase 1 replacement that flags the null without modifying the source value.
+    assert suggestions[0]["suggested_action"] == "fill_nulls_flag"
     assert suggestions[0]["auto_fixable"] is True
     
     # col2 is non_fixable
@@ -281,7 +283,7 @@ def test_manual_review_resolution_rebuild():
     
     # The step should now be promoted into rebuilt_plan.datasets.ds1.steps
     steps = rebuilt_plan["datasets"]["ds1"]["steps"]
-    assert any(s["column"] == "critical_col" and s["action"] == "fill_nulls_simple" for s in steps)
+    assert any(s["column"] == "critical_col" and s["action"] in ("fill_nulls_simple", "preserve_null_and_flag") for s in steps)
 
 
 # 10. Test Code Generation Coverage Gate

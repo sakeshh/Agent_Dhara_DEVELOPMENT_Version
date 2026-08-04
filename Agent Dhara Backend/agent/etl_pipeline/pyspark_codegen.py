@@ -530,62 +530,138 @@ def _emit_spark(
         return [f"{df} = {df}.drop({c})"]
     if act == "noop":
         return [f"# Column {col}: no transform"]
-    if act == "validate_referential_integrity_or_stage":
-        rel_ds = params.get("related_dataset") or "?"
-        rel_col = params.get("related_column") or "?"
-        mode = params.get("enforcement_mode") or "flag"
-        fk_action = params.get("fk_action") or "flag"
-        
-        lines = [
-            f"# Referential integrity check: {col} -> {rel_ds}.{rel_col} (action={fk_action}, mode={mode})",
-            f"if all_dfs is not None and {repr(rel_ds)} in all_dfs:",
-            f"    _parent_df = all_dfs[{repr(rel_ds)}]",
-            f"    if {repr(rel_col)} in _parent_df.columns:",
-            f"        _parent_keys = _parent_df.select(F.col({repr(rel_col)}).alias('_parent_key')).filter(F.col('_parent_key').isNotNull()).distinct()",
-            f"        {df} = {df}.join(_parent_keys, F.col({repr(col)}) == _parent_keys['_parent_key'], 'left')",
-            f"        _orphan_count = {df}.filter(F.col('_parent_key').isNull() & F.col({repr(col)}).isNotNull()).count()",
-            f"        if _orphan_count > 0:",
-            f"            logger.warning(f'Found {{_orphan_count}} orphan values in {col} referencing {rel_ds}.{rel_col}')",
+    if act in ("flag_missing_key", "flag_missing_declared_key"):
+        flag_col = repr(f"is_missing_{col}")
+        return [
+            f"# Governance: Adding missing key flag column for '{col}' without imputation to prevent fake key generation.",
+            f"{df} = {df}.withColumn({flag_col}, F.col({c}).isNull().cast('boolean'))"
         ]
-        if fk_action == "reject_orphans":
-            lines.extend([
-                f"            # Action: reject_orphans",
-                f"            {df} = {df}.filter(F.col('_parent_key').isNotNull() | F.col({repr(col)}).isNull())",
-                f"            logger.info(f'Dropped {{_orphan_count}} orphan rows')",
-            ])
-        elif fk_action == "null_fill_fk":
-            lines.extend([
-                f"            # Action: null_fill_fk",
-                f"            {df} = {df}.withColumn({repr(col)}, F.when(F.col('_parent_key').isNull() & F.col({repr(col)}).isNotNull(), F.lit(None)).otherwise(F.col({repr(col)})))",
-                f"            logger.info(f'Null-filled {{_orphan_count}} orphan values')",
-            ])
-        elif fk_action == "create_unknown_dim_record":
-            lines.extend([
-                f"            # Action: create_unknown_dim_record",
-                f"            _orphans = {df}.filter(F.col('_parent_key').isNull() & F.col({repr(col)}).isNotNull()).select(F.col({repr(col)}).alias({repr(rel_col)})).distinct()",
-                f"            _new_rows = _orphans",
-                f"            for _c in _parent_df.columns:",
-                f"                if _c != {repr(rel_col)}:",
-                f"                    _new_rows = _new_rows.withColumn(_c, F.lit(None).cast(_parent_df.schema[_c].dataType))",
-                f"            all_dfs[{repr(rel_ds)}] = _parent_df.unionByName(_new_rows)",
-                f"            logger.info(f'Created unknown dimension records in {rel_ds}')",
-            ])
-        else:
-            lines.extend([
-                f"            # Action: flag / warn only",
-                f"            pass",
-            ])
-        lines.extend([
-            f"        {df} = {df}.drop('_parent_key')",
-            f"else:",
-            f"    logger.warning(f'Skipped referential integrity check for {col} -> {rel_ds}.{rel_col} (parent dataset not loaded)')",
-        ])
-        return lines
+    if act == "preserve_null":
+        return [f"# preserve_null on {col}: column passes through null unchanged"]
+    if act == "fill_constant":
+        const_val = params.get("constant_value") or "unknown"
+        return [f"{df} = {df}.withColumn({c}, F.coalesce(F.col({c}), F.lit({repr(const_val)})))"]
+    if act == "preserve_null_and_flag":
+        col_safe = _safe(col or "col")
+        flag_col = repr(f"is_missing_{col_safe}")
+        return [f"{df} = {df}.withColumn({flag_col}, F.col({c}).isNull().cast('boolean'))"]
+    if act == "impute_numeric":
+        strategy = params.get("strategy") or "median"
+        col_safe = _safe(col or "col")
+        flag_col = repr(f"is_imputed_{col_safe}")
+        fill_val = params.get("value") or 0.0
+        return [
+            f"# Impute numeric column: strategy={strategy}",
+            f"{df} = {df}.withColumn({flag_col}, F.col({c}).isNull().cast('boolean'))",
+            f"{df} = {df}.withColumn({c}, F.coalesce(F.col({c}).cast('double'), F.lit({repr(fill_val)})))"
+        ]
+    if act == "impute_date":
+        strategy = params.get("strategy") or "constant"
+        col_safe = _safe(col or "col")
+        flag_col = repr(f"is_imputed_{col_safe}")
+        fill_val = params.get("value") or "1970-01-01"
+        return [
+            f"# Impute date column: strategy={strategy}",
+            f"{df} = {df}.withColumn({flag_col}, F.col({c}).isNull().cast('boolean'))",
+            f"{df} = {df}.withColumn({c}, F.coalesce(F.to_date(F.col({c})), F.to_date(F.lit({repr(fill_val)}))))"
+        ]
+    if act == "quarantine_missing_key":
+        col_safe = _safe(col or "col")
+        flag_col = repr(f"_is_missing_{col_safe}")
+        return [
+            f"# Quarantine missing key: routing rows with missing '{col}' keys to quarantine",
+            f"{df} = {df}.withColumn({flag_col}, F.col({c}).isNull().cast('boolean'))"
+        ]
+    if act == "preserve_missing_suspected_key":
+        col_safe = _safe(col or "col")
+        flag_col = repr(f"is_missing_{col_safe}")
+        return [
+            f"# Preserve suspected missing key: flagging without quarantine",
+            f"{df} = {df}.withColumn({flag_col}, F.col({c}).isNull().cast('boolean'))"
+        ]
+    if act == "trim_preserve_case":
+        return [
+            f"# Governance: Trimming whitespace from name/identifier '{col}' while preserving case.",
+            f'{df} = {df}.withColumn({c}, F.trim(F.col({c}).cast("string")))'
+        ]
+    if act in ("flag_duplicate_candidates", "flag_near_duplicate_cluster", "flag_business_key_duplicate"):
+        # Sanitize col through _safe() — pseudo-column markers like '[Row-level]' contain
+        # brackets that are illegal in Spark column names and cause AnalysisException.
+        col_safe = _safe(col or "row")
+        flag_col = repr(f"is_duplicate_{col_safe}")
+        return [
+            f"# Governance: Flagging duplicate candidates on '{col}' (no row dropping in Phase 1).",
+            f"{df} = {df}.withColumn({flag_col}, F.lit(True).cast('boolean'))"
+        ]
     if act == "review_manually":
         return [
             f"# MANUAL REVIEW REQUIRED: {col}",
             f"logger.warning('Column {col} requires manual review -- excluded from auto-clean')",
         ]
+    if act in ("validate_referential_integrity_or_stage", "validate_and_partition_relationship"):
+        rel_ds = params.get("related_dataset") or "?"
+        rel_col = params.get("related_column") or "?"
+        expected_orphans = step_meta.get("evidence", {}).get("orphan_row_count") or params.get("orphan_row_count")
+        is_required = bool(params.get("required", True))
+        
+        lines = [
+            f"# validate_and_partition_relationship: {col} -> {rel_ds}.{rel_col}",
+            f"if all_dfs is not None and {repr(rel_ds)} in all_dfs:",
+            f"    _parent_df = all_dfs[{repr(rel_ds)}]",
+            f"    if {repr(rel_col)} in _parent_df.columns:",
+            f"        from agent.etl_pipeline.relationship_key_contract import DEFAULT_CONTRACT",
+            f"        from agent.etl_pipeline.relationship_key_normalization_spark import normalize_relationship_key_spark",
+            # Normalise parent key using distinct to prevent duplicating child rows
+            f"        _parent_keys = _parent_df.select(normalize_relationship_key_spark({repr(rel_col)}, DEFAULT_CONTRACT).alias('_parent_key')).filter(F.col('_parent_key').isNotNull()).distinct()",
+            # Normalise child key
+            f"        _child_key_norm = normalize_relationship_key_spark({repr(col)}, DEFAULT_CONTRACT)",
+            f"        _child_with_parent = {df}.withColumn('_parent_key_norm', _child_key_norm)",
+            # Partition child null keys
+            f"        _child_null_keys = _child_with_parent.filter(F.col('_parent_key_norm').isNull())",
+            f"        _non_null_child = _child_with_parent.filter(F.col('_parent_key_norm').isNotNull())",
+            # Partition valid vs orphan rows using semi and anti joins
+            f"        _valid_child_rows = _non_null_child.join(_parent_keys, F.col('_parent_key_norm') == _parent_keys['_parent_key'], 'left_semi')",
+            f"        _orphan_child_rows = _non_null_child.join(_parent_keys, F.col('_parent_key_norm') == _parent_keys['_parent_key'], 'left_anti')",
+            f"        _actual_orphan_count = _orphan_child_rows.count()",
+            f"        _actual_null_count = _child_null_keys.count()",
+            f"        logger.info('Referential integrity validation: parent={rel_ds}, child={col}, actual_orphans=%d, actual_null_keys=%d', _actual_orphan_count, _actual_null_count)",
+        ]
+        
+        # Check expected orphan count if provided
+        if expected_orphans is not None:
+            lines.extend([
+                f"        if _actual_orphan_count != {int(expected_orphans)}:",
+                f"            logger.error('Referential integrity reconciliation failed! Expected {expected_orphans} orphans, found %d orphans', _actual_orphan_count)",
+                f"            raise ValueError(f'Referential integrity reconciliation failed: expected {expected_orphans}, actual {_actual_orphan_count}')",
+            ])
+        
+        # Partitioning disposition logic:
+        # Save orphan and null-key rows to separate tables
+        lines.extend([
+            f"        if _actual_null_count > 0:",
+            f"            logger.warning('%d null child keys routed to quarantine', _actual_null_count)",
+            f"            if all_dfs is not None:",
+            f"                all_dfs['{ds_name}_key_nulls_quarantine'] = _child_null_keys.drop('_parent_key_norm')",
+            f"        if _actual_orphan_count > 0:",
+            f"            logger.warning('%d campaign orphans routed to quarantine', _actual_orphan_count)",
+            f"            if all_dfs is not None:",
+            f"                all_dfs['{ds_name}_campaign_orphans_quarantine'] = _orphan_child_rows.drop('_parent_key_norm')",
+            # Clean output has only valid rows:
+            f"        {df} = _valid_child_rows.drop('_parent_key_norm')",
+        ])
+        
+        lines.extend([
+            f"else:",
+            f"    # Parent missing at runtime checks",
+            f"    if {repr(is_required)}:",
+            f"        logger.error('Required parent dataset {rel_ds} not loaded! Blocking clean write.')",
+            f"        raise ValueError('Required parent dataset {rel_ds} not loaded')",
+            f"    else:",
+            f"        logger.warning('Optional parent dataset {rel_ds} not loaded. Retaining child rows, RI not evaluated.')",
+            f"        {df} = {df}.withColumn('dq_validation_status', F.lit('RELATIONSHIP_NOT_EVALUATED'))",
+        ])
+        return lines
+
     if act == "flag_domain_violation":
         # Categorical column contains digit-only strings (e.g. region='123').
         # DO NOT cast to integer. Flag the violation for manual inspection.
@@ -612,6 +688,18 @@ def _emit_spark(
             f" F.when(F.col({flag_col}), F.lit(None)).otherwise(F.col({c}).cast('double')))",
             f"_invalid_cnt = {df}.filter(F.col({flag_col})).count()",
             f"logger.warning('fill_nulls_flag: %d non-numeric values flagged in column {col} (original preserved)', _invalid_cnt)",
+        ]
+    if act == "create_normalized_match_key":
+        # Emit a normalised match-key column: trim + lowercase the source column.
+        # output_column param overrides the default <col>_match_key name.
+        params_val = step_meta.get("params") if step_meta else None
+        if not params_val:
+            params_val = {}
+        output_col = params_val.get("output_column") or f"{col}_match_key"
+        output_col_safe = _safe(output_col)
+        return [
+            f"# Normalized match-key for '{col}': trim + lowercase for fuzzy/join matching.",
+            f"{df} = {df}.withColumn({repr(output_col_safe)}, F.trim(F.lower(F.col({c}).cast('string'))))",
         ]
     return [f"# Unsupported in pyspark template v1: {act} on {col}"]
 
@@ -727,7 +815,7 @@ def generate_pyspark_etl(plan: Dict[str, Any], assessment: Dict[str, Any]) -> st
         for ent in (manifest.get("datasets") or {}).values()
     )
     
-    if manifest.get("datasets"):
+    if plan.get("datasets") or manifest.get("datasets"):
         if use_fabric:
             ws_id = os.getenv("FABRIC_WORKSPACE_ID") or ""
             lh_id = os.getenv("FABRIC_LAKEHOUSE_ID") or os.getenv("FABRIC_LAKEHOUSE_NAME") or ""
@@ -773,6 +861,11 @@ def generate_pyspark_etl(plan: Dict[str, Any], assessment: Dict[str, Any]) -> st
                 # do NOT add them to _require_columns because they are often
                 # composite business keys whose individual parts are already
                 # declared by other steps (e.g. trim, parse_dates).
+                continue
+            if act_low in ("flag_business_key_duplicate", "flag_duplicate_candidates", "flag_near_duplicate_cluster"):
+                # These actions operate on composite key columns (e.g. "factory_id, campaign_id")
+                # or pseudo-column markers (e.g. "[Row-level]") that are NOT real column names.
+                # Exclude them from _require_columns to prevent schema validation failures.
                 continue
             ds_cols.append(raw_str)
         unique_cols = list(dict.fromkeys(ds_cols))

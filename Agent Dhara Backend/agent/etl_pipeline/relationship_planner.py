@@ -109,6 +109,14 @@ def _bridge_name(a: str, b: str, col: str) -> str:
     return f"bridge_{sa}_{sb}_{sc}"
 
 
+def assessed_dataset_names(assessment: Dict[str, Any]) -> set[str]:
+    """Helper to return a set of dataset names present in assessment datasets block."""
+    datasets = assessment.get("datasets") or {}
+    if isinstance(datasets, dict):
+        return set(datasets.keys())
+    return {item.get("name") or item.get("dataset") for item in datasets if isinstance(item, dict)}
+
+
 def build_relationship_plan(assessment: Dict[str, Any]) -> Dict[str, Any]:
     rels: List[Dict[str, Any]] = list(assessment.get("relationships") or [])
     dq = assessment.get("data_quality_issues") or {}
@@ -117,6 +125,30 @@ def build_relationship_plan(assessment: Dict[str, Any]) -> Dict[str, Any]:
         global_issues = {}
     row_issues: List[Dict[str, Any]] = list(global_issues.get("relationship_row_issues") or [])
     warnings: List[Dict[str, Any]] = list(global_issues.get("relationship_warnings") or [])
+
+    assessed_datasets = assessed_dataset_names(assessment)
+    out_of_scope_relationships = []
+    active_rels = []
+
+    for rel in rels:
+        n1 = str(rel.get("dataset_a") or "")
+        n2 = str(rel.get("dataset_b") or "")
+        if n1 not in assessed_datasets or n2 not in assessed_datasets:
+            missing = [d for d in [n1, n2] if d not in assessed_datasets]
+            is_required = bool(rel.get("required", True))
+            status = "SCOPE_INCOMPLETE" if is_required else "NOT_APPLICABLE"
+            gating_result = "NOT_APPLICABLE" # Not failing DQ gate, just not applicable/incomplete
+            out_of_scope_relationships.append({
+                "relationship_id": rel.get("relationship_id") or f"{n1}_{n2}",
+                "dataset_a": n1,
+                "dataset_b": n2,
+                "status": status,
+                "gating_result": gating_result,
+                "reason": f"Dataset(s) {missing} not present in assessment scope",
+                "missing_datasets": missing,
+            })
+        else:
+            active_rels.append(rel)
 
     orphan_by_pair: Dict[Tuple[str, str, str], int] = {}
     for iss in row_issues:
@@ -133,7 +165,7 @@ def build_relationship_plan(assessment: Dict[str, Any]) -> Dict[str, Any]:
     many_to_many: List[Dict[str, Any]] = []
     parent_scores: Dict[str, int] = {}
 
-    for rel in rels:
+    for rel in active_rels:
         card = str(rel.get("cardinality") or "").lower()
         n1 = str(rel.get("dataset_a") or "")
         n2 = str(rel.get("dataset_b") or "")
@@ -200,8 +232,21 @@ def build_relationship_plan(assessment: Dict[str, Any]) -> Dict[str, Any]:
             continue
 
         p_ds, p_col, c_ds, c_col = pc
-        orphan = orphan_by_pair.get((p_ds, p_col, c_ds), 0)
-        join_type = "left" if orphan > 0 else "inner"
+        key = (p_ds, p_col, c_ds)
+        
+        # 3-state orphan count: None = missing evidence, 0 = no orphans, N > 0 = orphans
+        if key in orphan_by_pair:
+            assessment_orphan_row_count = orphan_by_pair[key]
+            assessment_status = "EVALUATED"
+        else:
+            if p_ds in assessed_datasets and c_ds in assessed_datasets:
+                assessment_orphan_row_count = 0
+                assessment_status = "EVALUATED"
+            else:
+                assessment_orphan_row_count = None
+                assessment_status = "EVIDENCE_NOT_FOUND"
+
+        join_type = "left_semi_anti" # Always use left_semi_anti partition for Phase 1 FK relationships
         parent_scores[p_ds] = parent_scores.get(p_ds, 0) + 1
 
         joins.append(
@@ -218,14 +263,15 @@ def build_relationship_plan(assessment: Dict[str, Any]) -> Dict[str, Any]:
                 "cardinality": rel.get("cardinality"),
                 "from_a_to_b": rel.get("from_a_to_b"),
                 "overlap_count": rel.get("overlap_count"),
-                "orphan_row_count": orphan or None,
-                "evidence": _build_join_evidence(rel, assessment, orphan_count=orphan),
-                "recommended_action": "join_after_cleaning",
+                "orphan_row_count": assessment_orphan_row_count,
+                "assessment_status": assessment_status,
+                "evidence": _build_join_evidence(rel, assessment, orphan_count=(assessment_orphan_row_count or 0)),
+                "recommended_action": "validate_and_partition_relationship",
                 "auto_fixable": True,
             }
         )
 
-    ds_names = list((assessment.get("datasets") or {}).keys())
+    ds_names = list(assessed_datasets)
     load_order: List[str] = []
     seen = set()
     for ds, _ in sorted(parent_scores.items(), key=lambda x: -x[1]):
@@ -235,6 +281,7 @@ def build_relationship_plan(assessment: Dict[str, Any]) -> Dict[str, Any]:
     for ds in ds_names:
         if ds not in seen:
             load_order.append(ds)
+            seen.add(ds)
 
     relationship_steps: List[Dict[str, Any]] = []
     order = 0
@@ -261,7 +308,7 @@ def build_relationship_plan(assessment: Dict[str, Any]) -> Dict[str, Any]:
         relationship_steps.append(
             {
                 "order": order,
-                "action": "join_datasets",
+                "action": "validate_and_partition_relationship",
                 "parent_dataset": j.get("parent_dataset"),
                 "child_dataset": j.get("child_dataset"),
                 "parent_key": j.get("parent_key"),
@@ -279,7 +326,7 @@ def build_relationship_plan(assessment: Dict[str, Any]) -> Dict[str, Any]:
         relationship_steps.append(
             {
                 "order": order,
-                "action": "validate_referential_integrity_or_stage",
+                "action": "validate_and_partition_relationship",
                 "dataset": iss.get("dataset"),
                 "column": iss.get("column"),
                 "related_dataset": iss.get("related_dataset"),
@@ -308,4 +355,6 @@ def build_relationship_plan(assessment: Dict[str, Any]) -> Dict[str, Any]:
         "warnings": warnings,
         "join_count": len([j for j in joins if j.get("join_type") != "review"]),
         "mn_count": len(many_to_many),
+        "out_of_scope_relationships": out_of_scope_relationships,
     }
+

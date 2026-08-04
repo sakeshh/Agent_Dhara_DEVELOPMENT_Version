@@ -6,21 +6,45 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict, Tuple
 
+from agent.etl_pipeline.action_registry import get_action_meta, is_invalid_action
+
+class PlanPhaseError(ValueError):
+    """Raised when an ETL plan contains invalid/ambiguous actions during phase splitting."""
+    def __init__(self, invalid_steps: list[dict[str, Any]]):
+        self.invalid_steps = invalid_steps
+        super().__init__(f"{len(invalid_steps)} invalid ETL action(s) in plan")
+
+
 def classify_action_phase(action: str) -> str:
     """Classify action as 'cleanse' or 'transform'."""
     act = (action or "").strip().lower()
-    cleanse_actions = {
-        "trim", "lowercase", "uppercase", "fill_nulls_simple", "fill_or_drop",
-        "cast_type", "coerce_numeric", "parse_dates", "sanitize_email",
-        "normalize_phone", "range_clip", "clip_or_flag", "flag_outliers",
-        "clip_outliers", "cap_outliers", "standardize_boolean", "zero_to_null",
-        "deduplicate", "drop_column", "exclude_column", "nullify_future_dates",
-        "noop", "drop_rows", "nullify_punctuation", "nullify_dummy_dates"
-    }
-    return "cleanse" if act in cleanse_actions else "transform"
+    meta = get_action_meta(act)
+    if meta.get("invalid"):
+        # Let split_plan_phases or caller handle invalid actions
+        return "invalid"
+    
+    phase_num = meta.get("phase")
+    if phase_num == 1:
+        return "cleanse"
+    elif phase_num == 2:
+        return "transform"
+    
+    # Default fallback for unregistered actions
+    return "transform"
+
 
 def split_plan_phases(plan: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Splits a single ETL plan into cleanse-only and transform-only plan objects."""
+    invalid_steps = []
+    for ds_name, block in plan.get("datasets", {}).items():
+        if isinstance(block, dict):
+            for st in (block.get("steps") or []):
+                action = st.get("action")
+                if is_invalid_action(action):
+                    invalid_steps.append(st)
+    if invalid_steps:
+        raise PlanPhaseError(invalid_steps)
+
     cleanse_plan = copy.deepcopy(plan)
     transform_plan = copy.deepcopy(plan)
 
@@ -36,7 +60,8 @@ def split_plan_phases(plan: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, A
         steps = block.get("steps") or []
         cleanse_steps = []
         for st in steps:
-            if classify_action_phase(st.get("action")) == "cleanse":
+            action = st.get("action")
+            if classify_action_phase(action) == "cleanse":
                 cleanse_steps.append(st)
         # Re-index step order
         for idx, st in enumerate(cleanse_steps):
@@ -50,7 +75,8 @@ def split_plan_phases(plan: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, A
         steps = block.get("steps") or []
         transform_steps = []
         for st in steps:
-            if classify_action_phase(st.get("action")) == "transform":
+            action = st.get("action")
+            if classify_action_phase(action) == "transform":
                 transform_steps.append(st)
         # Re-index step order
         for idx, st in enumerate(transform_steps):
@@ -58,3 +84,4 @@ def split_plan_phases(plan: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, A
         block["steps"] = transform_steps
 
     return cleanse_plan, transform_plan
+

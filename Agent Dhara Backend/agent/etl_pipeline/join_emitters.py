@@ -64,6 +64,7 @@ def emit_python_load_and_join(
             p, c = j.get("parent_dataset"), j.get("child_dataset")
             pk, ck = j.get("parent_key"), j.get("child_key")
             how = j.get("join_type") or "left"
+            how_mapped = "left" if how in ("left_semi_anti", "validate_and_partition_relationship") else how
             sfx = _safe(c)
             jname = f"joined_{_safe(p)}_{_safe(c)}"
             lines.append(f"    if {repr(p)} in dfs and {repr(c)} in dfs:")
@@ -75,7 +76,7 @@ def emit_python_load_and_join(
             lines.append(
                 f"        dfs[{repr(jname)}] = dfs[{repr(p)}].merge("
                 f"_right, left_on={repr(pk)}, right_on={repr(ck)}, "
-                f"how={repr(how)}, suffixes=('', '_dup'))"
+                f"how={repr(how_mapped)}, suffixes=('', '_dup'))"
             )
         lines.append("    return dfs")
         lines.append("")
@@ -406,13 +407,25 @@ def emit_pyspark_joins(plan: Dict[str, Any]) -> List[str]:
         lines.append(f'    _warn_duplicate_keys(dfs["{p_canon}"], {pk!r}, "{p_canon}")')
         lines.append(f'    _warn_duplicate_keys(dfs["{c_canon}"], {ck!r}, "{c_canon}")')
         lines.append(f'    _right = _prefix_columns(dfs["{c_canon}"], "{sfx}", [{ck!r}])')
-        if pk == ck:
-            lines.append(f'    dfs[{jname!r}] = dfs["{p_canon}"].join(_right, on={pk!r}, how="{how}")')
+        if how in ("left_semi_anti", "validate_and_partition_relationship"):
+            if pk == ck:
+                lines.append(f'    # Valid partition (left_semi)')
+                lines.append(f'    dfs[{jname!r}] = dfs["{p_canon}"].join(_right, on={pk!r}, how="left_semi")')
+                lines.append(f'    # Orphan partition (left_anti) -> routed to quarantine')
+                lines.append(f'    dfs["{p_canon}_quarantine_{c_canon}"] = dfs["{p_canon}"].join(_right, on={pk!r}, how="left_anti")')
+            else:
+                lines.append(f'    # Valid partition (left_semi)')
+                lines.append(f'    dfs[{jname!r}] = dfs["{p_canon}"].join(_right, F.col("{pk}") == F.col("{ck}"), how="left_semi")')
+                lines.append(f'    # Orphan partition (left_anti) -> routed to quarantine')
+                lines.append(f'    dfs["{p_canon}_quarantine_{c_canon}"] = dfs["{p_canon}"].join(_right, F.col("{pk}") == F.col("{ck}"), how="left_anti")')
         else:
-            lines.append(
-                f'    dfs[{jname!r}] = dfs["{p_canon}"].join(_right, '
-                f'F.col("{pk}") == F.col("{ck}"), how="{how}")'
-            )
+            if pk == ck:
+                lines.append(f'    dfs[{jname!r}] = dfs["{p_canon}"].join(_right, on={pk!r}, how="{how}")')
+            else:
+                lines.append(
+                    f'    dfs[{jname!r}] = dfs["{p_canon}"].join(_right, '
+                    f'F.col("{pk}") == F.col("{ck}"), how="{how}")'
+                )
     lines.append("")
     return lines
 
