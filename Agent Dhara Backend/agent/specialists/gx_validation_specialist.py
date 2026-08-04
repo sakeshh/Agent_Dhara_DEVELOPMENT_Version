@@ -277,75 +277,125 @@ def run_gx_validation(
                         if re.search(pattern, assertion, re.IGNORECASE):
                             columns_with_custom_rules.add(col.lower())
 
-                # B. Column-Level Expectations
+                # B. Column-Level Expectations — Engine 3.0 semantic-aware planning
+                # ── SEMANTIC AWARE: inference runs BEFORE any expectation is planned ──────
+                # This is the fix for the historical bug where country/identifier/status
+                # columns received numeric expectations.
+                _NON_NUMERIC_SEMANTICS = {
+                    "identifier", "primary_key", "foreign_key", "sensitive_identifier",
+                    "country", "status", "category", "postal_code", "person_name",
+                    "organization", "free_text", "url", "ip_address", "email", "phone",
+                    "date", "datetime", "timestamp", "region", "address",
+                }
+
                 for col_name in validation_df.columns:
                     meta = cols_meta.get(col_name) or {}
                     s = validation_df[col_name]
                     dtype = str(s.dtype).lower()
-                    
-                    semantic_type = (meta.get("semantic_type") or "unknown").lower()
-                    if semantic_type == "unknown" or not semantic_type:
-                        from agent.intelligent_data_assessment import detect_semantic_type
+
+                    # ── Step 1: Resolve semantic type via Engine 3.0 inference ──────────────
+                    semantic_type = (meta.get("semantic_type") or "").lower()
+                    semantic_confidence = float(meta.get("semantic_confidence", 0.0))
+
+                    if not semantic_type or semantic_type == "unknown":
+                        # Engine 3.0 semantic inference (preferred)
                         try:
-                            semantic_type = detect_semantic_type(s).lower()
+                            from agent.profiling.semantic_inference import infer_semantic_type_with_confidence
+                            _cls = infer_semantic_type_with_confidence(col_name, s)
+                            semantic_type = _cls.semantic_type.lower()
+                            semantic_confidence = _cls.semantic_confidence
                         except Exception:
-                            semantic_type = "unknown"
-                            
+                            # Legacy fallback
+                            try:
+                                from agent.intelligent_data_assessment import detect_semantic_type
+                                semantic_type = detect_semantic_type(s).lower()
+                                semantic_confidence = 0.5
+                            except Exception:
+                                semantic_type = "unknown"
+                                semantic_confidence = 0.0
+
+                    # ── Step 2: Determine if numeric expectations are allowed ──────────────
+                    # CRITICAL: A column with int/float dtype is NOT necessarily numeric in
+                    # business terms. Identifier, country, postal code etc. may have int dtype.
+                    _is_numeric_semantic = (
+                        semantic_type in {"currency_amount", "quantity", "percentage"}
+                        or (semantic_type not in _NON_NUMERIC_SEMANTICS and semantic_type != "unknown"
+                            and ("int" in dtype or "float" in dtype))
+                    )
+                    # Never plan numeric expectations for known non-numeric semantic types
+                    _block_numeric = semantic_type in _NON_NUMERIC_SEMANTICS
+
                     null_pct = meta.get("null_percentage", 0.0)
 
-                    # Null check:
-                    # If business rules are active, only enforce non-null on required/non-nullable columns or candidate primary keys.
-                    # Otherwise, run it on all columns.
+                    # ── Step 3: Null check ────────────────────────────────────────────────
                     is_required = (col_name.lower() in non_nullable_set)
                     is_primary_key = bool(meta.get("candidate_primary_key"))
-                    
+
                     if not has_business_rules or is_required or is_primary_key:
                         validator.expect_column_values_to_not_be_null(column=col_name)
 
-                    # Uniqueness / Primary Key candidates
+                    # ── Step 4: Uniqueness ────────────────────────────────────────────────
                     if is_primary_key:
                         validator.expect_column_values_to_be_unique(column=col_name)
 
-                    # Typings & Ranges
-                    if "int" in dtype:
-                        validator.expect_column_values_to_be_in_type_list(column=col_name, type_list=["int64", "int32", "int", "Int64"])
-                    elif "float" in dtype or "decimal" in dtype:
-                        validator.expect_column_values_to_be_in_type_list(column=col_name, type_list=["float64", "float32", "float"])
+                    # ── Step 5: Type-list checks — BLOCKED for non-numeric semantics ──────
+                    # Do NOT add type expectations for identifier, country, status columns
+                    # even if their pandas dtype happens to be int or float.
+                    if not _block_numeric:
+                        if "int" in dtype and semantic_type not in _NON_NUMERIC_SEMANTICS:
+                            validator.expect_column_values_to_be_in_type_list(
+                                column=col_name, type_list=["int64", "int32", "int", "Int64"])
+                        elif ("float" in dtype or "decimal" in dtype) and semantic_type not in _NON_NUMERIC_SEMANTICS:
+                            validator.expect_column_values_to_be_in_type_list(
+                                column=col_name, type_list=["float64", "float32", "float"])
 
-                    # If this column has a custom business rule (valid values or custom assertion),
-                    # we suppress the default semantic validations to avoid duplicate/conflicting failures.
+                    # ── Step 6: Skip further semantic validations if custom rules active ───
                     if col_name.lower() in columns_with_custom_rules:
                         continue
 
-                    # Semantic Regex
+                    # ── Step 7: Semantic regex — pattern expectations ──────────────────────
                     if semantic_type == "email":
-                        validator.expect_column_values_to_match_regex(column=col_name, regex=r"^[^@\s]+@[^@\s]*\.[^@\s]+$")
+                        validator.expect_column_values_to_match_regex(
+                            column=col_name, regex=r"^[^@\s]+@[^@\s]*\.[^@\s]+$")
                     elif semantic_type == "phone":
-                        validator.expect_column_values_to_match_regex(column=col_name, regex=r"^[+()\-\.\s0-9]{7,}$")
+                        validator.expect_column_values_to_match_regex(
+                            column=col_name, regex=r"^[+()\-\.\s0-9]{7,}$")
                     elif semantic_type in ("uuid", "guid"):
                         validator.expect_column_values_to_match_regex(
                             column=col_name,
                             regex=r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                         )
-                    elif semantic_type == "date":
+                    elif semantic_type in ("date", "datetime", "timestamp"):
                         validator.expect_column_values_to_be_dateutil_parseable(column=col_name)
 
-                    # Numeric bounds and Sentinel checks for non-ID numeric columns
-                    is_id_like = col_name.lower().endswith("id") or col_name.lower().endswith("key") or col_name.lower().endswith("code") or semantic_type in ("numeric_id", "id")
-                    
-                    if ("int" in dtype or "float" in dtype) and not is_id_like:
+                    # ── Step 8: Numeric bounds — ONLY for true numeric semantic types ───────
+                    # identifiers, country codes, status values, postal codes etc. are EXCLUDED
+                    is_id_like = (
+                        col_name.lower().endswith("id") or
+                        col_name.lower().endswith("key") or
+                        col_name.lower().endswith("code") or
+                        semantic_type in {"identifier", "primary_key", "foreign_key",
+                                          "sensitive_identifier", "numeric_id", "id"}
+                    )
+
+                    if _is_numeric_semantic and not _block_numeric and not is_id_like:
                         v_clean = s.dropna()
                         if not v_clean.empty:
-                            # Negative values check
-                            validator.expect_column_values_to_be_between(column=col_name, min_value=0)
-                            
+                            # Negative values check for non-financial columns
+                            if semantic_type in {"quantity", "percentage"}:
+                                validator.expect_column_values_to_be_between(
+                                    column=col_name, min_value=0)
                             # Sentinel/magic values check
                             if local_sentinels:
-                                validator.expect_column_values_to_not_be_in_set(column=col_name, value_set=list(local_sentinels))
+                                validator.expect_column_values_to_not_be_in_set(
+                                    column=col_name, value_set=list(local_sentinels))
 
-                    # Suspicious zero check for ID columns (numeric or string)
-                    if is_id_like:
-                        validator.expect_column_values_to_not_be_in_set(column=col_name, value_set=[0, 0.0, "0", "0.0"])
+                    # ── Step 9: Suspicious zero for ID columns ────────────────────────────
+                    # Only check string-form IDs — do NOT check numeric columns that happen
+                    # to have 0 as a valid sentinel check
+                    if is_id_like and not _is_numeric_semantic:
+                        validator.expect_column_values_to_not_be_in_set(
+                            column=col_name, value_set=[0, 0.0, "0", "0.0"])
 
 
 

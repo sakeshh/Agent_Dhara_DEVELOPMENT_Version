@@ -1,15 +1,20 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, ConfigDict
+from agent.profiling.rule_status import RuleStatus, RuleEvaluationResult, RuleCoverageSummary
 
 class DatasetColumnProfile(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     dtype: str
     dtype_inference: Optional[str] = None
+    physical_types: Optional[Dict[str, float]] = None
     null_percentage: float = 0.0
     unique_count: int = 0
+    normalized_unique_count: Optional[int] = None
     semantic_type: Optional[str] = None
+    semantic_confidence: float = 1.0
+    semantic_source: str = "inferred"
     candidate_primary_key: bool = False
     likely_key_columns: Optional[List[str]] = None
 
@@ -22,6 +27,8 @@ class DatasetProfile(BaseModel):
     source_root: Optional[str] = None
     columns: Dict[str, DatasetColumnProfile] = Field(default_factory=dict)
     likely_key_columns: Optional[List[str]] = None
+    candidate_keys: List[List[str]] = Field(default_factory=list)
+    declared_keys: List[str] = Field(default_factory=list)
 
 class DataQualitySummary(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -39,9 +46,18 @@ class DQIssue(BaseModel):
     column: Optional[str] = None
     type: str
     severity: str
+    rule_id: Optional[str] = None
+    rule_status: str = RuleStatus.FAIL.value
+    dimension: str = "validity"
     count: Optional[int] = None
     row_indexes: Optional[List[int]] = None
     sample_values: Optional[List[Any]] = None
+    raw_values: Optional[List[Any]] = None
+    normalized_values: Optional[List[Any]] = None
+    typed_values: Optional[List[Any]] = None
+    finding_id: Optional[str] = None
+    is_root_cause: bool = True
+    linked_symptoms: List[str] = Field(default_factory=list)
     message: str
     recommended_action: Optional[str] = None
     auto_fixable: bool = False
@@ -124,7 +140,7 @@ class ReadinessScore(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     score: float = 100.0
-    verdict: str = "READY"
+    verdict: str = "READY"  # READY, BLOCKED, UNKNOWN
     blockers: List[Dict[str, Any]] = Field(default_factory=list)
 
 class GovernanceMetadata(BaseModel):
@@ -151,3 +167,14 @@ class AssessmentResultModel(BaseModel):
     transformation_suggestions: Optional[Dict[str, Any]] = None
     llm_insights: Optional[Dict[str, Any]] = None
     executive_summary_items: Optional[List[Dict[str, Any]]] = None
+    
+    # Engine 3.0 Standard Outputs
+    coverage: Optional[RuleCoverageSummary] = None
+    rule_results: List[RuleEvaluationResult] = Field(default_factory=list)
+    quality_findings: List[Dict[str, Any]] = Field(default_factory=list)
+    relationship_findings: List[Dict[str, Any]] = Field(default_factory=list)
+    privacy_findings: List[Dict[str, Any]] = Field(default_factory=list)
+    governance_findings: List[Dict[str, Any]] = Field(default_factory=list)
+    scores: Optional[Dict[str, Any]] = None
+    execution_diagnostics: Optional[List[Dict[str, Any]]] = None
+

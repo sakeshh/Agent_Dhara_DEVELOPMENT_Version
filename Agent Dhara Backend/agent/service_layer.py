@@ -451,16 +451,21 @@ def build_dq_scorecard(result: Dict[str, Any]) -> Dict[str, Any]:
             score_source = "unavailable"
 
         assessment_status = ds_meta.get("assessment_status", "COMPLETE")
-        readiness, qualifier = classify_readiness(
-            assessment_status=assessment_status,
-            score=score,
-            gating_highs=gating_highs,
-            gating_mediums=gating_mediums,
-            advisory_highs=advisory_highs,
-            medium=medium,
-            ready_threshold=ready_threshold,
-            blocked_threshold=blocked_threshold,
-        )
+        if summ.get("readiness") == "UNKNOWN":
+            readiness = "UNKNOWN"
+            qualifier = "insufficient_score_coverage"
+        else:
+            readiness, qualifier = classify_readiness(
+                assessment_status=assessment_status,
+                score=score,
+                gating_highs=gating_highs,
+                gating_mediums=gating_mediums,
+                advisory_highs=advisory_highs,
+                medium=medium,
+                ready_threshold=ready_threshold,
+                blocked_threshold=blocked_threshold,
+            )
+
 
         reasons = []
         if assessment_status != "COMPLETE":
@@ -962,9 +967,10 @@ def build_markdown_report(result: Dict[str, Any]) -> str:
     md.append("")
 
     md.append("## DQ Score Methodology")
-    md.append("- **Formula:** `100 - flat_penalty - row_penalty` (Single Authoritative Source)")
-    md.append("- **Weights:** High flat=2.5, Med flat=0.5, Low flat=0.1 (Cap=15.0); High row=30.0, Med row=15.0, Low row=5.0")
+    md.append("- **Engine:** `Dimension Scorer v3` (Single Authoritative Source)")
+    md.append("- **Formula:** The overall DQ score is the weighted average of evaluated quality dimensions. Dimensions without applicable or successfully evaluated rules are excluded from the effective denominator and reported separately through score coverage.")
     md.append(f"- **Gating Thresholds:** Score >= {sc.get('thresholds_used', {}).get('ready', 70.0)} is READY (unless gating HIGH issues exist); Score < {sc.get('thresholds_used', {}).get('blocked', 35.0)} is BLOCKED\n")
+
     
     for ds_name, dq_block in dq_ds.items():
         summ = dq_block.get("summary") or {}
@@ -1029,8 +1035,14 @@ def build_html_report(result: Dict[str, Any]) -> str:
             pass
 
     datasets = result.get("datasets", {})
-    rels = result.get("relationships", [])
+    raw_rels = result.get("relationships", [])
+    active_ds = set(datasets.keys())
+    rels = [
+        r for r in raw_rels
+        if (r.get("parent") or "").split(".")[0] in active_ds or (r.get("child") or "").split(".")[0] in active_ds
+    ]
     dq = result.get("data_quality_issues", {})
+
     dq_ds = dq.get("datasets", {})
     dq_global = dq.get("global_issues", {})
     exec_items = result.get("executive_summary_items") or []
@@ -1529,8 +1541,23 @@ def build_html_report(result: Dict[str, Any]) -> str:
                 child_placeholder = r.get("child_placeholder_excluded", 0)
 
                 # Gating status
-                gate_color = "#16a34a" if child_orphan_row_count == 0 else "#dc2626"
-                gate_result = "PASS" if child_orphan_row_count == 0 else "FAIL"
+                g_status = str(r.get("evaluation_status") or r.get("status") or "NOT_EVALUATED").upper()
+                if g_status in ("NOT_EVALUATED", "CONFIGURATION_ERROR", "EXECUTION_ERROR", "INSUFFICIENT_EVIDENCE"):
+                    gate_result = "UNKNOWN"
+                    gate_color = "#ca8a04"
+                elif g_status == "PARTIAL_PASS":
+                    gate_result = "PARTIAL_PASS"
+                    gate_color = "#d97706"
+                elif g_status in ("VALIDATED_PASS", "PASS"):
+                    gate_result = "PASS"
+                    gate_color = "#16a34a"
+                elif g_status in ("VALIDATED_FAIL", "FAIL"):
+                    gate_result = "FAIL"
+                    gate_color = "#dc2626"
+                else:
+                    gate_result = r.get("gating_result", "UNKNOWN")
+                    gate_color = "#16a34a" if gate_result == "PASS" else ("#ca8a04" if gate_result in ("UNKNOWN", "PARTIAL_PASS") else "#dc2626")
+
 
                 cards.append(f"""
                 <div class="relationship-card" style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 16px; background-color: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -1796,8 +1823,9 @@ def build_html_report(result: Dict[str, Any]) -> str:
     ban_cls = {
         "BLOCKED": "scorecard-banner scorecard-blocked",
         "NEEDS_WORK": "scorecard-banner scorecard-needs",
+        "UNKNOWN": "scorecard-banner scorecard-needs",
         "READY": "scorecard-banner scorecard-ready",
-    }.get(v_vc, "scorecard-banner scorecard-ready")
+    }.get(v_vc, "scorecard-banner scorecard-needs")
     ti_sc = scorecard["total_issues"]
     ds_score_bits = []
     for d in scorecard["per_dataset"]:
@@ -1816,7 +1844,8 @@ def build_html_report(result: Dict[str, Any]) -> str:
             f'<span class="score-value">{esc(d["dq_score"])}/100</span>'
             f'<span class="badge {rb}">{icon} {esc(br)}</span></div>'
         )
-    verdict_title_icon = "🔴" if v_vc == "BLOCKED" else ("⚠️" if v_vc == "NEEDS_WORK" else "✅")
+    verdict_title_icon = "🔴" if v_vc == "BLOCKED" else ("⚠️" if v_vc in ("NEEDS_WORK", "UNKNOWN") else "✅")
+
     
     # Map verdict to operational decision
     if v_vc == "READY":
@@ -2078,43 +2107,15 @@ def build_html_report(result: Dict[str, Any]) -> str:
     methodology_html = f"""
     <section id="score-methodology" class="datasets-section" style="margin-top: 30px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #ddd;">
       <h2>DQ Score Methodology</h2>
-      <p class="section-lead">Authoritative metrics, formula weights, and multidimensional dimension breakdowns.</p>
+      <p class="section-lead">Authoritative metrics, dimension weights, and score coverage standards.</p>
       
       <div style="margin-bottom: 20px;">
-        <h3>DQ Score Formula</h3>
-        <p>Overall and per-dataset quality scores are calculated using the single authoritative formula:</p>
-        <code style="display: block; padding: 12px; background-color: #f5f5f5; border-radius: 4px; margin: 10px 0; font-size: 1.1em; font-family: monospace;">
-          DQ Score = 100 - flat_penalty(issue_diversity) - row_penalty(affected_rows)
+        <h3>DQ Score Formula: Dimension Scorer v3</h3>
+        <p>The overall DQ score is the weighted average of evaluated quality dimensions. Dimensions without applicable or successfully evaluated rules are excluded from the effective denominator and reported separately through score coverage.</p>
+        <code style="display: block; padding: 12px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; margin: 10px 0; font-size: 1.0em; font-family: monospace; color: #0f172a;">
+          Overall DQ Score = Sum(Dimension_Score &times; Configured_Weight) / Total_Evaluated_Weight
         </code>
-        
-        <h4 style="margin-top: 15px;">Formula Component Weights</h4>
-        <table class="profile-tbl" style="margin-top: 10px; width: 100%; border-collapse: collapse;">
-          <thead>
-            <tr style="background-color: #f9f9f9; border-bottom: 2px solid #ddd;">
-              <th style="padding: 8px; text-align: left;">Penalty Type</th>
-              <th style="padding: 8px; text-align: left;">High Severity</th>
-              <th style="padding: 8px; text-align: left;">Medium Severity</th>
-              <th style="padding: 8px; text-align: left;">Low Severity</th>
-              <th style="padding: 8px; text-align: left;">Cap</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr style="border-bottom: 1px solid #eee;">
-              <td style="padding: 8px;"><strong>Flat Penalty</strong> (per issue type)</td>
-              <td style="padding: 8px;">2.5 pts</td>
-              <td style="padding: 8px;">0.5 pts</td>
-              <td style="padding: 8px;">0.1 pts</td>
-              <td style="padding: 8px;">15.0 pts max cap</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #eee;">
-              <td style="padding: 8px;"><strong>Row Penalty</strong> (gating row fraction)</td>
-              <td style="padding: 8px;">30.0 pts</td>
-              <td style="padding: 8px;">15.0 pts</td>
-              <td style="padding: 8px;">5.0 pts</td>
-              <td style="padding: 8px;">None</td>
-            </tr>
-          </tbody>
-        </table>
+
         
         <h4 style="margin-top: 20px;">Readiness Gating Thresholds</h4>
         <p>Datasets and overall pipelines are gated against the following configured score thresholds:</p>

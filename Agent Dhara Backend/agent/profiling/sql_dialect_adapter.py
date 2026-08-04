@@ -53,6 +53,19 @@ def get_remediation_sql(target: str, dataset: str, col: str, issue_type: str) ->
     )
 
     # 3. Dialect-specific WHERE filters
+    col_l = str(col_safe).lower().strip()
+    NON_NUMERIC_SEMANTICS = {"country", "country_code", "customer_id", "order_id", "payment_id", "client_id", "user_id", "status", "date", "phone", "email", "full_name"}
+    if col_l in NON_NUMERIC_SEMANTICS or any(col_l.endswith(x) for x in ("_id", "id", "name", "country", "status", "date")):
+        if issue_type in ("invalid_numeric", "mixed_scalar_types", "mixed_types"):
+            return (
+                f"-- Staging Text Normalization Query ({target})\n"
+                f"-- Non-numeric column '{col_safe}': Normalize as text string\n"
+                f"UPDATE staging.{dataset_safe}\n"
+                f"SET {col_safe}_validation_status = 'VALID',\n"
+                f"    {col_safe}_clean = UPPER(TRIM(CAST({col_safe} AS STRING)))\n"
+                f"WHERE {col_safe} IS NOT NULL;"
+            )
+
     where_clause = ""
     if issue_type in ("invalid_numeric", "mixed_scalar_types", "mixed_types"):
         if target == "fabric_spark_sql" or target == "databricks_sql":
@@ -79,16 +92,24 @@ def get_remediation_sql(target: str, dataset: str, col: str, issue_type: str) ->
             )
             
     elif issue_type in ("negative_values", "negative_values_in_non_negative_measure"):
-        where_clause = f"WHERE {col_safe} < 0"
+        return (
+            f"-- Preserve raw amount for auditability; quarantine negative entries for business review\n"
+            f"CREATE OR REPLACE TABLE staging.{dataset_safe}_quarantine_negatives AS\n"
+            f"SELECT * FROM staging.{dataset_safe} WHERE {col_safe} < 0;"
+        )
         
     elif issue_type in ("nulls", "declared_key_high_null_ratio", "declared_key_null_violation", "suspected_key_high_null_ratio"):
         where_clause = f"WHERE {col_safe} IS NULL"
         
     elif "whitespace" in issue_type:
-        if target == "postgres" or target == "sqlserver" or target == "fabric_warehouse_tsql":
-            where_clause = f"WHERE LEN({col_safe}) <> LEN(TRIM({col_safe}))"
-        else:
-            where_clause = f"WHERE LENGTH({col_safe}) <> LENGTH(TRIM({col_safe}))"
+        return (
+            f"{ddl}\n\n"
+            f"-- DML Cleansing Query ({target})\n"
+            f"UPDATE staging.{dataset_safe}\n"
+            f"SET {col_safe}_clean = REGEXP_REPLACE(TRIM(CAST({col_safe} AS STRING)), r'\\s+', ' ')\n"
+            f"WHERE {col_safe} IS NOT NULL;"
+        )
+
             
     elif issue_type == "placeholder_detected":
         where_clause = (

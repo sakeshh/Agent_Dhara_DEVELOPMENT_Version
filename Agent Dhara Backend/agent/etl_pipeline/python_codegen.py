@@ -109,8 +109,16 @@ def _emit_outliers(action: str, col: str, ds_var: str, params: Dict[str, Any]) -
     return lines
 
 
+NON_NUMERIC_COLS = {
+    "country", "country_code", "customer_id", "order_id", "payment_id",
+    "client_id", "user_id", "status", "date", "phone", "email"
+}
+
+
 def _emit_trim(col: str, ds_var: str, _p: Dict[str, Any]) -> List[str]:
     c = _col_expr(col)
+    if _p.get("source_issue_type") == "internal_whitespace" or _p.get("issue_type") == "internal_whitespace":
+        return [f"{ds_var}[{c}] = {ds_var}[{c}].astype('string').str.strip().str.replace(r'\\s+', ' ', regex=True)"]
     return [f"{ds_var}[{c}] = {ds_var}[{c}].astype(str).str.strip()"]
 
 
@@ -119,7 +127,14 @@ def _emit_fill_step(col: str, ds_var: str, p: Dict[str, Any]) -> List[str]:
 
 
 def _emit_coerce_numeric(col: str, ds_var: str, _p: Dict[str, Any]) -> List[str]:
+    c_lower = str(col).lower().strip()
+    if c_lower in NON_NUMERIC_COLS or any(c_lower.endswith(x) for x in ("_id", "id", "name", "country", "status", "date")):
+        return [
+            f"# Step: coerce_numeric on '{col}' (non-numeric column -- keeping as text string to prevent data loss)",
+            f"{ds_var}[{_col_expr(col)}] = {ds_var}[{_col_expr(col)}].astype('string').str.strip()"
+        ]
     return [f"{ds_var}[{_col_expr(col)}] = pd.to_numeric({ds_var}[{_col_expr(col)}], errors='coerce')"]
+
 
 
 def _emit_cast_type(col: str, ds_var: str, _p: Dict[str, Any]) -> List[str]:

@@ -21,6 +21,18 @@ from agent.profiling.dq_checks import (
 )
 from agent.profiling.contracts import FIXABILITY_BY_ISSUE_TYPE, DQ_ISSUE_RECOMMENDATIONS, _DEFAULT_REC
 
+# ── Engine 3.0 component imports ──────────────────────────────────────────
+try:
+    from agent.feature_flags import get_flags as _get_flags
+    from agent.profiling.semantic_inference import infer_semantic_type_with_confidence
+    from agent.profiling.key_engine import discover_candidate_keys, evaluate_key_uniqueness
+    from agent.runtime_component_manifest import build_component_manifest, log_component_startup
+    _ORCHESTRATOR_ENGINE3 = True
+    log_component_startup("AssessmentOrchestrator", "3.1.0")
+except ImportError as _oe:
+    _ORCHESTRATOR_ENGINE3 = False
+    logging.getLogger("agent.profiler").warning("Engine3 orchestrator components unavailable: %s", _oe)
+
 logger = logging.getLogger("agent.profiler")
 
 def load_dq_thresholds(config_path: Optional[str] = None) -> Dict[str, Any]:
@@ -238,12 +250,19 @@ def analyze_cross_dataset_relationships(
         gating = rel_meta.get("gating", True)
         severity = rel_meta.get("severity", "high")
 
-        # Check if datasets exist in the current run
-        if p_ds not in datasets or c_ds not in datasets:
-            reason = "parent_dataset_unavailable" if p_ds not in datasets else "child_dataset_unavailable"
+        p_in = p_ds in datasets
+        c_in = c_ds in datasets
+
+        # If NEITHER parent nor child dataset is in the active run, exclude as OUT_OF_SCOPE
+        if not p_in and not c_in:
+            continue
+
+        if not p_in or not c_in:
+            reason = "parent_dataset_unavailable" if not p_in else "child_dataset_unavailable"
             relationships.append({
                 "relationship_id": name,
-                "evaluation_status": "NOT_EVALUATED",
+                "evaluation_status": "CONFIGURATION_ERROR",
+                "gating_result": "UNKNOWN",
                 "reason": reason,
                 "parent": f"{p_ds}.{p_cols}",
                 "child": f"{c_ds}.{c_cols}",
@@ -252,6 +271,7 @@ def analyze_cross_dataset_relationships(
                 "severity": severity,
             })
             continue
+
 
         parent_df = datasets[p_ds]
         child_df = datasets[c_ds]
@@ -880,6 +900,52 @@ def load_and_profile(
                     add_event(job_id=job_id, level="warning", message=f"Full database profiling failed for {name}: {e}")
                     
         meta["source_root"] = source_root_by_dataset.get(name, "")
+
+        # ── Engine 3.0: Semantic Inference per column ──────────────────────────
+        if _ORCHESTRATOR_ENGINE3 and _get_flags().semantic_inference_v2:
+            try:
+                for col_name, col_meta in meta.get("columns", {}).items():
+                    if col_name not in df.columns:
+                        continue
+                    # Contract override: respect any semantic_type already set via LLM/contract
+                    existing_sem = col_meta.get("semantic_type") or ""
+                    contract_override = None
+                    if existing_sem and existing_sem not in ("unknown", ""):
+                        contract_override = existing_sem
+                    classification = infer_semantic_type_with_confidence(
+                        col_name,
+                        df[col_name],
+                        contract_override=contract_override,
+                    )
+                    # Only upgrade if confidence is higher than existing
+                    existing_conf = float(col_meta.get("semantic_confidence", 0.0))
+                    if classification.semantic_confidence >= existing_conf:
+                        col_meta["semantic_type"]        = classification.semantic_type
+                        col_meta["semantic_confidence"]  = classification.semantic_confidence
+                        col_meta["semantic_source"]      = classification.semantic_source
+                        col_meta["primary_physical_type"] = classification.primary_physical_type
+                logger.debug("[DQ3-Semantic] Inference complete for dataset=%s", name)
+            except Exception as _sem_err:
+                logger.warning("[DQ3-Semantic] Inference failed for %s: %s", name, _sem_err)
+
+        # ── Engine 3.0: Key Engine per dataset ─────────────────────────────
+        if _ORCHESTRATOR_ENGINE3 and _get_flags().key_engine_v2:
+            try:
+                candidate_keys = discover_candidate_keys(df)
+                meta["candidate_keys_v3"] = candidate_keys
+                for key_cols in candidate_keys:
+                    key_result = evaluate_key_uniqueness(df, key_cols)
+                    if key_result.has_normalized_collisions:
+                        logger.info("[DQ3-Key] Normalized key collisions on %s %s: %d collisions",
+                                    name, key_cols, key_result.normalized_unique_count)
+                    # Mark individual columns as candidate_primary_key
+                    if len(key_cols) == 1:
+                        col_m = meta.get("columns", {}).get(key_cols[0], {})
+                        col_m["candidate_primary_key"] = not key_result.has_raw_duplicates
+                        col_m["key_engine_v3"] = key_result.model_dump()
+            except Exception as _key_err:
+                logger.warning("[DQ3-Key] Key engine failed for %s: %s", name, _key_err)
+
         metadata[name] = meta
 
     if approved_semantics:
@@ -1016,6 +1082,14 @@ def load_and_profile(
         },
         "executive_summary_items": build_executive_summary_items(per_dataset_dq, global_issues, thresholds),
     }
+
+    # ── Engine 3.0: Attach component manifest to every assessment output ───────
+    if _ORCHESTRATOR_ENGINE3:
+        try:
+            out["component_manifest"] = build_component_manifest()
+            logger.info("[DQ3] Component manifest attached to assessment output")
+        except Exception as _mf_err:
+            logger.warning("[DQ3] Component manifest failed: %s", _mf_err)
 
     # 1. Run LLM Schema Enrichment first
     try:

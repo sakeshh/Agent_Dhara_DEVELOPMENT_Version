@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import sys
 import json
+import re
+
 import logging
 import argparse
 import time
@@ -184,9 +186,10 @@ def build_args() -> argparse.Namespace:
     p.add_argument("--export-html", default=None, help="Write HTML report (whole report)")
     p.add_argument(
         "--reports-dir",
-        default=None,
+        default=os.path.join(PROJECT_DIR, "agent", "output", "reports"),
         help="Directory for overall report.* outputs (report.json/.md/.html).",
     )
+
     p.add_argument("--export-pf-input", default=None, help="Write Promptflow dq_profile JSON")
     p.add_argument("--export-pf-eval", default=None, help="Write PF evaluation PASS/WARN/FAIL")
     p.add_argument("--export-to-azure", action="store_true", help="Upload outputs to Azure Blob")

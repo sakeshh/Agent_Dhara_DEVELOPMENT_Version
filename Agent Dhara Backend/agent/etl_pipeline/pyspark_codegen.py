@@ -307,14 +307,16 @@ def _emit_spark(
 
     c = repr(str(col))
     if act == "trim":
+        if params.get("source_issue_type") == "internal_whitespace" or params.get("issue_type") == "internal_whitespace":
+            return [f'{df} = {df}.withColumn({c}, F.regexp_replace(F.trim(F.col({c}).cast("string")), r"\\s+", " "))']
         return [f'{df} = {df}.withColumn({c}, F.trim(F.col({c}).cast("string")))']
     if act in ("fill_or_drop", "fill_nulls_simple"):
         return _emit_fill_spark(col, df, params)
     if act == "coerce_numeric":
-        is_key = any(k in str(col).lower() for k in ("id", "key", "code", "ref"))
+        is_key = _is_business_key(col or "") or any(k in str(col).lower() for k in ("id", "key", "code", "ref", "country", "status", "date"))
         if is_key or _is_categorical_col(col or ""):
             return [
-                f"# Step: coerce_numeric on '{col}' (categorical/key column -- keeping as text string to prevent data loss)",
+                f"# Step: coerce_numeric on '{col}' (categorical/key/country column -- keeping as text string to prevent data loss)",
                 f"{df} = {df}.withColumn({c}, F.trim(F.col({c}).cast('string')))"
             ]
         col_safe = _safe(col or "col")
@@ -323,6 +325,7 @@ def _emit_spark(
             neg_flag = repr(f"is_negative_{col_safe}")
             res.append(f"{df} = {df}.withColumn({neg_flag}, (F.col({c}).isNotNull() & (F.col({c}) < 0)).cast('boolean'))")
         return res
+
     if act == "zero_to_null":
         return [f"{df} = {df}.withColumn({c}, F.when((F.col({c}) == 0) | (F.col({c}) == '0'), F.lit(None)).otherwise(F.col({c})))"]
     if act == "replace_sentinel_values":

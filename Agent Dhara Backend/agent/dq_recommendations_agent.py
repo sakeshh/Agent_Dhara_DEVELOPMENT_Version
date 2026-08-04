@@ -66,8 +66,28 @@ def _fallback(dq: Dict[str, Any]) -> DQRecommendations:
 
 def get_pandas_code(col: Optional[str], issue_type: str, related_ds: Optional[str] = None, related_col: Optional[str] = None) -> str:
     col_safe = col or "column_name"
+    col_l = col_safe.lower().strip()
     itype = issue_type.lower()
     
+    NON_NUMERIC_SEMANTICS = {
+        "country", "country_code", "customer_id", "order_id", "payment_id",
+        "client_id", "user_id", "status", "date", "phone", "email", "full_name"
+    }
+
+    if col_l in NON_NUMERIC_SEMANTICS or any(col_l.endswith(x) for x in ("_id", "id", "name", "country", "status", "date")):
+        if "numeric" in itype or "mixed" in itype:
+            return (
+                f"import pandas as pd\n"
+                f"import numpy as np\n"
+                f"# Step: text normalization for '{col_safe}' (preserving string/identifier format)\n"
+                f"raw = df['{col_safe}']\n"
+                f"df['{col_safe}_clean'] = raw.astype('string').str.strip().str.upper()\n"
+                f"df['{col_safe}_validation_status'] = np.select([\n"
+                f"    raw.isna(),\n"
+                f"    raw.astype(str).str.strip() == ''\n"
+                f"], ['source_null', 'empty'], default='valid')"
+            )
+
     if "numeric" in itype or "mixed" in itype:
         return (
             f"import pandas as pd\n"
@@ -88,8 +108,7 @@ def get_pandas_code(col: Optional[str], issue_type: str, related_ds: Optional[st
         )
         
     elif "whitespace" in itype:
-        # Safer nullable string conversion: preserves pandas nullable NA
-        return f"df['{col_safe}'] = df['{col_safe}'].astype('string').str.strip()"
+        return f"df['{col_safe}'] = df['{col_safe}'].astype('string').str.strip().str.replace(r'\\s+', ' ', regex=True)"
         
     elif "date" in itype:
         return (
@@ -128,27 +147,23 @@ def get_pandas_code(col: Optional[str], issue_type: str, related_ds: Optional[st
                 f"# Profile and review these rows. Do not quarantine automatically until key is declared mandatory.\n"
                 f"view_uniques = df['{col_safe}'].value_counts()"
             )
-        # Check if this column is a declared/suspected key
         is_key = col_safe.lower().endswith(("_id", "_key", "_code")) or col_safe.lower() == "id" or "key" in itype
         if is_key:
-            # Key nulls must be quarantined rather than forward-filled
             return (
                 f"invalid_key_rows = df[df['{col_safe}'].isna()].copy()\n"
                 f"valid_rows = df[df['{col_safe}'].notna()].copy()"
             )
         else:
-            # Ordinary nulls must be preserved by default unless imputation policy is declared
             return (
                 f"# Preserve as null, quarantine if required, or impute only under a declared field-specific policy.\n"
                 f"# Apply only the field-specific imputation function approved by the data owner."
             )
             
     elif "negative" in itype:
-        # Do not clip negative values to zero: set to NaN and validation status to invalid
         return (
-            f"qty = pd.to_numeric(df['{col_safe}'], errors='coerce')\n"
-            f"df['{col_safe}_clean'] = qty.where(qty >= 0)\n"
-            f"df['{col_safe}_validation_status'] = qty.ge(0).map({{True: 'valid', False: 'invalid'}})"
+            f"# Preserve raw amount for auditability; quarantine negative entries for business review\n"
+            f"quarantine_df = df[df['{col_safe}'] < 0]\n"
+            f"clean_df = df[df['{col_safe}'] >= 0]"
         )
         
     else:
@@ -157,8 +172,33 @@ def get_pandas_code(col: Optional[str], issue_type: str, related_ds: Optional[st
 
 def get_pyspark_code(col: Optional[str], issue_type: str, related_ds: Optional[str] = None, related_col: Optional[str] = None) -> str:
     col_safe = col or "column_name"
+    col_l = col_safe.lower().strip()
     itype = issue_type.lower()
     
+    NON_NUMERIC_SEMANTICS = {
+        "country", "country_code", "customer_id", "order_id", "payment_id",
+        "client_id", "user_id", "status", "date", "phone", "email", "full_name"
+    }
+
+    if col_l in NON_NUMERIC_SEMANTICS or any(col_l.endswith(x) for x in ("_id", "id", "name", "country", "status", "date")):
+        if "numeric" in itype or "mixed" in itype:
+            return (
+                f"import pyspark.sql.functions as F\n"
+                f"# Step: text normalization for '{col_safe}' (preserving string/identifier format)\n"
+                f"raw = F.col('{col_safe}')\n"
+                f"df = (\n"
+                f"    df\n"
+                f"    .withColumn('{col_safe}_raw', raw)\n"
+                f"    .withColumn('{col_safe}_clean', F.upper(F.trim(raw.cast('string'))))\n"
+                f"    .withColumn(\n"
+                f"        '{col_safe}_validation_status',\n"
+                f"        F.when(raw.isNull(), 'source_null')\n"
+                f"         .when(F.trim(raw.cast('string')) == '', 'empty')\n"
+                f"         .otherwise('valid')\n"
+                f"    )\n"
+                f")"
+            )
+
     if "numeric" in itype or "mixed" in itype:
         return (
             f"import pyspark.sql.functions as F\n"
@@ -178,7 +218,7 @@ def get_pyspark_code(col: Optional[str], issue_type: str, related_ds: Optional[s
         )
     
     elif "whitespace" in itype:
-        return f"import pyspark.sql.functions as F\ndf = df.withColumn('{col_safe}', F.trim(df['{col_safe}']))"
+        return f"import pyspark.sql.functions as F\ndf = df.withColumn('{col_safe}', F.regexp_replace(F.trim(F.col('{col_safe}').cast('string')), r'\\s+', ' '))"
         
     elif "date" in itype:
         return (
@@ -238,10 +278,12 @@ def get_pyspark_code(col: Optional[str], issue_type: str, related_ds: Optional[s
             
     elif "negative" in itype:
         return (
+            f"# Preserve raw amount for auditability; quarantine negative entries for business review\n"
             f"import pyspark.sql.functions as F\n"
-            f"df = df.withColumn('{col_safe}_validation_status', F.when(df['{col_safe}'] >= 0, 'valid').otherwise('invalid'))\n"
-            f"df = df.withColumn('{col_safe}_clean', F.when(df['{col_safe}'] >= 0, df['{col_safe}']).otherwise(None))"
+            f"quarantine_df = df.filter(F.col('{col_safe}') < 0)\n"
+            f"clean_df = df.filter(F.col('{col_safe}') >= 0)"
         )
+
         
     else:
         return f"# Remediate {issue_type} using PySpark manually"
@@ -281,7 +323,14 @@ def _fallback(dq: Dict[str, Any]) -> DQRecommendations:
             elif "phone" in itl:
                 mapped = "normalize_phone"
             elif "numeric" in itl or "mixed" in itl:
-                mapped = "coerce_numeric"
+                col_l = str(it.get("column") or "").lower().strip()
+                NON_NUMERIC_SEMANTICS = {"country", "country_code", "customer_id", "order_id", "payment_id", "client_id", "user_id", "status", "date", "phone", "email", "full_name"}
+                if col_l in NON_NUMERIC_SEMANTICS or any(col_l.endswith(x) for x in ("_id", "id", "name", "country", "status", "date")):
+                    mapped = "trim"
+                else:
+                    mapped = "coerce_numeric"
+            elif "negative" in itl:
+                mapped = "review_manually"
             elif "duplicate" in itl:
                 mapped = "deduplicate"
             elif "outlier" in itl:
@@ -290,6 +339,7 @@ def _fallback(dq: Dict[str, Any]) -> DQRecommendations:
                 mapped = "flag_outliers"
             elif "custom_rule_violation" in itl:
                 mapped = "review_manually"
+
 
             col_name = it.get("column")
             related_ds = it.get("related_dataset")

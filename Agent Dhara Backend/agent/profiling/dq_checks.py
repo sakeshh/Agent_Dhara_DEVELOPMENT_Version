@@ -13,6 +13,17 @@ from agent.profiling.type_inference import detect_semantic_type, _is_actual_nume
 from agent.profiling.format_validators import _detect_phone_formats, _detect_date_formats
 from agent.profiling.statistical_profiling import safe_nunique
 
+# ── Engine 3.0 integration ────────────────────────────────────────────────────
+try:
+    from agent.feature_flags import get_flags as _get_flags
+    from agent.profiling.engine3_pipeline import run_engine3_pipeline as _run_engine3
+    from agent.runtime_component_manifest import log_component_startup as _log_startup
+    _ENGINE3_AVAILABLE = True
+    _log_startup("DQChecks", "3.1.0")
+except ImportError as _e:
+    _ENGINE3_AVAILABLE = False
+    logger.warning("Engine3 pipeline not available: %s", _e)
+
 def match_column_key(col_key: str, dataset_name: str, column_name: str) -> bool:
     col_key_parts = [p.strip().lower() for p in col_key.split(".")]
     ds_parts = [p.strip().lower() for p in dataset_name.split(".")]
@@ -525,7 +536,10 @@ def analyze_dataset_quality(
             gating = False
             msg = f"{unexp_cnt} duplicate row(s)" if unexp_cnt > 0 else "Duplicate rows found"
         elif exp == "string_with_only_digits_in_text_column":
-            is_num_col = any(kw in str(col).lower() for kw in ["qty", "quantity", "amount", "budget", "price", "sum", "count"])
+            col_l = str(col).lower()
+            if col_l in ("country", "country_code", "customer_id", "order_id", "payment_id", "status", "date"):
+                continue
+            is_num_col = any(kw in col_l for kw in ["qty", "quantity", "amount", "budget", "price", "sum", "count"])
             if is_num_col:
                 issue_type = "numeric_value_serialized_as_string"
                 severity = "medium"
@@ -535,6 +549,9 @@ def analyze_dataset_quality(
                 severity = "medium"
                 msg = f"{unexp_cnt} digit string(s) in categorical column '{col}'"
         elif exp == "invalid_numeric_values":
+            col_l = str(col).lower()
+            if col_l in ("country", "country_code", "customer_id", "order_id", "payment_id", "status", "date"):
+                continue
             issue_type = "invalid_numeric"
             severity = "medium"
             msg = f"{unexp_cnt} non-numeric value(s) in numeric column '{col}'"
@@ -543,9 +560,13 @@ def analyze_dataset_quality(
             severity = "medium"
             msg = f"{unexp_cnt} invalid date/sentinel date value(s) in column '{col}'"
         elif "be in type list" in exp or "be of type" in exp or "invalid_numeric" in exp or exp == "invalid_numeric_values":
+            col_l = str(col).lower()
+            if col_l in ("country", "country_code", "customer_id", "order_id", "payment_id", "status", "date"):
+                continue
             issue_type = "invalid_numeric"
-            severity = "high" if any(k in str(col).lower() for k in ("amount", "price", "total", "cost")) else "medium"
+            severity = "high" if any(k in col_l for k in ("amount", "price", "total", "cost")) else "medium"
             msg = f"{unexp_cnt} non-numeric value(s) in numeric column '{col}'" if unexp_cnt > 0 else "Type mismatch"
+
         elif exp == "mixed_scalar_types":
             issue_type = "mixed_scalar_types"
             severity = "medium"
@@ -959,14 +980,22 @@ def analyze_dataset_quality(
                         "fixability": "COMPLEX"
                     })
         
-    # Run PII scanner on text columns and convert findings to DQIssues (P0 task)
+    # ── PII scanning — route to privacy pipeline, NOT to quality issues ─────
+    # Engine 3.0: PII findings are separated from DQ scores (privacy_separation flag).
+    # They are collected here and passed to run_engine3_pipeline() which routes them
+    # to privacy_findings. Legacy mode: still appended to issues for backward compat.
+    _pii_raw_findings: List[Dict[str, Any]] = []
     try:
         from agent.pii_masking import scan_dataframe_for_pii
-        pii_findings = scan_dataframe_for_pii(df)
-        for f in pii_findings:
+        pii_scan = scan_dataframe_for_pii(df)
+        for f in (pii_scan or []):
             pii_t = f.get("pii_type")
-            issue_type = "pii_email" if pii_t == "email" else "pii_phone" if pii_t == "phone" else "pii_sensitive"
-            issues.append({
+            issue_type = (
+                "pii_email" if pii_t == "email" else
+                "pii_phone" if pii_t == "phone" else
+                "pii_sensitive"
+            )
+            pii_rec = {
                 "severity": str(f.get("severity") or "medium").lower(),
                 "type": issue_type,
                 "column": f.get("column") or "",
@@ -975,10 +1004,18 @@ def analyze_dataset_quality(
                 "sample_values": [],
                 "message": f.get("message") or f"Embedded PII detected in column '{f.get('column')}'",
                 "source": "pii_scanner",
-                "fixability": "COMPLEX"
-            })
+                "fixability": "COMPLEX",
+                "pipeline": "privacy",
+            }
+            _pii_raw_findings.append(pii_rec)
+            # Legacy mode: also append to main issues list for backward compatibility
+            _legacy_mode = not _ENGINE3_AVAILABLE or (
+                _ENGINE3_AVAILABLE and not _get_flags().privacy_score_separation
+            )
+            if _legacy_mode:
+                issues.append(pii_rec)
     except Exception as e:
-        logger.warning(f"PII content scanning failed for {name}: {e}")
+        logger.warning("PII content scanning failed for %s: %s", name, e)
 
     # Append relationship issues (orphans) to local issues list
     if relationship_issues:
@@ -1121,13 +1158,15 @@ def analyze_dataset_quality(
         total_consistency_rules = len(thresholds.get("formula_rules") or []) + len(thresholds.get("custom_rules") or [])
         total_consistency_rules += len(relationship_issues or [])
         if total_consistency_rules == 0:
-            total_consistency_rules = 5
-        passed_rules = max(0, total_consistency_rules - consistency_issues_cnt)
-        consistency = {
-            "score": round((passed_rules / max(1, total_consistency_rules)) * 100.0, 1),
-            "cross_field_violations": consistency_issues_cnt,
-            "evaluated_rules": total_consistency_rules
-        }
+            consistency = None
+        else:
+            passed_rules = max(0, total_consistency_rules - consistency_issues_cnt)
+            consistency = {
+                "score": round((passed_rules / max(1, total_consistency_rules)) * 100.0, 1),
+                "cross_field_violations": consistency_issues_cnt,
+                "evaluated_rules": total_consistency_rules
+            }
+
 
         # 5. Timeliness
         date_cols = [c for c in df.columns if "date" in str(c).lower() or "time" in str(c).lower()]
@@ -1254,11 +1293,8 @@ def analyze_dataset_quality(
     # Map gating flag and duplicate_group_metrics to normalized issues
     for i, issue_data in enumerate(issues):
         orig = issues[i]
-        # Just copy them back since normalize_issue_dict might strip custom fields
         orig["gating"] = issues[i].get("gating", True)
         orig["duplicate_group_metrics"] = issues[i].get("duplicate_group_metrics")
-        
-        # Ensure contract required fields are populated
         orig["issue_type"] = orig.get("type") or orig.get("issue_type") or "unknown"
         orig["rule_source"] = orig.get("rule_source") or "built_in"
         orig.setdefault("fixability_details", {
@@ -1267,27 +1303,67 @@ def analyze_dataset_quality(
             "requires_policy": orig.get("fixability") == "CONDITIONALLY_FIXABLE",
             "recommended_disposition": "QUARANTINE"
         })
-        
         validate_issue(orig)
 
-    return make_json_serializable({
+    # ── Engine 3.0 Post-Processing Pipeline ──────────────────────────────────
+    # This is the integration point that makes Engine 3.0 run in production.
+    # Handles: PII separation, finding deduplication, dimension scoring, manifest.
+    engine3_result: Dict[str, Any] = {}
+    if _ENGINE3_AVAILABLE and _get_flags().dq_engine_v3:
+        try:
+            # Combine raw issues with any collected PII findings for pipeline routing
+            all_issues_for_pipeline = issues + _pii_raw_findings
+            engine3_result = _run_engine3(
+                name=name,
+                df=df,
+                raw_issues=all_issues_for_pipeline,
+                gx_results_raw=results,   # raw GX result list from run_gx_validation
+                profile=profile,
+                thresholds=thresholds,
+                relationship_issues=relationship_issues,
+            )
+            # Replace the issues list with the deduped, privacy-separated quality issues
+            issues = engine3_result.get("quality_issues", issues)
+            # Use Engine 3.0 score if available
+            if engine3_result.get("dq_score_v3") is not None:
+                dq_score = engine3_result["dq_score_v3"]
+            logger.info("[DQ3] Engine3 pipeline complete: score=%.1f readiness=%s",
+                        dq_score or 0.0, engine3_result.get("readiness"))
+        except Exception as _e3:
+            logger.error("[DQ3] Engine3 pipeline failed, falling back to legacy: %s", _e3)
+            engine3_result = {}
+
+    # Build final return dict — keep backward-compatible shape, add v3 enrichments
+    base_result = {
         "issues": issues,
         "summary": {
             "issue_count": len(issues),
-            "high_severity": sum(1 for i in issues if i["severity"] == "high"),
-            "medium_severity": sum(1 for i in issues if i["severity"] == "medium"),
-            "low_severity": sum(1 for i in issues if i["severity"] == "low"),
+            "high_severity": sum(1 for i in issues if str(i.get("severity") or "").lower() == "high"),
+            "medium_severity": sum(1 for i in issues if str(i.get("severity") or "").lower() == "medium"),
+            "low_severity": sum(1 for i in issues if str(i.get("severity") or "").lower() == "low"),
             "dq_score_0_100": dq_score,
-            "score_methodology_version": "2.0.0",
+            "score_methodology_version": engine3_result.get("score_methodology", "dimension_scorer_v3"),
             "score_is_comparable_to_prior_version": False,
-            "score_formula": "100 - flat_penalty(issue_diversity) - row_penalty(affected_rows)",
+            "score_formula": "dimension_scorer_v3 (weighted sum of evaluated quality dimensions)",
+
             "score_components": score_components,
-            "dimension_breakdown": dimension_breakdown,
+            "dimension_breakdown": engine3_result.get("dimension_breakdown_v3") or dimension_breakdown,
             "root_cause_summary": root_cause_summary,
             "estimated_clean_rows_after_high": clean_est_high,
             "estimated_clean_rows_after_high_and_medium": clean_est_high_med,
-        }
-    })
+            # ── Engine 3.0 additions ──────────────────────────────────────────
+            "readiness":             engine3_result.get("readiness", "UNKNOWN"),
+            "gating_blockers":       engine3_result.get("gating_blockers", []),
+            "assessment_confidence": engine3_result.get("assessment_confidence", 100.0),
+            "rule_coverage":         engine3_result.get("rule_coverage", {}),
+        },
+        # ── Engine 3.0 separate output buckets ───────────────────────────────
+        "privacy_findings":          engine3_result.get("privacy_findings", _pii_raw_findings),
+        "rule_results":              engine3_result.get("rule_results", []),
+        "component_manifest":        engine3_result.get("component_manifest", {}),
+        "deduplication_diagnostics": engine3_result.get("deduplication_diagnostics", []),
+    }
+    return make_json_serializable(base_result)
 
 def run_custom_rules(
     datasets: Dict[str, pd.DataFrame],

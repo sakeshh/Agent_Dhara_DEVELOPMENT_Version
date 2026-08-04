@@ -93,12 +93,17 @@ ISSUE_TO_ACTION = {
     "custom_rule_violation": "review_manually",
 }
 
-# Columns we should NOT coerce to numeric (semantic string columns)
-_SKIP_COERCE_SEMANTIC = {"email", "categorical", "free_text"}
-# Column names that suggest numeric (apply coerce)
-_NUMERIC_COL_PATTERNS = ("_id", "id", "amount", "price", "total", "count", "quantity", "qty", "extent", "number")
+# Columns we should NOT coerce to numeric (semantic string/text/identifier/country columns)
+_SKIP_COERCE_SEMANTIC = {
+    "email", "categorical", "free_text", "country", "country_code",
+    "identifier", "status", "date", "datetime", "phone", "person_name", "organization"
+}
 # Column names that suggest string (skip coerce for invalid_numeric)
-_STRING_COL_NAMES = {"name", "email", "sku", "category", "status", "description", "order_id"}
+_STRING_COL_NAMES = {
+    "name", "email", "sku", "category", "status", "description",
+    "country", "country_code", "customer_id", "order_id", "payment_id", "client_id", "user_id"
+}
+
 
 MANUAL_GUIDANCE: Dict[str, str] = {
     "orphan_foreign_key": (
@@ -180,25 +185,21 @@ def _get_manual_guidance(issue_type: str) -> str:
 
 
 def _should_coerce_numeric(ds_name: str, col: str, issue_type: str, assessment_result: Dict[str, Any]) -> bool:
-    """Only coerce when column is semantically numeric. Skip name, email, sku, category, etc."""
+    """Only coerce when column is semantically numeric. Skip name, email, country, identifier, status, etc."""
     col_lower = (col or "").lower().strip()
     if col_lower in _STRING_COL_NAMES:
         return False
-    if col_lower in ("id",) or (col_lower.endswith("_id") and col_lower not in ("order_id",)):
-        return True
-    if col_lower in ("price", "amount", "total", "quantity", "count", "qty") and issue_type in ("invalid_numeric", "mixed_types", "negative_values"):
-        return True
-    if any(col_lower.endswith(p) or col_lower == p for p in ("name", "email", "sku", "category", "status")):
-        return False
+    if any(col_lower.endswith(x) for x in ("_id", "id", "name", "country", "status", "date")):
+        if col_lower not in ("price", "amount", "total", "quantity", "count", "qty"):
+            return False
     meta = (assessment_result.get("datasets", {}) or {}).get(ds_name, {}).get("columns", {}).get(col, {})
     semantic = (meta.get("semantic_type") or "unknown").lower()
     if semantic in _SKIP_COERCE_SEMANTIC:
         return False
-    if semantic == "numeric_id":
-        return True
-    if any(p in col_lower for p in _NUMERIC_COL_PATTERNS):
+    if col_lower in ("price", "amount", "total", "quantity", "count", "qty") and issue_type in ("invalid_numeric", "mixed_types", "negative_values"):
         return True
     return False
+
 
 
 def suggest_transformations(
@@ -241,6 +242,25 @@ def suggest_transformations(
             issue_type = issue.get("type", "")
             col = issue.get("column")
             action = ISSUE_TO_ACTION.get(issue_type, "review_manually")
+
+            # Preserve raw financial amounts for auditability on negative values
+            if issue_type in ("negative_values", "cross_field_non_negative", "negative_values_in_non_negative_measure", "negative_values_review_required"):
+                suggested.append(
+                    {
+                        "dataset": ds_name,
+                        "column": col,
+                        "issue_type": issue_type,
+                        "severity": issue.get("severity", "medium"),
+                        "message": issue.get("message", ""),
+                        "suggested_action": "review_manually",
+                        "manual_guidance": "Preserve raw financial amounts for auditability; quarantine negative entries for business review (refunds/reversals/adjustments) without mutating values.",
+                        "row_count_affected": issue.get("count"),
+                        "auto_fixable": False,
+                        "provenance": RuleProvenance.AUTO_DETECTED,
+                    }
+                )
+                continue
+
             if action == "fill_or_drop" and col:
                 col_lower = str(col).lower()
                 if any(x in col_lower for x in ("email", "city", "name", "customername", "contact")):
@@ -261,6 +281,7 @@ def suggest_transformations(
                     }
                 )
                 continue
+
             if action == "coerce_numeric" and not _should_coerce_numeric(ds_name, col, issue_type, assessment_result):
                 action = "trim"
             
