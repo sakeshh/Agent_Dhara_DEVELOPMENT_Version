@@ -29,7 +29,7 @@ except ImportError:
     RateLimitError = None
     APITimeoutError = None
 
-from agent.errors import ConnectorConfigError
+from agent.errors import ConnectorConfigError, GeneratedCodeIncompleteError, MechanicalRepairViolation
 from agent.model_config import load_llm_config, LLM_REQUEST_TIMEOUT, get_context_window
 from agent.etl_pipeline.codegen_policy import llm_codegen_extra_context, plan_policy_block
 from agent.etl_pipeline.io_snippets import (
@@ -41,6 +41,43 @@ import logging
 logger = logging.getLogger("agent.etl_pipeline.llm_codegen")
 
 LLM_ERROR_PREFIX = "# Error"
+
+from dataclasses import dataclass
+
+PROMPT_VERSION = "1.5.0"
+VALIDATOR_VERSION = "1.1.0"
+POSTPROCESSOR_VERSION = "1.2.0"
+
+@dataclass(frozen=True)
+class GeneratedCodeArtifact:
+    generation_id: str
+    attempt: int
+    source: str
+    source_sha256: str
+    plan_sha256: str
+    prompt_version: str
+    validator_version: str
+    postprocessor_version: str
+    model_deployment: str
+
+    @classmethod
+    def create(cls, source: str, plan_hash: str, attempt: int, generation_id: str) -> GeneratedCodeArtifact:
+        import hashlib
+        import os
+        source_sha256 = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        MODEL_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT") or os.getenv("OPENAI_MODEL") or "default"
+        return cls(
+            generation_id=generation_id,
+            attempt=attempt,
+            source=source,
+            source_sha256=source_sha256,
+            plan_sha256=plan_hash,
+            prompt_version=PROMPT_VERSION,
+            validator_version=VALIDATOR_VERSION,
+            postprocessor_version=POSTPROCESSOR_VERSION,
+            model_deployment=MODEL_DEPLOYMENT,
+        )
+
 
 class LLMInfraError(Exception):
     """Raised for LLM infrastructure errors like rate limits or timeouts."""
@@ -190,6 +227,84 @@ def _inject_pyspark_fabric_ids(code: str) -> str:
         code,
     )
     return code
+
+
+def extract_defined_functions(source: str) -> list[str]:
+    try:
+        tree = ast.parse(source)
+        return sorted({node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)})
+    except Exception:
+        return sorted(list(set(re.findall(r"\bdef\s+(\w+)\s*\(", source))))
+
+
+def extract_called_transform_functions(source: str) -> list[str]:
+    called = set()
+    try:
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    called.add(node.func.id)
+                elif isinstance(node.func, ast.Attribute):
+                    called.add(node.func.attr)
+    except Exception:
+        pass
+    for match in re.findall(r"\b(transform_\w+)\s*\(", source):
+        called.add(match)
+    return sorted([c for c in called if c.startswith("transform_")])
+
+
+def log_stage_diagnostics(stage_name: str, code: str):
+    import hashlib
+    h = hashlib.sha256(code.encode('utf-8')).hexdigest()[:16]
+    
+    defined = extract_defined_functions(code)
+    called = extract_called_transform_functions(code)
+    
+    # Step markers
+    step_markers = re.findall(r"#\s*(?:DHARA_)?(?:STEP|ACTION):\s*([^\n]+)", code, re.I)
+    
+    # Detected actions
+    detected_actions = re.findall(r"#\s*(?:DHARA_ACTION):\s*([a-zA-Z_]\w*)", code, re.I)
+    
+    diagnostics = {
+        "stage": stage_name,
+        "code_hash": h,
+        "code_length": len(code),
+        "defined_functions": defined,
+        "called_functions": called,
+        "step_markers": step_markers,
+        "detected_actions": detected_actions,
+    }
+    logger.info(f"[Codegen Stage] {stage_name}: {json.dumps(diagnostics)}")
+
+
+def save_stage_debug_artifact(generation_id: str, attempt: int, stage_name: str, content: str):
+    if os.environ.get("DHARA_ENV", "development").lower() not in ("development", "test"):
+        return
+    try:
+        local_app_data = os.getenv("LOCALAPPDATA") or os.path.expanduser("~")
+        debug_dir = os.path.join(local_app_data, "AgentDhara", "codegen_debug", generation_id)
+        os.makedirs(debug_dir, exist_ok=True)
+        
+        # Redact credentials/secrets
+        redacted = content
+        redacted = re.sub(r"(?i)(password|secret|key|token|credential|pwd)\s*=\s*['\"][^'\"]+['\"]", r"\1 = 'REDACTED'", redacted)
+        
+        filename = f"attempt_{attempt}_{stage_name}"
+        if stage_name == "raw":
+            filename += ".txt"
+        elif stage_name == "validation":
+            filename += ".json"
+        else:
+            filename += ".py"
+            
+        filepath = os.path.join(debug_dir, filename)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(redacted)
+        logger.info(f"[Debug Artifact] Saved {filename} to {filepath}")
+    except Exception as e:
+        logger.warning(f"Could not save stage debug artifact {stage_name}: {e}")
 
 
 def _fix_mismatched_transform_calls(code: str) -> str:
@@ -502,7 +617,13 @@ def _filter_unrelated_transforms(code: str, plan: Dict[str, Any]) -> str:
     def _canonical_id(name: str) -> str:
         return re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")
         
-    active_canons = {_canonical_id(ds) for ds in (plan.get("datasets") or {})}
+    active_canons = set()
+    for ds in (plan.get("datasets") or {}):
+        canon = _canonical_id(ds)
+        active_canons.add(canon)
+        for ext in ("_xml", "_csv", "_json", "_parquet", "_txt"):
+            if canon.lower().endswith(ext):
+                active_canons.add(canon[:-len(ext)])
     
     lines = code.splitlines()
     new_lines = []
@@ -1018,166 +1139,116 @@ def _inject_pyspark_helpers(code: str) -> str:
     return "".join(injected)
 
 
-def _enforce_plan_steps_in_code(code: str, plan: Dict[str, Any]) -> str:
-    if not code or not plan:
-        return code
+from dataclasses import dataclass
+@dataclass
+class RepairResult:
+    code: str
+    repairs_applied: list[str]
 
-    def _canonical_id(name: str) -> str:
-        return re.sub(r"[^0-9a-zA-Z_]+", "_", name or "x").strip("_")
 
-    lines = code.splitlines()
+def find_forbidden_imports(source: str) -> list[str]:
+    try:
+        tree = ast.parse(source)
+    except Exception:
+        return []
+    forbidden_roots = {"os", "pandas", "subprocess"}
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".", 1)[0]
+                if root in forbidden_roots:
+                    found.add(root)
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".", 1)[0]
+            if root in forbidden_roots:
+                found.add(root)
+    return sorted(list(found))
+
+
+def apply_guarded_fixup(
+    source: str,
+    fixup_fn,
+    plan: dict | None,
+) -> str:
+    before_functions = set(extract_defined_functions(source))
     
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        
-        m_fn = re.match(r"\s*def\s+(transform_(\w+))\s*\(", line)
-        if m_fn:
-            fn_name = m_fn.group(1)
-            ds_canon = m_fn.group(2)
-            
-            orig_ds_name = None
-            for ds_k in plan.get("datasets") or {}:
-                if _canonical_id(ds_k) == ds_canon:
-                    orig_ds_name = ds_k
-                    break
-            
-            if orig_ds_name:
-                body_lines = []
-                j = i + 1
-                while j < len(lines):
-                    if lines[j].strip() and not lines[j].startswith(" ") and not lines[j].startswith("\t"):
-                        break
-                    body_lines.append(lines[j])
-                    j += 1
-                
-                body_str = "\n".join(body_lines)
-                block = plan["datasets"][orig_ds_name]
-                steps = block.get("steps") or []
-                injections = []
-                
-                for st in steps:
-                    col = st.get("column")
-                    if not col:
-                        continue
-                    act = str(st.get("action") or "").lower()
-                    params = st.get("params") or {}
-                    
-                    if act in ("parse_dates", "parse_dates_safe"):
-                        if f"_parse_timestamp_safely" not in body_str or (f"'{col}'" not in body_str and f'"{col}"' not in body_str):
-                            injections.append(f"    # Step: parse_dates on [{col}] (Restored)")
-                            injections.append(f"    df = _parse_timestamp_safely(df, {repr(col)})")
-                            
-                    elif act in ("cast_type", "coerce_numeric"):
-                        is_key = any(k in str(col).lower() for k in ("id", "key", "code", "ref"))
-                        is_cat = any(k in str(col).lower() for k in ("region", "channel", "location", "category", "status", "country", "state", "city", "zone", "segment", "type"))
-                        if not (is_key or is_cat):
-                            if f"is_invalid_{col}" not in body_str:
-                                injections.append(f"    # Step: {act} on [{col}] (Restored)")
-                                injections.append(f"    _raw_{col} = F.trim(F.col({repr(col)}).cast('string'))")
-                                injections.append(f"    df = df.withColumn('is_missing_{col}', _raw_{col}.isNull() | (_raw_{col} == ''))")
-                                injections.append(f"    _valid_{col} = _raw_{col}.rlike(r'^-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)$')")
-                                injections.append(f"    df = df.withColumn('is_invalid_{col}', (~F.col('is_missing_{col}') & ~_valid_{col}).cast('boolean'))")
-                                injections.append(f"    df = df.withColumn({repr(col)}, F.when(_valid_{col}, _raw_{col}.cast('double')).otherwise(F.lit(None).cast('double')))")
+    def extract_step_markers(code: str) -> set[str]:
+        return set(re.findall(r"#\s*(?:DHARA_)?(?:STEP|ACTION):\s*([^\n]+)", code, re.I))
 
-                    elif act in ("fill_nulls_simple", "fill_or_drop"):
-                        strat = params.get("fill_strategy") or ""
-                        if strat in ("mean", "median") and f"is_imputed_{col}" not in body_str:
-                            injections.append(f"    # Step: {act} on [{col}] (Restored)")
-                            injections.append(f"    df = df.withColumn('is_imputed_{col}', F.col({repr(col)}).isNull().cast('boolean'))")
-                            if strat == "median":
-                                injections.append(f"    _med_row_{col} = df.select(F.percentile_approx(F.col({repr(col)}).cast('double'), 0.5).alias('m')).first()")
-                                injections.append(f"    _med_{col} = _med_row_{col}['m'] if (_med_row_{col} and _med_row_{col}['m'] is not None) else None")
-                                injections.append(f"    if _med_{col} is not None:")
-                                injections.append(f"        df = df.withColumn({repr(col)}, F.coalesce(F.col({repr(col)}).cast('double'), F.lit(_med_{col})))")
-                            else:
-                                injections.append(f"    _avg_row_{col} = df.select(F.avg(F.col({repr(col)}).cast('double')).alias('m')).first()")
-                                injections.append(f"    _avg_{col} = _avg_row_{col}['m'] if (_avg_row_{col} and _avg_row_{col}['m'] is not None) else None")
-                                injections.append(f"    if _avg_{col} is not None:")
-                                injections.append(f"        df = df.withColumn({repr(col)}, F.coalesce(F.col({repr(col)}).cast('double'), F.lit(_avg_{col})))")
-                        elif strat == "value" and params.get("fill_value") is not None and f"is_imputed_{col}" not in body_str:
-                            injections.append(f"    # Step: {act} on [{col}] (Restored)")
-                            injections.append(f"    df = df.withColumn('is_imputed_{col}', F.col({repr(col)}).isNull().cast('boolean'))")
-                            injections.append(f"    df = df.fillna({{ {repr(col)}: {repr(params.get('fill_value'))} }})")
+    before_markers = extract_step_markers(source)
+    raw_imports = set(find_forbidden_imports(source))
 
-                    elif act == "lowercase":
-                        is_num = any(k in str(col).lower() for k in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val", "production_qty", "revenue", "sales", "count", "num", "number", "rate", "ratio", "margin", "fee"))
-                        is_key = any(k in str(col).lower() for k in ("id", "key", "code", "ref"))
-                        if not is_num and not is_key and (f"'{col}'" not in body_str and f'"{col}"' not in body_str or "lower" not in body_str):
-                            injections.append(f"    # Step: lowercase on [{col}] (Restored)")
-                            injections.append(f"    df = df.withColumn({repr(col)}, F.lower(F.col({repr(col)}).cast('string')))")
-                            
-                    elif act == "uppercase":
-                        is_num = any(k in str(col).lower() for k in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val", "production_qty", "revenue", "sales", "count", "num", "number", "rate", "ratio", "margin", "fee"))
-                        is_key = any(k in str(col).lower() for k in ("id", "key", "code", "ref"))
-                        if not is_num and not is_key and (f"'{col}'" not in body_str and f'"{col}"' not in body_str or "upper" not in body_str):
-                            injections.append(f"    # Step: uppercase on [{col}] (Restored)")
-                            injections.append(f"    df = df.withColumn({repr(col)}, F.upper(F.col({repr(col)}).cast('string')))")
-                            
-                    elif act == "trim":
-                        if f"'{col}'" not in body_str and f'"{col}"' not in body_str or "trim" not in body_str:
-                            injections.append(f"    # Step: trim on [{col}] (Restored)")
-                            injections.append(f"    df = df.withColumn({repr(col)}, F.trim(F.col({repr(col)}).cast('string')))")
+    import inspect
+    sig = inspect.signature(fixup_fn)
+    if len(sig.parameters) >= 2:
+        repaired = fixup_fn(source, plan)
+    else:
+        repaired = fixup_fn(source)
 
-                    elif act == "trim_preserve_case":
-                        if f"'{col}'" not in body_str and f'"{col}"' not in body_str or "trim" not in body_str:
-                            injections.append(f"    # Step: trim_preserve_case on [{col}] (Restored)")
-                            injections.append(f"    df = df.withColumn({repr(col)}, F.trim(F.col({repr(col)}).cast('string')))")
+    after_functions = set(extract_defined_functions(repaired))
+    after_markers = extract_step_markers(repaired)
+    after_imports = set(find_forbidden_imports(repaired))
+    
+    introduced = after_imports - raw_imports
+    if introduced:
+        raise MechanicalRepairViolation(
+            message=f"{fixup_fn.__name__} introduced forbidden imports: {sorted(list(introduced))}",
+            fixup_name=fixup_fn.__name__
+        )
 
-                    elif act == "preserve_null_and_flag":
-                        if f"is_missing_{col}" not in body_str:
-                            injections.append(f"    # Step: preserve_null_and_flag on [{col}] (Restored)")
-                            injections.append(f"    df = df.withColumn('is_missing_{col}', F.col({repr(col)}).isNull().cast('boolean'))")
+    before_transforms = {f for f in before_functions if f.startswith("transform_")}
+    after_transforms = {f for f in after_functions if f.startswith("transform_")}
+    removed_transforms = before_transforms - after_transforms
 
-                    elif act in ("flag_missing_key", "flag_missing_declared_key"):
-                        if f"is_missing_{col}" not in body_str:
-                            injections.append(f"    # Step: {act} on [{col}] (Restored)")
-                            injections.append(f"    df = df.withColumn('is_missing_{col}', F.col({repr(col)}).isNull().cast('boolean'))")
+    if removed_transforms:
+        raise MechanicalRepairViolation(
+            message=f"{fixup_fn.__name__} removed required transforms: {sorted(list(removed_transforms))}",
+            fixup_name=fixup_fn.__name__
+        )
 
-                    elif act == "create_normalized_match_key":
-                        output_col = params.get("output_column") or f"{col}_match_key"
-                        if output_col not in body_str:
-                            injections.append(f"    # Step: create_normalized_match_key on [{col}] (Restored)")
-                            injections.append(f"    df = df.withColumn({repr(output_col)}, F.trim(F.lower(F.col({repr(col)}).cast('string'))))")
+    removed_markers = before_markers - after_markers
+    if removed_markers:
+        raise MechanicalRepairViolation(
+            message=f"{fixup_fn.__name__} removed step markers: {sorted(list(removed_markers))}",
+            fixup_name=fixup_fn.__name__
+        )
 
-                    elif act in ("flag_duplicate_candidates", "flag_business_key_duplicate", "flag_near_duplicate_cluster"):
-                        if f"is_duplicate" not in body_str and f"row_number()" not in body_str:
-                            injections.append(f"    # Step: {act} on [{col}] (Restored)")
-                            injections.append(f"    from pyspark.sql.window import Window")
-                            injections.append(f"    _w = Window.partitionBy({repr(col)}).orderBy(F.monotonically_increasing_id())")
-                            injections.append(f"    df = df.withColumn('is_duplicate_{col}', (F.row_number().over(_w) > 1).cast('boolean'))")
+    return repaired
 
-                    elif act == "nullify_punctuation":
-                        is_num = any(k in str(col).lower() for k in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val", "production_qty", "revenue", "sales", "count", "num", "number", "rate", "ratio", "margin", "fee"))
-                        if is_num:
-                            if f"cast('double')" not in body_str and f"cast(\"double\")" not in body_str:
-                                injections.append(f"    # Step: nullify_punctuation on [{col}] (Restored)")
-                                injections.append(f"    df = df.withColumn({repr(col)}, F.col({repr(col)}).cast('double'))")
-                        else:
-                            if f"rlike('[a-zA-Z0-9]')" not in body_str:
-                                injections.append(f"    # Step: nullify_punctuation on [{col}] (Restored)")
-                                injections.append(f"    df = df.withColumn({repr(col)}, F.when(~F.col({repr(col)}).cast('string').rlike('[a-zA-Z0-9]'), F.lit(None)).otherwise(F.col({repr(col)})))")
 
-                if injections:
-                    hash_found = False
-                    for idx, bl in enumerate(body_lines):
-                        if "_source_row_hash" in bl:
-                            body_lines = body_lines[:idx+1] + injections + body_lines[idx+1:]
-                            hash_found = True
-                            break
-                    if not hash_found:
-                        body_lines = injections + body_lines
-                    
-                    lines[i+1 : j] = body_lines
-                    i = i + len(body_lines) + 1
-                    continue
-                else:
-                    i = j
-                    continue
-
-        i += 1
-
-    return "\n".join(lines)
+def apply_mechanical_codegen_repairs(
+    code: str,
+    plan: dict | None = None,
+) -> RepairResult:
+    repairs = []
+    
+    # 1. basic syntax normalization
+    repaired_code = apply_guarded_fixup(code, _sanitize_html_entities_in_code, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _inject_pyspark_imports, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _inject_pyspark_fabric_ids, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _inject_pyspark_datasets_decl, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _inject_transform_header_block, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _inject_pyspark_helpers, plan)
+    
+    # 2. safe mechanical fixups
+    repaired_code = apply_guarded_fixup(repaired_code, _filter_unrelated_transforms, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_string_ops_on_numeric_cols, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_string_fills_on_numeric_cols, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_skipped_fill_comments, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_safe_numeric_casts_and_flags, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_safe_date_parsing_and_flags, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_toplevel_pipeline_duplication, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_unsafe_pyspark_first_calls, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_pyspark_none_literals, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_pyspark_numeric_rlike_filters, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_pyspark_categorical_digit_filters, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_invalid_pyspark_dedup_window, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _deduplicate_repeated_dedup_calls, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_numeric_aggregations_cast_double, plan)
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_imputation_lineage_flags, plan)
+    
+    return RepairResult(code=repaired_code, repairs_applied=repairs)
 
 
 def _remove_row_count_logging_from_transforms(code: str) -> str:
@@ -1235,15 +1306,86 @@ def _debug_lines(code: str, center: int, radius: int = 8) -> str:
     )
 
 
+def _remove_run_pipeline_code(code: str) -> str:
+    try:
+        import ast
+        tree = ast.parse(code)
+        lines = code.splitlines()
+        ranges_to_remove = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "run_pipeline":
+                start = node.lineno - 1
+                end = getattr(node, "end_lineno", None)
+                if end is not None:
+                    ranges_to_remove.append((start, end))
+            elif isinstance(node, ast.Try) and any(
+                isinstance(child, ast.Assign) and any(
+                    isinstance(t, ast.Name) and t.id == "spark" for t in child.targets
+                ) for child in node.body
+            ):
+                start = node.lineno - 1
+                end = getattr(node, "end_lineno", None)
+                if end is not None:
+                    ranges_to_remove.append((start, end))
+            elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "run_pipeline":
+                start = node.lineno - 1
+                end = getattr(node, "end_lineno", None)
+                if end is not None:
+                    ranges_to_remove.append((start, end))
+
+        if ranges_to_remove:
+            ranges_to_remove.sort(key=lambda r: r[0], reverse=True)
+            for start, end in ranges_to_remove:
+                del lines[start:end]
+            return "\n".join(lines)
+        else:
+            return code
+    except Exception:
+        pass
+
+    # Line-by-line fallback
+    lines = code.splitlines()
+    out = []
+    in_run_pipeline = False
+    in_try_spark = False
+    
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r"^def\s+run_pipeline\b", stripped):
+            in_run_pipeline = True
+            continue
+        if re.match(r"^try:\s*$", stripped):
+            in_try_spark = True
+            try_block_lines = [line]
+            continue
+        if in_run_pipeline:
+            if line.startswith((" ", "\t")) or not stripped or stripped.startswith("#"):
+                continue
+            else:
+                in_run_pipeline = False
+        if in_try_spark:
+            try_block_lines.append(line)
+            if line.startswith((" ", "\t")) or not stripped or stripped.startswith("#"):
+                continue
+            else:
+                in_try_spark = False
+                block_str = "\n".join(try_block_lines)
+                if "SparkSession" not in block_str and "spark" not in block_str:
+                    out.extend(try_block_lines)
+                continue
+        if re.match(r"^run_pipeline\s*\(", stripped):
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def _inject_pyspark_run_pipeline(code: str, plan: Dict[str, Any]) -> str:
     if not code:
         return code
 
-    # Strip any LLM-generated run_pipeline block, try/except blocks, or run_pipeline calls at the end
+    # Strip any LLM-generated run_pipeline block, try/except blocks, or run_pipeline calls
     # to guarantee we always use our robust, deterministic template code.
-    code = re.split(r"^def\s+run_pipeline\b", code, maxsplit=1, flags=re.MULTILINE)[0].rstrip()
-    code = re.split(r"^run_pipeline\s*\(", code, maxsplit=1, flags=re.MULTILINE)[0].rstrip()
-    code = re.split(r"^try:\s*\n\s*spark\b", code, maxsplit=1, flags=re.MULTILINE)[0].rstrip()
+    code = _remove_run_pipeline_code(code)
 
     from agent.etl_pipeline.join_emitters import (
         emit_pyspark_output_contract,
@@ -1315,12 +1457,13 @@ def _inject_pyspark_run_pipeline(code: str, plan: Dict[str, Any]) -> str:
         lines.append("    return dfs, OUTPUT_PATHS")
         lines.append("")
         lines.append("# Fabric notebooks pre-inject 'spark'; fall back to creating one for local dev.")
-        lines.append("try:")
-        lines.append("    spark  # type: ignore[name-defined]")
-        lines.append("except NameError:")
-        lines.append("    from pyspark.sql import SparkSession")
-        lines.append('    spark = SparkSession.builder.appName("AgentDharaETL").getOrCreate()')
-        lines.append("_dfs, _paths = run_pipeline(spark)")
+        lines.append("if __name__ == '__main__':")
+        lines.append("    try:")
+        lines.append("        spark  # type: ignore[name-defined]")
+        lines.append("    except NameError:")
+        lines.append("        from pyspark.sql import SparkSession")
+        lines.append('        spark = SparkSession.builder.appName("AgentDharaETL").getOrCreate()')
+        lines.append("    _dfs, _paths = run_pipeline(spark)")
     else:
         lines.append("# Fabric notebooks pre-inject 'spark'; fall back to creating one for local dev.")
         lines.append("try:")
@@ -1983,6 +2126,17 @@ def _build_codegen_payload(
         "domain_rules": plan.get("domain_rules") or {},
         "business_keys": plan.get("business_keys") or {},
     }
+    
+    required_transforms = []
+    if plan and plan.get("datasets"):
+        for ds_name in plan["datasets"]:
+            canon_ds = re.sub(r"[^0-9a-zA-Z_]+", "_", ds_name).strip("_")
+            required_transforms.append({
+                "dataset_id": ds_name,
+                "function_name": f"transform_{canon_ds}"
+            })
+    base["required_transform_functions"] = required_transforms
+
     base.update(llm_codegen_extra_context(plan))
     return base
 
@@ -2131,6 +2285,14 @@ def _build_user_message_parts(
         f"ETL policy (must follow):\n{payload.get('policy') or ''}",
         f"Generate complete ETL for this approved plan:\n{json.dumps(payload, separators=(',', ':'), default=str)}",
     ]
+    
+    if payload.get("required_transform_functions"):
+        req_fns = payload["required_transform_functions"]
+        req_lines = [f"- Define function '{item['function_name']}' to transform dataset '{item['dataset_id']}'" for item in req_fns]
+        user_parts.append(
+            "REQUIRED TRANSFORM FUNCTION REGISTRY (you MUST define exactly these transform function names):\n"
+            + "\n".join(req_lines)
+        )
     manifest = payload.get("connector_manifest") or {}
     m_ds = manifest.get("datasets") or {}
     if m_ds:
@@ -2390,7 +2552,7 @@ def _call_llm(
     if choice.finish_reason == "content_filter":
         raise LLMInfraError("LLM response blocked by content filter (finish_reason=content_filter) — adjust the prompt or payload.")
 
-    return text
+    return raw_content, text
 
 
 def parse_adf_json_from_llm(text: str) -> Tuple[Optional[Dict[str, Any]], List[str]]:
@@ -2469,14 +2631,38 @@ _RETRY_BUDGET: Dict[str, int] = {
 
 
 
+def _get_plan_hash(plan: Dict[str, Any]) -> str:
+    import hashlib
+    core_plan = {
+        "datasets": plan.get("datasets") or {},
+        "business_rules": plan.get("business_rules") or {},
+        "relationships": plan.get("relationships") or {},
+        "global_steps": plan.get("global_steps") or [],
+        "manual_review": plan.get("manual_review") or [],
+    }
+    try:
+        plan_json = json.dumps(core_plan, sort_keys=True, default=str)
+    except Exception:
+        plan_json = str(core_plan)
+    return hashlib.sha256(plan_json.encode("utf-8")).hexdigest()
+
+
 def _get_cache_key(plan: Dict[str, Any], assessment: Dict[str, Any], engine_key: str) -> str:
     import hashlib
-    try:
-        blob = json.dumps(assessment, sort_keys=True, default=str)
-    except Exception:
-        blob = str(assessment)
-    assess_sig = hashlib.sha256(blob.encode("utf-8", errors="ignore")).hexdigest()[:16]
-    return f"{plan.get('plan_id')}_{assess_sig}_{engine_key}"
+    plan_hash = _get_plan_hash(plan)
+    MODEL_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT") or os.getenv("OPENAI_MODEL") or "default"
+    cache_identity = {
+        "plan_hash": plan_hash,
+        "engine": engine_key,
+        "prompt_version": PROMPT_VERSION,
+        "validator_version": VALIDATOR_VERSION,
+        "postprocessor_version": POSTPROCESSOR_VERSION,
+        "model_deployment": MODEL_DEPLOYMENT,
+        "tenant_id": plan.get("tenant_id") or "default",
+    }
+    return hashlib.sha256(
+        json.dumps(cache_identity, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
 async def _reset_circuit_breaker(plan_id: str, delay: int = 300):
@@ -2499,6 +2685,24 @@ async def generate_etl_with_llm(
 ) -> Tuple[Optional[str], Optional[str]]:
     engine_key = normalize_codegen_engine(engine, sql_dialect)
     cache_key = _get_cache_key(plan, assessment, engine_key)
+    plan_hash = _get_plan_hash(plan)
+    
+    # Invalidate/flush only this plan hash for debugging
+    for k in list(_CODE_CACHE.keys()):
+        if plan_hash in k:
+            _CODE_CACHE.pop(k, None)
+    for k in list(_FAILURE_CACHE.keys()):
+        if plan_hash in k:
+            _FAILURE_CACHE.pop(k, None)
+
+    MODEL_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT") or os.getenv("OPENAI_MODEL") or "default"
+    tenant_id = plan.get("tenant_id") or "default"
+    breaker_key = f"{tenant_id}_{plan_hash}_{engine_key}_{MODEL_DEPLOYMENT}"
+    hit = cache_key in _CODE_CACHE
+    logger.info(
+        f"[Cache check] key: {cache_key}, hit: {hit}, plan_hash: {plan_hash}, "
+        f"breaker_key: {breaker_key}, prompt_ver: {PROMPT_VERSION}"
+    )
 
     # Check failure cache first:
     if cached_err := _is_failure_cached(cache_key):
@@ -2628,14 +2832,12 @@ def _generate_etl_with_llm_impl(
             prev = None
 
         try:
-            code = _call_llm(
+            raw_code, stripped_code = _call_llm(
                 engine_key,
                 trimmed_payload,
                 fix_errors=fix_errors or None,
                 previous_output=prev,
             )
-            if code:
-                code = _sanitize_html_entities_in_code(code)
         except (LLMInfraError, ConnectorConfigError) as exc:
             last_error = str(exc)
             _write_failure_cache(cache_key, last_error)
@@ -2650,12 +2852,12 @@ def _generate_etl_with_llm_impl(
                 continue
             return None, f"LLM infrastructure error: {last_error}"
 
-        if is_llm_generation_error(code):
-            _write_failure_cache(cache_key, code)
-            return None, code
+        if is_llm_generation_error(stripped_code):
+            _write_failure_cache(cache_key, stripped_code)
+            return None, stripped_code
 
         # Guard: LLM returned empty/whitespace response — treat as payload-too-large and retry
-        if not code or not code.strip():
+        if not stripped_code or not stripped_code.strip():
             logger.warning(
                 "[Codegen Debug] LLM returned empty response on attempt %d — retrying with trimmer payload",
                 attempt + 1,
@@ -2665,59 +2867,124 @@ def _generate_etl_with_llm_impl(
                 continue
             return None, "LLM returned empty response after all retries — payload may be too large"
 
-        # Auto-inject missing PySpark module-level imports and Fabric IDs before validation
-        if engine_key == "pyspark":
-            logger.info("[Codegen] Starting post-processing. LLM code length: %d", len(code))
-            # Unescape HTML entities FIRST so all downstream processors see clean < > & characters
-            code = _sanitize_html_entities_in_code(code)
-            code = _inject_pyspark_imports(code)
-            code = _inject_pyspark_fabric_ids(code)
-            code = _inject_pyspark_datasets_decl(code, plan)
-            code = _inject_transform_header_block(code, plan)
-            code = _inject_pyspark_helpers(code)
-            # Remove any transform functions for datasets that are not active in the plan
-            code = _filter_unrelated_transforms(code, plan)
-            # Enforce all required plan steps are implemented (restores any missed/dropped steps)
-            code = _enforce_plan_steps_in_code(code, plan)
-            # Remove string ops (lowercase/upper) on numeric metric columns — semantically wrong
-            code = _fix_string_ops_on_numeric_cols(code)
-            # Remove invalid string fillna/coalesce (like 'unknown') on numeric columns
-            code = _fix_string_fills_on_numeric_cols(code)
-            # Convert '# skipped empty fillna' placeholders into real is_missing_ flags
-            code = _fix_skipped_fill_comments(code)
-            code = _fix_safe_numeric_casts_and_flags(code)
-            code = _fix_safe_date_parsing_and_flags(code)
-            code = _fix_toplevel_pipeline_duplication(code)
-            code = _fix_unsafe_pyspark_first_calls(code)
-            code = _fix_pyspark_none_literals(code)
-            code = _fix_pyspark_numeric_rlike_filters(code)
-            code = _fix_pyspark_categorical_digit_filters(code)
-            # Replace inline Window dedup blocks with canonical _flag_source_duplicates helper
-            code = _fix_invalid_pyspark_dedup_window(code)
-            # Collapse any duplicate helper calls generated by post-processors
-            code = _deduplicate_repeated_dedup_calls(code)
-            # Fix dynamic aggregation casts before imputation checks
-            code = _fix_numeric_aggregations_cast_double(code)
-            code = _fix_imputation_lineage_flags(code)
-            code = _inject_pyspark_run_pipeline(code, plan)
-            # Ensure any LLM-generated bare run_pipeline(spark) call has the try/except wrapper
-            code = _fix_bare_run_pipeline_call(code)
-            code = _fix_mismatched_transform_calls(code)
-            # Remove any row count logging from inside transform functions (only allow in run_pipeline)
-            code = _remove_row_count_logging_from_transforms(code)
-            code = _deduplicate_helper_functions(code)
-            # Ensure no functions are empty (prevents Python syntax errors)
-            code = _ensure_non_empty_functions(code)
-            # Re-sanitize HTML entities to ensure template output doesn't contain any
-            code = _sanitize_html_entities_in_code(code)
-            logger.info("[Codegen] Post-processing complete. Final code length: %d", len(code) if code else 0)
+        generation_id = plan.get("plan_id") or "run"
+        attempt_idx = attempt + 1
         
+        # Log raw and stripped stages
+        log_stage_diagnostics("raw", raw_code)
+        save_stage_debug_artifact(generation_id, attempt_idx, "raw", raw_code)
+        
+        log_stage_diagnostics("stripped", stripped_code)
+        save_stage_debug_artifact(generation_id, attempt_idx, "stripped", stripped_code)
+
+        try:
+            if engine_key == "pyspark":
+                # Stage 3: Fixed code (basic syntax normalization + safe mechanical repairs)
+                repair_res = apply_mechanical_codegen_repairs(stripped_code, plan)
+                fixed_code = repair_res.code
+                
+                log_stage_diagnostics("fixed", fixed_code)
+                save_stage_debug_artifact(generation_id, attempt_idx, "fixed", fixed_code)
+                
+                # Invariant: fixed code must compile and contain no forbidden imports
+                try:
+                    ast.parse(fixed_code)
+                except SyntaxError as e:
+                    raise ValueError(f"Fixed code syntax error: {e}")
+                raw_forbidden = set(find_forbidden_imports(stripped_code))
+                fixed_forbidden = set(find_forbidden_imports(fixed_code))
+                introduced = fixed_forbidden - raw_forbidden
+                if introduced:
+                    raise ValueError(f"Forbidden imports {sorted(list(introduced))} introduced in fixed stage")
+                    
+                # Stage 4: Orchestration (after checking defined transforms registry)
+                defined = set(extract_defined_functions(fixed_code))
+                called_expected = set()
+                if plan and plan.get("datasets"):
+                    for ds_name in plan["datasets"]:
+                        canon_ds = re.sub(r"[^0-9a-zA-Z_]+", "_", ds_name).strip("_")
+                        called_expected.add(f"transform_{canon_ds}")
+                
+                missing = sorted(list(called_expected - defined))
+                if missing:
+                    raise GeneratedCodeIncompleteError(
+                        code="MISSING_TRANSFORM_FUNCTIONS",
+                        missing_functions=missing,
+                    )
+                    
+                orchestrated_code = _inject_pyspark_run_pipeline(fixed_code, plan)
+                orchestrated_code = _fix_bare_run_pipeline_call(orchestrated_code)
+                
+                log_stage_diagnostics("orchestrated", orchestrated_code)
+                save_stage_debug_artifact(generation_id, attempt_idx, "orchestrated", orchestrated_code)
+                
+                # Invariant: orchestrated code
+                orchestrated_defined = set(extract_defined_functions(orchestrated_code))
+                orchestrated_called = set(extract_called_transform_functions(orchestrated_code))
+                orchestrated_missing = orchestrated_called - orchestrated_defined
+                if orchestrated_missing:
+                    raise ValueError(f"Missing called transform functions in orchestrated code: {orchestrated_missing}")
+                if orchestrated_code.count("def run_pipeline") > 1:
+                    raise ValueError("Duplicate run_pipeline definitions found")
+                    
+                # Stage 5: Final code (orchestrated call repair + helper deduplication)
+                final_code = _fix_mismatched_transform_calls(orchestrated_code)
+                final_code = _remove_row_count_logging_from_transforms(final_code)
+                final_code = _deduplicate_helper_functions(final_code)
+                final_code = _ensure_non_empty_functions(final_code)
+                final_code = _sanitize_html_entities_in_code(final_code)
+                
+                log_stage_diagnostics("final", final_code)
+                save_stage_debug_artifact(generation_id, attempt_idx, "final", final_code)
+                
+                # Final Invariant
+                try:
+                    ast.parse(final_code)
+                except SyntaxError as e:
+                    raise ValueError(f"Final code syntax error: {e}")
+                    
+                if plan:
+                    expected_steps = []
+                    for ds_name, block in plan.get("datasets", {}).items():
+                        for st in (block.get("steps") or []):
+                            st_copy = dict(st)
+                            st_copy["dataset"] = ds_name
+                            expected_steps.append(st_copy)
+                    from agent.etl_pipeline.validate_pyspark import inspect_plan_step_conformance
+                    report = inspect_plan_step_conformance(final_code, expected_steps, plan)
+                    if report.errors:
+                        raise ValueError(f"Plan conformance errors in final code: {report.errors}")
+                        
+                code = final_code
+            else:
+                code = stripped_code
+        except (ValueError, GeneratedCodeIncompleteError, MechanicalRepairViolation) as e:
+            logger.warning(f"Error during codegen stages processing: {e}")
+            fix_errors = [str(e)]
+            save_stage_debug_artifact(generation_id, attempt_idx, "validation", json.dumps({"ok": False, "errors": fix_errors}))
+            if attempt < max_retries:
+                continue
+            else:
+                return None, f"Validation errors on final attempt: {fix_errors}"
+
+        # Construct immutable artifact and assert hashes match
+        artifact = GeneratedCodeArtifact.create(
+            source=code,
+            plan_hash=plan_hash,
+            attempt=attempt_idx,
+            generation_id=generation_id,
+        )
+        import hashlib
+        assert hashlib.sha256(artifact.source.encode("utf-8")).hexdigest() == artifact.source_sha256
+        logger.info(f"final_code_hash before validation: {artifact.source_sha256}")
+
         # Run local validation loop
         rules = plan.get("business_rules") or {}
         never_drop_rows = bool(rules.get("never_drop_rows"))
 
         active_validator = validate_fn if validate_fn is not None else validator
         if active_validator:
+            logger.info("Running validator on attempt %d code...", attempt + 1)
             import inspect
             fn_key = f"fn_{id(active_validator)}" if validate_fn is not None else engine_key
             accepts_ndr = _VALIDATOR_ACCEPTS_NDR.get(fn_key)
@@ -2738,18 +3005,13 @@ def _generate_etl_with_llm_impl(
             else:
                 ok, errs = res
 
+            save_stage_debug_artifact(generation_id, attempt_idx, "validation", json.dumps({"ok": ok, "errors": errs}))
+
             if ok:
                 _code_cache_put(cache_key, {"code": code, "time": time.time(), "ok": True})
                 return code, None
             if attempt < max_retries:
-                logger.info(f"[Retry Debug] Attempt {attempt + 1} code failed validation with errors: {errs}. Code snippet:\n{code[:1200]}")
-                # Print code lines surrounding any syntax errors to help diagnostics
-                for err in errs:
-                    if "syntax:" in str(err).lower():
-                        m_line = re.search(r"line (\d+)", str(err))
-                        if m_line:
-                            center_line = int(m_line.group(1))
-                            logger.error(f"SYNTAX ERROR DETAILS (around line {center_line}):\n{_debug_lines(code, center_line)}")
+                logger.info(f"[Retry Debug] Attempt {attempt + 1} code failed validation with errors: {errs}.")
                 fix_errors = errs
                 continue
             # After max retries, return with validation warnings prepended
@@ -2762,6 +3024,8 @@ def _generate_etl_with_llm_impl(
             logger.warning(f"No validator or validate_fn found for engine '{engine_key}' — skipping validation")
             _code_cache_put(cache_key, {"code": code, "time": time.time(), "ok": True})
             return code, None
+
+    return code, None
 
     return code, None
 
@@ -2788,7 +3052,7 @@ async def generate_adf_with_llm(
         prev_out = raw if attempt > 0 else None
         
         try:
-            raw = await asyncio.to_thread(
+            _, raw = await asyncio.to_thread(
                 _call_llm,
                 "adf",
                 trimmed,

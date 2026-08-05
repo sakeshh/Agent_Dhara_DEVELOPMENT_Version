@@ -27,7 +27,7 @@ def test_dimension_scoring_calculation():
         failed_count=20
     )
 
-    res = calculate_dimension_quality_scores([r1, r2])
+    res = calculate_dimension_quality_scores([r1, r2], minimum_score_coverage=0.0)
 
     assert res.dimension_scores["completeness"].score == 100.0
     assert res.dimension_scores["validity"].score == 80.0
@@ -46,7 +46,7 @@ def test_gating_override_blocked():
         failed_count=0
     )
 
-    res = calculate_dimension_quality_scores([r1], has_missing_primary_key=True)
+    res = calculate_dimension_quality_scores([r1], has_missing_primary_key=True, minimum_score_coverage=0.0)
 
     assert res.readiness == "BLOCKED"
-    assert "Missing primary key" in res.gating_blockers[0]
+    assert any("Missing primary key" in b for b in res.gating_blockers)

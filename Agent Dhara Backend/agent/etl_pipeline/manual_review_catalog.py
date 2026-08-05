@@ -11,26 +11,30 @@ ResolutionOption = Dict[str, Any]
 _SKIP_ACTIONS = frozenset({"noop", "keep_as_is"})
 
 RESOLUTION_TO_ACTION_MAP: Dict[str, str] = {
-    # ── Legacy dedup resolution IDs → Phase 1 preparation actions ─────────────
+    # ── Deduplication resolution IDs → Phase 1 preparation actions ───────────────────
     "deduplicate_last":               "deduplicate",
     "deduplicate_first":              "deduplicate",
     "deduplicate_near_duplicates":    "flag_near_duplicate_cluster",
     "deduplicate_business_key":       "flag_business_key_duplicate",
     "deduplicate_insensitive_values": "create_normalized_match_key",
-    # ── Legacy null resolution IDs → Phase 1 preparation actions ──────────────
-    "fill_nulls":                     "fill_nulls_simple",
-    "fill_null":                      "fill_nulls_simple",
-    "fill_nulls_simple":              "fill_nulls_simple",
-    "fill_or_drop":                   "fill_nulls_simple",
-    # ── Legacy outlier resolution IDs → Phase 1 preparation actions ───────────
-    "flag":                           "clip_or_flag",
+    # ── Explicit null disposition IDs (canonical — one policy per ID) ────────────
+    "preserve_and_flag":              "preserve_null_and_flag",
+    "fill_constant":                  "fill_null_with_constant",
+    "impute_mean":                    "impute_numeric",
+    "impute_median":                  "impute_numeric",
+    "impute_mode":                    "impute_numeric",
+    "impute_numeric":                 "impute_numeric",
+    "quarantine_null_rows":           "quarantine_null_rows",
+    "accept_optional":                "accept_null_as_optional",
+    # ── Explicit outlier disposition IDs ────────────────────────────────────
     "flag_outliers":                  "flag_outliers",
-    "clip_or_flag":                   "clip_or_flag",
-    # ── Relationship resolution IDs (Phase 2 cross-dataset integration) ────────
+    "clip_outliers":                  "clip_outliers",
+    "keep_outliers":                  "noop",
+    # ── Relationship resolution IDs ──────────────────────────────────────────
     "quarantine_all_null":            "validate_and_partition_relationship",
     "reject_orphans":                 "validate_and_partition_relationship",
     "validate_referential_integrity_or_stage": "validate_and_partition_relationship",
-    # ── Phase 1 canonical IDs (pass-through) ──────────────────────────────────
+    # ── Phase 1 canonical pass-through IDs ──────────────────────────────────
     "flag_near_duplicate_cluster":         "flag_near_duplicate_cluster",
     "flag_duplicate_candidates":           "flag_duplicate_candidates",
     "flag_business_key_duplicate":         "flag_business_key_duplicate",
@@ -41,13 +45,24 @@ RESOLUTION_TO_ACTION_MAP: Dict[str, str] = {
     "coerce_numeric":                      "coerce_numeric",
     "parse_dates_safe":                    "parse_dates_safe",
     "trim_preserve_case":                  "trim_preserve_case",
-    # ── No-ops / policy-only actions ──────────────────────────────────────────
+    # ── No-ops / policy-only actions ────────────────────────────────────────
     "abort_pipeline":    "noop",
     "accept_risk":       "noop",
     "force_unlock":      "force_unlock",
     "skip_requirement":  "skip_requirement",
     "keep_as_is":        "noop",
 }
+
+# Legacy resolution IDs that are ambiguous and must not silently map to any action.
+# When encountered during promotion, these trigger MIGRATION_REVIEW_REQUIRED.
+LEGACY_AMBIGUOUS_RESOLUTIONS: frozenset = frozenset({
+    "fill_nulls",
+    "fill_null",
+    "fill_nulls_simple",
+    "fill_or_drop",
+    "flag",        # ambiguous: could be flag_outliers OR flag_missing_key OR other
+    "clip_or_flag",
+})
 
 
 def _opt(
@@ -222,12 +237,30 @@ _CATALOG: Dict[str, List[ResolutionOption]] = {
         _opt("accept_risk", "Generate ETL anyway (empty source risk)", "noop"),
     ],
     "non_nullable_fill": [
-        _opt("fill_nulls", "Fill nulls (median/mean)", "fill_nulls_simple", recommended=True),
-        _opt("keep_as_is", "Keep as-is (skip)", "noop"),
+        _opt("preserve_and_flag", "Preserve null and flag for review", "preserve_null_and_flag",
+             recommended=True,
+             description="Keep null as-is, add validation status column. Safe Phase 1 default."),
+        _opt("fill_constant", "Fill with approved constant (e.g. 'UNKNOWN')", "fill_null_with_constant",
+             description="Replace null with an approved registered constant. Requires policy ID."),
+        _opt("impute_numeric", "Statistical imputation (numeric non-key columns only)", "impute_numeric",
+             description="Fill with column median/mean. Prohibited on key/identifier columns."),
+        _opt("quarantine_null_rows", "Quarantine rows with null mandatory value", "quarantine_null_rows",
+             description="Route rows with null to quarantine partition. Requires policy ID."),
+        _opt("keep_as_is", "Accept nulls (document risk)", "noop"),
     ],
     "null_values": [
-        _opt("fill_nulls", "Fill nulls (median/mean)", "fill_nulls_simple", recommended=True),
-        _opt("keep_as_is", "Keep as-is (skip)", "noop"),
+        _opt("preserve_and_flag", "Preserve null and flag for review", "preserve_null_and_flag",
+             recommended=True,
+             description="Keep null as-is, add validation status column. Safe Phase 1 default."),
+        _opt("fill_constant", "Fill with approved constant (e.g. 'UNKNOWN')", "fill_null_with_constant",
+             description="Replace null with an approved registered constant. Requires policy ID."),
+        _opt("impute_numeric", "Statistical imputation (numeric non-key columns only)", "impute_numeric",
+             description="Fill with column median/mean. Prohibited on key/identifier columns."),
+        _opt("quarantine_null_rows", "Quarantine rows with null mandatory value", "quarantine_null_rows",
+             description="Route rows with null to quarantine partition. Requires policy ID."),
+        _opt("accept_optional", "Accept as optional (no transform)", "accept_null_as_optional",
+             description="Record that null is acceptable for this column. No code emitted."),
+        _opt("keep_as_is", "Keep as-is (accept risk)", "noop"),
     ],
     "sentinel_numeric_value": [
         _opt("zero_to_null", "Nullify sentinel values", "zero_to_null", recommended=True, description="Replace numeric sentinel values (e.g. -999, 999999) with NULL."),
@@ -289,10 +322,15 @@ _CATALOG: Dict[str, List[ResolutionOption]] = {
              "noop", description="Pass duplicate business keys to target — document in runbook."),
     ],
     "high_null_percentage": [
-        _opt("fill_nulls", "Fill nulls (median/mean/mode)", 
-             "fill_nulls_simple", recommended=True),
+        _opt("preserve_and_flag", "Preserve null and flag for review", "preserve_null_and_flag",
+             recommended=True,
+             description="Keep null as-is, add validation status column. Safe Phase 1 default."),
+        _opt("fill_constant", "Fill with approved constant", "fill_null_with_constant",
+             description="Replace null with an approved registered constant. Requires policy ID."),
+        _opt("impute_numeric", "Statistical imputation (numeric non-key columns only)", "impute_numeric",
+             description="Fill with column median/mean. Prohibited on key/identifier columns."),
         _opt("drop_column", "Drop column (>50% null is unreliable)", "drop_column"),
-        _opt("accept_risk", "Accept nulls (pass through as-is)", "noop"),
+        _opt("accept_optional", "Accept nulls as optional", "accept_null_as_optional"),
     ],
     "orphan_foreign_keys": [
         _opt("reject_orphans", "Reject orphan records (quarantine)", 
@@ -310,7 +348,17 @@ _CATALOG: Dict[str, List[ResolutionOption]] = {
         _opt("keep_as_is", "Keep as-is", "noop"),
     ],
     "nulls": [
-        _opt("fill_nulls", "Fill nulls (median/mean/mode/constant)", "fill_nulls_simple", recommended=True, description="Impute null values using column statistics or a default value."),
+        _opt("preserve_and_flag", "Preserve null and flag for review", "preserve_null_and_flag",
+             recommended=True,
+             description="Keep null as-is, add validation status column. Safe Phase 1 default."),
+        _opt("fill_constant", "Fill with approved constant", "fill_null_with_constant",
+             description="Replace null with an approved registered constant. Requires policy ID."),
+        _opt("impute_numeric", "Statistical imputation (numeric non-key columns only)", "impute_numeric",
+             description="Fill with column median/mean. Prohibited on key/identifier columns."),
+        _opt("quarantine_null_rows", "Quarantine rows with null mandatory value", "quarantine_null_rows",
+             description="Route rows with null to quarantine partition. Requires policy ID."),
+        _opt("accept_optional", "Accept as optional (no transform)", "accept_null_as_optional",
+             description="Record that null is acceptable for this column. No code emitted."),
         _opt("keep_as_is", "Keep as-is", "noop"),
     ],
     "duplicate_rows": [
@@ -318,7 +366,11 @@ _CATALOG: Dict[str, List[ResolutionOption]] = {
         _opt("keep_as_is", "Keep as-is (allow duplicate rows)", "noop"),
     ],
     "empty_string_values": [
-        _opt("fill_nulls", "Convert to NULL and impute", "fill_nulls_simple", recommended=True, description="Convert empty/blank strings to NULL and fill them."),
+        _opt("preserve_and_flag", "Convert to NULL and flag for review", "preserve_null_and_flag",
+             recommended=True,
+             description="Convert empty strings to NULL and add validation status flag."),
+        _opt("fill_constant", "Fill with approved constant", "fill_null_with_constant",
+             description="Replace empty strings with an approved constant. Requires policy ID."),
         _opt("keep_as_is", "Keep empty strings as-is", "noop"),
     ],
     "case_inconsistency": [
@@ -339,8 +391,12 @@ _CATALOG: Dict[str, List[ResolutionOption]] = {
         _opt("keep_as_is", "Keep as-is", "noop"),
     ],
     "negative_values": [
-        _opt("clip_or_flag", "Clip or flag negative values", "clip_or_flag", recommended=True, description="Handle negative values based on outlier strategy (clip to zero or flag)."),
-        _opt("keep_as_is", "Keep negative values as-is", "noop"),
+        _opt("flag_outliers", "Flag negative values for review", "flag_outliers",
+             recommended=True,
+             description="Add audit flag for negative values. Does not modify the value. Safe Phase 1 default."),
+        _opt("clip_outliers", "Clip to zero (values below 0 → 0)", "clip_outliers",
+             description="Cap negative values at zero. Changes business values — approve carefully."),
+        _opt("keep_as_is", "Keep as-is (accept negative values)", "noop"),
     ],
     "mixed_scalar_types": [
         _opt("coerce_numeric", "Coerce values to numeric", "coerce_numeric", recommended=True, description="Coerce mixed data types to numeric values and nullify/flag invalid ones."),

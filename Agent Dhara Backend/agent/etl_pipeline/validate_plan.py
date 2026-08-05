@@ -267,3 +267,269 @@ def validate_etl_plan_for_confirm(
         )
         ok = False
     return ok, errs
+
+
+from dataclasses import dataclass, asdict
+
+@dataclass
+class PlanValidationIssue:
+    code: str
+    message: str
+    dataset_id: str | None = None
+    column: str | None = None
+    step_id: str | None = None
+    policy_card_id: str | None = None
+    severity: str = "ERROR"
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def is_key_or_identifier_column(ds_name: str, col: str, plan: dict, assessment: dict) -> bool:
+    """Helper to detect if a column serves as a primary, foreign, business key or identifier."""
+    # 1. Check relationships/joins
+    rel = plan.get("relationships") or {}
+    joins = rel.get("joins") or []
+    for j in joins:
+        if not isinstance(j, dict):
+            continue
+        l_ds = j.get("left_dataset")
+        r_ds = j.get("right_dataset")
+        left_keys = j.get("left_keys") or [j.get("left_key")] if j.get("left_keys") or j.get("left_key") else []
+        right_keys = j.get("right_keys") or [j.get("right_key")] if j.get("right_keys") or j.get("right_key") else []
+        if ds_name == l_ds and col in left_keys:
+            return True
+        if ds_name == r_ds and col in right_keys:
+            return True
+
+    # 2. Check name patterns
+    col_lower = str(col or "").lower()
+    if col_lower.endswith("_id") or col_lower.endswith("_key") or col_lower in ("id", "key", "pk", "fk"):
+        return True
+
+    # 3. Check assessment metadata
+    assess_ds = (assessment or {}).get("datasets", {}).get(ds_name, {})
+    if isinstance(assess_ds, dict):
+        col_meta = assess_ds.get("columns", {}).get(col, {})
+        if isinstance(col_meta, dict):
+            role = str(col_meta.get("semantic_role") or col_meta.get("role") or "").upper()
+            if any(x in role for x in ("KEY", "IDENTIFIER", "PRIMARY", "FOREIGN", "BUSINESS")):
+                return True
+
+    return False
+
+
+def validate_promoted_plan(
+    plan: Dict[str, Any],
+    assessment: Optional[Dict[str, Any]] = None,
+    business_rules: Optional[Dict[str, Any]] = None,
+) -> Tuple[bool, List[PlanValidationIssue]]:
+    """
+    Fast validation gate run immediately after manual review promotion.
+    Validates parameter completeness, semantic prohibitions, step identity, and checks for legacy actions.
+    """
+    from agent.etl_pipeline.action_registry import (
+        get_action_meta,
+        is_invalid_action,
+        is_legacy_action,
+        get_semantic_prohibitions,
+    )
+    from agent.etl_pipeline.manual_review_catalog import RESOLUTION_TO_ACTION_MAP
+
+    issues: List[PlanValidationIssue] = []
+    assessment = assessment or {}
+    rules = business_rules or plan.get("business_rules") or {}
+
+    generation_mode = str(plan.get("generation_mode") or "").lower().strip()
+    is_phase1 = generation_mode in ("cleanse_only", "phase_1_cleaning", "cleanse", "")
+
+    seen_step_ids = set()
+    written_outputs = {}  # (ds, col) -> step_id
+
+    datasets = plan.get("datasets") or {}
+    for ds_name, block in datasets.items():
+        if not isinstance(block, dict):
+            continue
+        steps = block.get("steps") or []
+        for st in steps:
+            if not isinstance(st, dict):
+                continue
+
+            action = str(st.get("action") or "")
+            col = st.get("column")
+            step_id = st.get("step_id")
+            params = st.get("params") or {}
+            policy_card_id = st.get("evidence", {}).get("user_resolution") or st.get("note")
+
+            # 1. Step ID uniqueness
+            if not step_id:
+                issues.append(PlanValidationIssue(
+                    code="MISSING_STEP_ID",
+                    message=f"Step on column '{col}' is missing a step_id.",
+                    dataset_id=ds_name,
+                    column=col,
+                ))
+            elif step_id in seen_step_ids:
+                issues.append(PlanValidationIssue(
+                    code="DUPLICATE_STEP_ID",
+                    message=f"Duplicate step ID '{step_id}' found in plan.",
+                    dataset_id=ds_name,
+                    column=col,
+                    step_id=step_id,
+                ))
+            else:
+                seen_step_ids.add(step_id)
+
+            # 2. Unknown or legacy actions check
+            meta = get_action_meta(action)
+            if meta.get("_unknown"):
+                issues.append(PlanValidationIssue(
+                    code="UNKNOWN_ACTION",
+                    message=f"Unknown action '{action}' on column '{col}'.",
+                    dataset_id=ds_name,
+                    column=col,
+                    step_id=step_id,
+                ))
+                continue
+
+            if meta.get("legacy") or is_invalid_action(action) or is_legacy_action(action):
+                issues.append(PlanValidationIssue(
+                    code="AMBIGUOUS_LEGACY_ACTION",
+                    message=f"Action '{action}' on column '{col}' is a legacy ambiguous action and cannot be executed.",
+                    dataset_id=ds_name,
+                    column=col,
+                    step_id=step_id,
+                ))
+
+            # 3. Phase check
+            if is_phase1 and meta.get("phase") == 2:
+                issues.append(PlanValidationIssue(
+                    code="PHASE_MISMATCH",
+                    message=f"Action '{action}' on column '{col}' is Phase 2 but this is a Phase 1 plan.",
+                    dataset_id=ds_name,
+                    column=col,
+                    step_id=step_id,
+                ))
+
+            # 4. Required parameters check
+            req_params = meta.get("required_params") or []
+            for rp in req_params:
+                if rp not in params:
+                    issues.append(PlanValidationIssue(
+                        code="MISSING_REQUIRED_PARAMETER",
+                        message=f"Action '{action}' is missing required parameter '{rp}' on column '{col}'.",
+                        dataset_id=ds_name,
+                        column=col,
+                        step_id=step_id,
+                    ))
+
+            # 5. Conditional parameters and semantic rules
+            if action == "fill_null_with_constant":
+                if "value" not in params:
+                    issues.append(PlanValidationIssue(
+                        code="MISSING_REQUIRED_PARAMETER",
+                        message=f"Action 'fill_null_with_constant' is missing constant 'value' parameter on column '{col}'.",
+                        dataset_id=ds_name,
+                        column=col,
+                        step_id=step_id,
+                    ))
+            elif action == "impute_numeric":
+                strategy = params.get("strategy")
+                if not strategy:
+                    issues.append(PlanValidationIssue(
+                        code="MISSING_REQUIRED_PARAMETER",
+                        message=f"Action 'impute_numeric' is missing 'strategy' parameter.",
+                        dataset_id=ds_name,
+                        column=col,
+                        step_id=step_id,
+                    ))
+                elif strategy == "constant" and "value" not in params:
+                    issues.append(PlanValidationIssue(
+                        code="MISSING_REQUIRED_PARAMETER",
+                        message="Action 'impute_numeric' strategy 'constant' requires 'value' parameter.",
+                        dataset_id=ds_name,
+                        column=col,
+                        step_id=step_id,
+                    ))
+                elif strategy in ("grouped_mean", "grouped_median") and not params.get("group_by"):
+                    issues.append(PlanValidationIssue(
+                        code="MISSING_REQUIRED_PARAMETER",
+                        message=f"Action 'impute_numeric' strategy '{strategy}' requires 'group_by' parameter.",
+                        dataset_id=ds_name,
+                        column=col,
+                        step_id=step_id,
+                    ))
+            elif action == "deduplicate":
+                if not params.get("key_columns") or not params.get("survivorship_policy"):
+                    issues.append(PlanValidationIssue(
+                        code="INCOMPLETE_DEDUPLICATION_POLICY",
+                        message=f"Deduplication action on column '{col}' is missing key_columns or survivorship_policy.",
+                        dataset_id=ds_name,
+                        column=col,
+                        step_id=step_id,
+                    ))
+
+            # 6. Semantic role prohibitions (key imputation check)
+            prohibitions = get_semantic_prohibitions(action)
+            if prohibitions:
+                is_key = is_key_or_identifier_column(ds_name, col, plan, assessment)
+                if is_key:
+                    issues.append(PlanValidationIssue(
+                        code="ILLEGAL_KEY_IMPUTATION",
+                        message=f"Action '{action}' is prohibited on key/identifier column '{col}' (prohibited types: {prohibitions}).",
+                        dataset_id=ds_name,
+                        column=col,
+                        step_id=step_id,
+                    ))
+
+            # 7. Conflicting writes to the same output column
+            out_col = params.get("output_column")
+            if out_col:
+                key = (ds_name, out_col)
+                if key in written_outputs:
+                    issues.append(PlanValidationIssue(
+                        code="CONFLICTING_WRITE_COLUMN",
+                        message=f"Conflict: steps '{step_id}' and '{written_outputs[key]}' both write to the output column '{out_col}'.",
+                        dataset_id=ds_name,
+                        column=col,
+                        step_id=step_id,
+                    ))
+                else:
+                    written_outputs[key] = step_id
+
+            # 8. Provenance and resolution/action mismatches
+            mr_prov = st.get("manual_resolution")
+            is_manual = st.get("classification") == "review" or st.get("requires_user_choice") is True or mr_prov
+            if is_manual:
+                if not mr_prov or not isinstance(mr_prov, dict):
+                    issues.append(PlanValidationIssue(
+                        code="MISSING_PROVENANCE",
+                        message=f"Step '{step_id}' is missing manual resolution provenance.",
+                        dataset_id=ds_name,
+                        column=col,
+                        step_id=step_id,
+                    ))
+                else:
+                    sel_opt = mr_prov.get("selected_option_id")
+                    if not sel_opt:
+                        issues.append(PlanValidationIssue(
+                            code="MISSING_PROVENANCE",
+                            message=f"Step '{step_id}' manual resolution is missing 'selected_option_id'.",
+                            dataset_id=ds_name,
+                            column=col,
+                            step_id=step_id,
+                        ))
+                    else:
+                        # Check mapping mismatch
+                        canonical_action = RESOLUTION_TO_ACTION_MAP.get(sel_opt)
+                        if canonical_action and canonical_action != action:
+                            issues.append(PlanValidationIssue(
+                                code="PROMOTION_ACTION_MISMATCH",
+                                message=f"Step '{step_id}' action '{action}' does not match canonical action '{canonical_action}' for selected option '{sel_opt}'.",
+                                dataset_id=ds_name,
+                                column=col,
+                                step_id=step_id,
+                            ))
+
+    return len(issues) == 0, issues
+

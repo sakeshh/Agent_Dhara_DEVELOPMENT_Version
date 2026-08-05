@@ -20,7 +20,7 @@ def _make_minimal_plan(generation_mode: str = "full") -> tuple:
 
 class TestPhaseClassifier(unittest.TestCase):
     def test_cleanse_actions_map_to_cleanse(self):
-        for action in ("trim", "lowercase", "fill_nulls_simple", "sanitize_email", "flag_outliers"):
+        for action in ("trim", "lowercase", "preserve_null_and_flag", "sanitize_email", "flag_outliers"):
             result = classify_step_bucket(action)
             self.assertEqual(result["phase"], "cleanse", f"Expected cleanse for {action}, got {result}")
 

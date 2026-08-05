@@ -285,7 +285,7 @@ def run_gx_validation(
                     "identifier", "primary_key", "foreign_key", "sensitive_identifier",
                     "country", "status", "category", "postal_code", "person_name",
                     "organization", "free_text", "url", "ip_address", "email", "phone",
-                    "date", "datetime", "timestamp", "region", "address",
+                    "date", "datetime", "timestamp", "region", "address", "numeric_id", "id",
                 }
 
                 for col_name in validation_df.columns:
@@ -380,11 +380,10 @@ def run_gx_validation(
 
                     if _is_numeric_semantic and not _block_numeric and not is_id_like:
                         v_clean = s.dropna()
-                        if not v_clean.empty:
-                            # Negative values check for non-financial columns
-                            if semantic_type in {"quantity", "percentage"}:
-                                validator.expect_column_values_to_be_between(
-                                    column=col_name, min_value=0)
+                        if not v_clean.empty and ("int" in dtype or "float" in dtype or "double" in dtype or "decimal" in dtype):
+                            # Negative values check for numeric columns
+                            validator.expect_column_values_to_be_between(
+                                column=col_name, min_value=0)
                             # Sentinel/magic values check
                             if local_sentinels:
                                 validator.expect_column_values_to_not_be_in_set(

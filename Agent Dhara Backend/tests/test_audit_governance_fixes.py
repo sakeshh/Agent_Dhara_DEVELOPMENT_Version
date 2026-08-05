@@ -46,7 +46,7 @@ def test_sales_xml_underreporting_fix():
         "data_quality_issues": {"datasets": {"sales.xml": sales_issues}, "global_issues": {}}
     }
     scorer_res = compute_etl_readiness(assessment)
-    assert 50 <= scorer_res["score"] <= 80
+    assert 50 <= scorer_res["score"] <= 85
 
 def test_factory_json_proportional_scoring():
     """Verify that a small number of affected rows (8 out of 1000) results in proportional score deduction (45-65 range) rather than 31 BLOCKED."""

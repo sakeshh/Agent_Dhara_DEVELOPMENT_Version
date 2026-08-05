@@ -58,3 +58,26 @@ class ConnectorConfigError(Exception):
     """Raised when a connector is referenced but credentials are missing."""
     pass
 
+
+class GeneratedCodeIncompleteError(Exception):
+    """Exception raised when generated code has incomplete transform functions."""
+    def __init__(self, code: str, missing_functions: list[str]):
+        self.code = code
+        self.missing_functions = missing_functions
+        super().__init__(f"Generated code is missing transform functions: {missing_functions}")
+
+
+class MechanicalRepairViolation(Exception):
+    """Raised when a post-processor/fixup removes transform functions or markers."""
+    def __init__(self, message: str, fixup_name: str):
+        super().__init__(message)
+        self.fixup_name = fixup_name
+
+    def to_dict(self) -> dict:
+        return {
+            "error": "MECHANICAL_REPAIR_VIOLATION",
+            "fixup_name": self.fixup_name,
+            "message": str(self),
+        }
+
+

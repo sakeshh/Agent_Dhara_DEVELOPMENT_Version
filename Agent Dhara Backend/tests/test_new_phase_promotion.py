@@ -7,7 +7,7 @@ import unittest
 from typing import Any, Dict
 
 from agent.etl_pipeline.action_registry import ACTION_REGISTRY, is_phase1_action, is_phase2_action
-from agent.etl_pipeline.manual_review_catalog import RESOLUTION_TO_ACTION_MAP, action_for_resolution
+from agent.etl_pipeline.manual_review_catalog import RESOLUTION_TO_ACTION_MAP, action_for_resolution, LEGACY_AMBIGUOUS_RESOLUTIONS
 from agent.etl_pipeline.manual_review_promote import apply_manual_resolutions
 from agent.etl_pipeline.issue_registry import canonicalize_issue_type, ISSUE_REGISTRY
 
@@ -35,12 +35,16 @@ class TestNewPhasePromotion(unittest.TestCase):
         self.assertEqual(RESOLUTION_TO_ACTION_MAP["deduplicate_insensitive_values"], "create_normalized_match_key")
         
         # Null options
-        self.assertEqual(RESOLUTION_TO_ACTION_MAP["fill_nulls"], "fill_nulls_simple")
-        self.assertEqual(RESOLUTION_TO_ACTION_MAP["fill_nulls_simple"], "fill_nulls_simple")
+        self.assertEqual(RESOLUTION_TO_ACTION_MAP["preserve_and_flag"], "preserve_null_and_flag")
+        self.assertEqual(RESOLUTION_TO_ACTION_MAP["fill_constant"], "fill_null_with_constant")
         
         # Outliers
-        self.assertEqual(RESOLUTION_TO_ACTION_MAP["flag"], "clip_or_flag")
         self.assertEqual(RESOLUTION_TO_ACTION_MAP["flag_outliers"], "flag_outliers")
+        
+        # Verify legacy ambiguous set
+        self.assertIn("fill_nulls", LEGACY_AMBIGUOUS_RESOLUTIONS)
+        self.assertIn("fill_nulls_simple", LEGACY_AMBIGUOUS_RESOLUTIONS)
+        self.assertIn("clip_or_flag", LEGACY_AMBIGUOUS_RESOLUTIONS)
         
         # All actions in the map should exist in the ACTION_REGISTRY
         for res_id, act in RESOLUTION_TO_ACTION_MAP.items():
@@ -65,7 +69,7 @@ class TestNewPhasePromotion(unittest.TestCase):
             ]
         }
         resolutions = [
-            {"item_id": "item1", "resolution_id": "fill_nulls"}
+            {"item_id": "item1", "resolution_id": "preserve_and_flag"}
         ]
         
         updated, errors = apply_manual_resolutions(plan, resolutions)

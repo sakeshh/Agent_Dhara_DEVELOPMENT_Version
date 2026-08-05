@@ -86,7 +86,7 @@ def test_non_fixable_promotions():
     # Check step added
     steps = updated["datasets"]["ds1"]["steps"]
     assert len(steps) == 1
-    assert steps[0]["action"] == "validate_referential_integrity_or_stage"
+    assert steps[0]["action"] == "validate_and_partition_relationship"
     
     # Check blocked added
     assert len(updated["blocked"]) == 1
@@ -275,7 +275,7 @@ def test_manual_review_resolution_rebuild():
     item_id = manual_review[0]["id"]
     
     # Apply resolutions - should rebuild and apply successfully
-    resolutions = [{"item_id": item_id, "resolution_id": "fill_nulls"}]
+    resolutions = [{"item_id": item_id, "resolution_id": "preserve_and_flag"}]
     applied_res = etl_apply_manual_resolutions(sid, resolutions)
     
     assert applied_res["ok"] is True

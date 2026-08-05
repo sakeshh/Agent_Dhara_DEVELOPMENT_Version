@@ -82,7 +82,17 @@ def tag_plan_step_buckets(plan: Dict[str, Any], business_rules: Dict[str, Any]) 
             )
             if user_approved:
                 st["bucket"] = "auto"
-                st["phase"] = st.get("phase") or "cleanse"
+                st["classification"] = "auto"
+                # Determine phase from current action, falling back to cleanse
+                res = classify_step_bucket(
+                    str(st.get("action") or ""),
+                    severity=str(st.get("severity") or "medium"),
+                    never_drop_rows=never_drop,
+                )
+                phase_val = res["phase"]
+                if phase_val == "invalid":
+                    phase_val = "cleanse"
+                st["phase"] = phase_val
                 continue
 
             sev = str(st.get("severity") or "medium")
@@ -94,4 +104,5 @@ def tag_plan_step_buckets(plan: Dict[str, Any], business_rules: Dict[str, Any]) 
             )
             st["bucket"] = res["bucket"]
             st["phase"] = res["phase"]
+            st["classification"] = res["bucket"]
     return plan

@@ -148,16 +148,16 @@ class TestRemediationAndMetricsFixes(unittest.TestCase):
         self.assertIn("invalid_key_rows = df[df['factory_id'].isna()]", recs[1]["example_pandas"])
         self.assertIn("quarantine_df = df.filter(df['factory_id'].isNull())", recs[1]["example_pyspark"])
 
-        # Check negative quantity handling: must not clip to zero, sets to NaN/validation status
+        # Check negative quantity handling: must not clip to zero, quarantines negatives
         neg_rec = next(r for r in recs if r["column"] == "production_qty")
-        self.assertIn("qty.where(qty >= 0)", neg_rec["example_pandas"])
+        self.assertIn("quarantine_df = df[df['production_qty'] < 0]", neg_rec["example_pandas"])
         self.assertNotIn("clip(lower=0)", neg_rec["example_pandas"])
-        self.assertIn("F.when(df['production_qty'] >= 0, 'valid')", neg_rec["example_pyspark"])
+        self.assertIn("quarantine_df = df.filter(F.col('production_qty') < 0)", neg_rec["example_pyspark"])
 
         # Check trim string conversion preserves nulls
         ws_rec = next(r for r in recs if r["column"] == "machine_name")
         self.assertIn("astype('string').str.strip()", ws_rec["example_pandas"])
-        self.assertIn("F.trim(df['machine_name'])", ws_rec["example_pyspark"])
+        self.assertIn("F.trim(F.col('machine_name')", ws_rec["example_pyspark"])
 
         # Check that auto_fixable is disabled on fallback exceptions
         self.assertFalse(recs[0]["auto_fixable"])

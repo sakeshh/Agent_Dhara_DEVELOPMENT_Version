@@ -193,6 +193,91 @@ class TestDomainViolationFlagging:
         assert ".cast('long')" not in code or "region" not in code
 
 
+class TestPhase1FallbackActions:
+    def test_normalize_registered_placeholder_emits_nulling_logic(self):
+        from agent.etl_pipeline.pyspark_codegen import generate_pyspark_etl
+        from agent.etl_pipeline.validate_pyspark import validate_pyspark_source
+
+        plan = _make_plan({
+            "sales.xml": [
+                {"order": 1, "column": "customer", "action": "normalize_registered_placeholder", "params": {}},
+            ]
+        })
+        code = generate_pyspark_etl(plan, {})
+        assert "normalize_registered_placeholder" in code or "placeholder" in code.lower()
+        assert "Unsupported in pyspark template v1" not in code
+        assert "lit(None)" in code
+        ok, errs = validate_pyspark_source(code, plan)
+        assert ok, errs
+
+    def test_flag_cross_field_violation_emits_flag_column(self):
+        from agent.etl_pipeline.pyspark_codegen import generate_pyspark_etl
+        from agent.etl_pipeline.validate_pyspark import validate_pyspark_source
+
+        plan = _make_plan({
+            "sales.xml": [
+                {"order": 1, "column": "amount", "action": "flag_cross_field_violation", "params": {}},
+            ]
+        })
+        code = generate_pyspark_etl(plan, {})
+        assert "flag_cross_field_violation" in code or "cross_field" in code.lower() or "is_negative_amount" in code
+        assert "Unsupported in pyspark template v1" not in code
+        ok, errs = validate_pyspark_source(code, plan)
+        assert ok, errs
+
+    def test_flag_business_key_duplicate_emits_flag_column(self):
+        from agent.etl_pipeline.pyspark_codegen import generate_pyspark_etl
+        from agent.etl_pipeline.validate_pyspark import validate_pyspark_source
+
+        plan = _make_plan({
+            "sales.xml": [
+                {"order": 1, "column": "campaign_id", "action": "flag_business_key_duplicate", "params": {}},
+            ]
+        })
+        code = generate_pyspark_etl(plan, {})
+        assert "is_duplicate_campaign_id" in code
+        assert "Unsupported in pyspark template v1" not in code
+        ok, errs = validate_pyspark_source(code, plan)
+        assert ok, errs
+
+    def test_flag_near_duplicate_cluster_emits_flag_column(self):
+        from agent.etl_pipeline.pyspark_codegen import generate_pyspark_etl
+        from agent.etl_pipeline.validate_pyspark import validate_pyspark_source
+
+        plan = _make_plan({
+            "sales.xml": [
+                {"order": 1, "column": "customer_name", "action": "flag_near_duplicate_cluster", "params": {}},
+            ]
+        })
+        code = generate_pyspark_etl(plan, {})
+        assert "is_duplicate_customer_name" in code
+        assert "Unsupported in pyspark template v1" not in code
+        ok, errs = validate_pyspark_source(code, plan)
+        assert ok, errs
+
+
+class TestPostProcessingPlanEnforcement:
+    def test_enforce_plan_steps_restores_placeholder_and_cross_field_logic(self):
+        from agent.etl_pipeline.llm_codegen import _enforce_plan_steps_in_code
+
+        plan = _make_plan({
+            "sales.xml": [
+                {"order": 1, "column": "customer", "action": "normalize_registered_placeholder", "params": {}},
+                {"order": 2, "column": "amount", "action": "flag_cross_field_violation", "params": {}},
+            ]
+        })
+        code = """
+def transform_sales_xml(df):
+    return df
+"""
+
+        updated = _enforce_plan_steps_in_code(code, plan)
+        assert "is_placeholder_customer" in updated
+        assert "lit(None)" in updated
+        assert "cross_field_violation" in updated.lower() or "is_negative_amount" in updated
+        assert "Unsupported in pyspark template v1" not in updated
+
+
 class TestPythonCodegenSafeActions:
     def test_parse_dates_safe_emits_invalid_flag(self):
         from agent.etl_pipeline.python_codegen import generate_python_etl
@@ -629,5 +714,194 @@ class TestPySparkProductionSafety:
         assert any("must not be filtered using string rlike" in e and "budget" in e for e in errs)
 
 
+class TestSafeGenerationContract:
+    def test_generated_pyspark_code_is_guarded_from_import_execution(self):
+        from agent.etl_pipeline.pyspark_codegen import generate_pyspark_etl
+
+        plan = _make_plan({
+            "sales.xml": [
+                {"order": 1, "column": "amount", "action": "cast_type", "params": {"target_type": "double"}},
+            ]
+        })
+        plan["connector_manifest"] = {"datasets": {"sales.xml": {"source_type": "fabric_files_zone", "clean_table_name": "sales_clean"}}}
+        plan["execution_target"] = "fabric"
+
+        code = generate_pyspark_etl(plan, {})
+        assert "if __name__ == '__main__':" in code
+        assert "_dfs, _paths = run_pipeline(spark)" in code
+        assert code.index("if __name__ == '__main__':") < code.index("_dfs, _paths = run_pipeline(spark)")
+
+    def test_generated_pyspark_code_uses_staging_tables_for_fabric_writes(self):
+        from agent.etl_pipeline.pyspark_codegen import generate_pyspark_etl
+
+        plan = _make_plan({
+            "sales.xml": [
+                {"order": 1, "column": "amount", "action": "cast_type", "params": {"target_type": "double"}},
+            ]
+        })
+        plan["connector_manifest"] = {"datasets": {"sales.xml": {"source_type": "fabric_files_zone", "clean_table_name": "sales_clean"}}}
+        plan["execution_target"] = "fabric"
+
+        code = generate_pyspark_etl(plan, {})
+        assert 'sales_clean_staging' in code
+        assert '.saveAsTable("sales_clean_staging")' in code
+
+    def test_generated_pyspark_code_creates_companion_columns_for_numeric_casts(self):
+        from agent.etl_pipeline.pyspark_codegen import generate_pyspark_etl
+
+        plan = _make_plan({
+            "sales.xml": [
+                {"order": 1, "column": "amount", "action": "cast_type", "params": {"target_type": "double"}},
+            ]
+        })
+        code = generate_pyspark_etl(plan, {})
+        assert "withColumn('amount_clean'" in code or 'withColumn("amount_clean"' in code
 
 
+class TestRemoveRunPipelineCode:
+    def test_function_order_permutations(self):
+        """Verify _remove_run_pipeline_code handles run_pipeline in different locations."""
+        from agent.etl_pipeline.llm_codegen import _remove_run_pipeline_code
+
+        # Case 1: run_pipeline before transform functions
+        code1 = """
+def run_pipeline(spark):
+    df1 = transform_sales_relational_test_xml(spark)
+    return df1
+
+def transform_sales_relational_test_xml(df):
+    return df
+
+def transform_marketing_relational_test_csv(df):
+    return df
+"""
+        res1 = _remove_run_pipeline_code(code1)
+        assert "transform_sales_relational_test_xml" in res1
+        assert "transform_marketing_relational_test_csv" in res1
+        assert "def run_pipeline" not in res1
+
+        # Case 2: run_pipeline between transform functions
+        code2 = """
+def transform_sales_relational_test_xml(df):
+    return df
+
+def run_pipeline(spark):
+    df1 = transform_sales_relational_test_xml(spark)
+    return df1
+
+def transform_marketing_relational_test_csv(df):
+    return df
+"""
+        res2 = _remove_run_pipeline_code(code2)
+        assert "transform_sales_relational_test_xml" in res2
+        assert "transform_marketing_relational_test_csv" in res2
+        assert "def run_pipeline" not in res2
+
+        # Case 3: run_pipeline after all transform functions
+        code3 = """
+def transform_sales_relational_test_xml(df):
+    return df
+
+def transform_marketing_relational_test_csv(df):
+    return df
+
+def run_pipeline(spark):
+    df1 = transform_sales_relational_test_xml(spark)
+    return df1
+"""
+        res3 = _remove_run_pipeline_code(code3)
+        assert "transform_sales_relational_test_xml" in res3
+        assert "transform_marketing_relational_test_csv" in res3
+        assert "def run_pipeline" not in res3
+
+        # Case 4: run_pipeline inside a Spark session initialization block
+        code4 = """
+def transform_sales_relational_test_xml(df):
+    return df
+
+try:
+    spark = SparkSession.builder.getOrCreate()
+    run_pipeline(spark)
+except Exception:
+    pass
+
+def transform_marketing_relational_test_csv(df):
+    return df
+"""
+        res4 = _remove_run_pipeline_code(code4)
+        assert "transform_sales_relational_test_xml" in res4
+        assert "transform_marketing_relational_test_csv" in res4
+        assert "run_pipeline(spark)" not in res4
+        assert "SparkSession" not in res4
+
+        # Case 5: bare run_pipeline() call before helper definitions
+        code5 = """
+run_pipeline(spark)
+
+def transform_sales_relational_test_xml(df):
+    return df
+"""
+        res5 = _remove_run_pipeline_code(code5)
+        assert "transform_sales_relational_test_xml" in res5
+        assert "run_pipeline" not in res5
+
+        # Case 6: with no run_pipeline definition
+        code6 = """
+def transform_sales_relational_test_xml(df):
+    return df
+"""
+        res6 = _remove_run_pipeline_code(code6)
+        assert "transform_sales_relational_test_xml" in res6
+
+        # Case 7: syntax error (forces line-scanner fallback)
+        code7 = """
+def transform_sales_relational_test_xml(df):
+    return df {syntax error here}
+
+def run_pipeline(spark):
+    df1 = transform_sales_relational_test_xml(spark)
+    return df1
+
+def transform_marketing_relational_test_csv(df):
+    return df
+"""
+        res7 = _remove_run_pipeline_code(code7)
+        assert "transform_sales_relational_test_xml" in res7
+        assert "transform_marketing_relational_test_csv" in res7
+        assert "def run_pipeline" not in res7
+
+    def test_idempotence(self):
+        """Verify _remove_run_pipeline_code is idempotent."""
+        from agent.etl_pipeline.llm_codegen import _remove_run_pipeline_code
+        code = """
+def transform_sales_relational_test_xml(df):
+    return df
+
+def run_pipeline(spark):
+    return transform_sales_relational_test_xml(spark)
+"""
+        cleaned_once = _remove_run_pipeline_code(code)
+        cleaned_twice = _remove_run_pipeline_code(cleaned_once)
+        assert cleaned_once == cleaned_twice
+
+    def test_no_accidental_name_matching(self):
+        """Ensure it does not remove similarly named functions or helpers."""
+        from agent.etl_pipeline.llm_codegen import _remove_run_pipeline_code
+        code = """
+def run_pipeline_validation(x):
+    return x
+
+def _run_pipeline_helper(y):
+    return y
+
+def run_pipeline_config(z):
+    return z
+
+def run_pipeline(spark):
+    return spark
+"""
+        res = _remove_run_pipeline_code(code)
+        assert "run_pipeline_validation" in res
+        assert "_run_pipeline_helper" in res
+        assert "run_pipeline_config" in res
+        assert "def run_pipeline(" not in res

@@ -344,6 +344,8 @@ def _emit_spark(
         target_type = params.get("target_type") or params.get("cast_to") or "long"
         is_key = any(k in str(col).lower() for k in ("id", "key", "code", "ref"))
         is_int_target = any(it in str(target_type).lower() for it in ("long", "int", "integer"))
+        clean_col = f"{col}_clean"
+        raw_col = f"{col}_raw"
         # GOVERNANCE: Categorical text columns (region, channel, location, status) must NEVER be
         # cast to integer types. Casting 'NY' -> long produces NULL silently, destroying valid data.
         if is_int_target and _is_categorical_col(col or ""):
@@ -352,13 +354,16 @@ def _emit_spark(
                 f"# GOVERNANCE: '{col}' is a categorical text column -- refusing cast to '{target_type}'.",
                 f"# Casting 'NY', 'Mumbai', 'Online' to integer would silently null all text values.",
                 f"# Emitting a domain-flag column to identify rows where numeric-only strings exist.",
+                f"{df} = {df}.withColumn({repr(raw_col)}, F.col({c}).cast('string'))",
+                f"{df} = {df}.withColumn({repr(clean_col)}, F.col({repr(raw_col)}))",
                 f"{df} = {df}.withColumn({flag_col},"
-                f" F.col({c}).cast('string').rlike(r'^\\d+$') & F.col({c}).isNotNull())",
+                f" F.col({repr(raw_col)}).rlike(r'^\\d+$') & F.col({repr(raw_col)}).isNotNull())",
             ]
         if is_key and is_int_target:
             return [
-                f"{df} = {df}.withColumn({c}, "
-                f"F.when(F.col({c}).cast('string').rlike(r'^\\d+$'), F.col({c}).cast({repr(target_type)}))"
+                f"{df} = {df}.withColumn({repr(raw_col)}, F.col({c}).cast('string'))",
+                f"{df} = {df}.withColumn({repr(clean_col)}, "
+                f"F.when(F.col({repr(raw_col)}).rlike(r'^\\d+$'), F.col({repr(raw_col)}).cast({repr(target_type)}))"
                 f".otherwise(F.lit(None).cast({repr(target_type)})))"
             ]
         # IMPROVEMENT-2 (ANSI-safe): use try_cast via a temp column.
@@ -368,72 +373,83 @@ def _emit_spark(
         if is_int_target:
             if is_key:
                 return [
-                    f"{df} = {df}.withColumn({c}, "
-                    f"F.when(F.col({c}).cast('string').rlike(r'^\\d+$'), F.col({c}).cast({repr(target_type)}))"
+                    f"{df} = {df}.withColumn({repr(raw_col)}, F.col({c}).cast('string'))",
+                    f"{df} = {df}.withColumn({repr(clean_col)}, "
+                    f"F.when(F.col({repr(raw_col)}).rlike(r'^\\d+$'), F.col({repr(raw_col)}).cast({repr(target_type)}))"
                     f".otherwise(F.lit(None).cast({repr(target_type)})))"
                 ]
-            res = [f"{df} = {df}.withColumn({c}, F.col({c}).cast({repr(target_type)}))"]
+            res = [
+                f"{df} = {df}.withColumn({repr(raw_col)}, F.col({c}).cast('string'))",
+                f"{df} = {df}.withColumn({repr(clean_col)}, F.col({repr(raw_col)}).cast({repr(target_type)}))",
+            ]
             if any(m in str(col).lower() for m in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val")):
                 col_safe = _safe(col or "col")
                 neg_flag = repr(f"is_negative_{col_safe}")
-                res.append(f"{df} = {df}.withColumn({neg_flag}, (F.col({c}).isNotNull() & (F.col({c}) < 0)).cast('boolean'))")
+                res.append(f"{df} = {df}.withColumn({neg_flag}, (F.col({repr(clean_col)}).isNotNull() & (F.col({repr(clean_col)}) < 0)).cast('boolean'))")
             return res
         
         # For non-integer targets (e.g. double, string):
-        res = [f"{df} = {df}.withColumn({c}, F.col({c}).cast({repr(target_type)}))"]
+        res = [
+            f"{df} = {df}.withColumn({repr(raw_col)}, F.col({c}).cast('string'))",
+            f"{df} = {df}.withColumn({repr(clean_col)}, F.col({repr(raw_col)}).cast({repr(target_type)}))",
+        ]
         if any(m in str(col).lower() for m in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val")):
             col_safe = _safe(col or "col")
             neg_flag = repr(f"is_negative_{col_safe}")
-            res.append(f"{df} = {df}.withColumn({neg_flag}, (F.col({c}).isNotNull() & (F.col({c}) < 0)).cast('boolean'))")
+            res.append(f"{df} = {df}.withColumn({neg_flag}, (F.col({repr(clean_col)}).isNotNull() & (F.col({repr(clean_col)}) < 0)).cast('boolean'))")
         return res
 
     if act == "parse_dates":
         # Portable date parsing (native PySpark -- no SQL expression or try_cast dependency)
         col_safe = _safe(col or "date")
         flag_col = repr(f"is_invalid_{col_safe}")
+        raw_col = f"{col}_raw"
+        clean_col = f"{col}_clean"
         tmp_col = f"_tmp_{col_safe}"
         bad_sentinel_list = repr(["00/00/0000", "00-00-0000", "0000-00-00",
                                   "99/99/9999", "99-99-9999", "9999-99-99",
                                   "invalid", "tbd", "not available", "n/a", "na"])
         return [
             f"# Portable date parsing (native PySpark functions -- 100% version compatible)",
-            f"_date_str = F.lower(F.col({c}).cast('string'))",
-            f"_is_bad_sentinel = _date_str.isin({bad_sentinel_list})",
-            f"_is_date_pattern = F.col({c}).cast('string').rlike(r'^\\d{{1,4}}[-/\\.\\s]\\d{{1,2}}[-/\\.\\s]\\d{{1,4}}')",
+            f"{df} = {df}.withColumn({repr(raw_col)}, F.lower(F.col({c}).cast('string')))",
+            f"_is_bad_sentinel = F.col({repr(raw_col)}).isin({bad_sentinel_list})",
+            f"_is_date_pattern = F.col({repr(raw_col)}).rlike(r'^\\d{{1,4}}[-/\\.\\s]\\d{{1,2}}[-/\\.\\s]\\d{{1,4}}')",
             f"# Pre-filter sentinel/non-date strings before timestamp conversion for safety",
-            f"{df} = {df}.withColumn({repr(tmp_col)}, F.to_timestamp(F.when(~_is_bad_sentinel & _is_date_pattern, F.col({c})).otherwise(F.lit(None))))",
+            f"{df} = {df}.withColumn({repr(tmp_col)}, F.to_timestamp(F.when(~_is_bad_sentinel & _is_date_pattern, F.col({repr(raw_col)})).otherwise(F.lit(None))))",
             f"{df} = {df}.withColumn(",
             f"    {flag_col},",
-            f"    F.when(F.col({c}).isNull(), F.lit(False))",
+            f"    F.when(F.col({repr(raw_col)}).isNull(), F.lit(False))",
             f"    .when(_is_bad_sentinel, F.lit(True))",
-            f"    .when(F.col({repr(tmp_col)}).isNull() & F.col({c}).isNotNull(), F.lit(True))",
+            f"    .when(F.col({repr(tmp_col)}).isNull() & F.col({repr(raw_col)}).isNotNull(), F.lit(True))",
             f"    .otherwise(F.lit(False)).cast('boolean')",
             f")",
-            f"{df} = {df}.withColumn({c}, F.col({repr(tmp_col)}))",
+            f"{df} = {df}.withColumn({repr(clean_col)}, F.col({repr(tmp_col)}))",
             f"{df} = {df}.drop({repr(tmp_col)})",
         ]
     if act == "parse_dates_safe":
         # Same portable date parsing pattern for parse_dates_safe.
         col_safe = _safe(col or "date")
         flag_col = repr(f"is_invalid_{col_safe}")
+        raw_col = f"{col}_raw"
+        clean_col = f"{col}_clean"
         tmp_col = f"_tmp_{col_safe}"
         bad_sentinel_list = repr(["00/00/0000", "00-00-0000", "0000-00-00",
                                   "99/99/9999", "99-99-9999", "9999-99-99",
                                   "invalid", "tbd", "not available", "n/a", "na"])
         return [
             f"# parse_dates_safe (native PySpark functions -- 100% version compatible)",
-            f"_date_str = F.lower(F.col({c}).cast('string'))",
-            f"_is_bad_sentinel = _date_str.isin({bad_sentinel_list})",
-            f"_is_date_pattern = F.col({c}).cast('string').rlike(r'^\\d{{1,4}}[-/\\.\\s]\\d{{1,2}}[-/\\.\\s]\\d{{1,4}}')",
-            f"{df} = {df}.withColumn({repr(tmp_col)}, F.to_timestamp(F.when(~_is_bad_sentinel & _is_date_pattern, F.col({c})).otherwise(F.lit(None))))",
+            f"{df} = {df}.withColumn({repr(raw_col)}, F.lower(F.col({c}).cast('string')))",
+            f"_is_bad_sentinel = F.col({repr(raw_col)}).isin({bad_sentinel_list})",
+            f"_is_date_pattern = F.col({repr(raw_col)}).rlike(r'^\\d{{1,4}}[-/\\.\\s]\\d{{1,2}}[-/\\.\\s]\\d{{1,4}}')",
+            f"{df} = {df}.withColumn({repr(tmp_col)}, F.to_timestamp(F.when(~_is_bad_sentinel & _is_date_pattern, F.col({repr(raw_col)})).otherwise(F.lit(None))))",
             f"{df} = {df}.withColumn(",
             f"    {flag_col},",
-            f"    F.when(F.col({c}).isNull(), F.lit(False))",
+            f"    F.when(F.col({repr(raw_col)}).isNull(), F.lit(False))",
             f"    .when(_is_bad_sentinel, F.lit(True))",
-            f"    .when(F.col({repr(tmp_col)}).isNull() & F.col({c}).isNotNull(), F.lit(True))",
+            f"    .when(F.col({repr(tmp_col)}).isNull() & F.col({repr(raw_col)}).isNotNull(), F.lit(True))",
             f"    .otherwise(F.lit(False)).cast('boolean')",
             f")",
-            f"{df} = {df}.withColumn({c}, F.col({repr(tmp_col)}))",
+            f"{df} = {df}.withColumn({repr(clean_col)}, F.col({repr(tmp_col)}))",
             f"{df} = {df}.drop({repr(tmp_col)})",
             f"_bad_date_cnt = {df}.filter(F.col({flag_col})).count()",
             f"logger.warning('parse_dates_safe: %d invalid/sentinel date values flagged in column {col}', _bad_date_cnt)",
@@ -584,9 +600,46 @@ def _emit_spark(
             f"# Governance: Trimming whitespace from name/identifier '{col}' while preserving case.",
             f'{df} = {df}.withColumn({c}, F.trim(F.col({c}).cast("string")))'
         ]
-    if act in ("flag_duplicate_candidates", "flag_near_duplicate_cluster", "flag_business_key_duplicate"):
-        # Sanitize col through _safe() — pseudo-column markers like '[Row-level]' contain
-        # brackets that are illegal in Spark column names and cause AnalysisException.
+    if act == "flag_duplicate_candidates":
+        from agent.etl_pipeline.manual_review_promote import make_step_id
+        import copy
+        st_copy = copy.deepcopy(step_meta or {})
+        st_copy["dataset"] = ds_name
+        step_id, _ = make_step_id(st_copy)
+        return [
+            f"# DHARA_STEP: {step_id}",
+            f"# DHARA_ACTION: flag_duplicate_candidates",
+            f"{df} = _flag_source_duplicates({df})"
+        ]
+    if act == "flag_business_key_duplicate":
+        from agent.etl_pipeline.manual_review_promote import make_step_id
+        import copy
+        st_copy = copy.deepcopy(step_meta or {})
+        st_copy["dataset"] = ds_name
+        step_id, _ = make_step_id(st_copy)
+        
+        # Extract keys
+        keys = []
+        if plan:
+            keys = list(plan.get("business_keys", {}).get(ds_name) or [])
+        if col and str(col).lower() not in ("row-level", "[row-level]"):
+            step_cols = [c.strip() for c in str(col).split(",") if c.strip()]
+            keys.extend(step_cols)
+        expected_keys = []
+        for k in keys:
+            if k not in expected_keys:
+                expected_keys.append(k)
+        key_cols_str = ", ".join(repr(k) for k in expected_keys)
+        
+        return [
+            f"# DHARA_STEP: {step_id}",
+            f"# DHARA_ACTION: flag_business_key_duplicate",
+            f"from pyspark.sql import Window",
+            f"_key_window = Window.partitionBy({key_cols_str})",
+            f"{df} = {df}.withColumn('business_key_group_size', F.count(F.lit(1)).over(_key_window))",
+            f"{df} = {df}.withColumn('is_business_key_duplicate', (F.col('business_key_group_size') > 1).cast('boolean'))",
+        ]
+    if act == "flag_near_duplicate_cluster":
         col_safe = _safe(col or "row")
         flag_col = repr(f"is_duplicate_{col_safe}")
         return [
@@ -700,6 +753,30 @@ def _emit_spark(
         return [
             f"# Normalized match-key for '{col}': trim + lowercase for fuzzy/join matching.",
             f"{df} = {df}.withColumn({repr(output_col_safe)}, F.trim(F.lower(F.col({c}).cast('string'))))",
+        ]
+    if act == "normalize_registered_placeholder":
+        col_safe = _safe(col or "col")
+        placeholder_values = params.get("placeholder_values") or ["NA", "N/A", "NULL", "null", "None", "none", "?", "-", "-1", "Unknown", "unknown", "<null>"]
+        placeholder_values = [str(v) for v in placeholder_values if v is not None]
+        placeholder_expr = f"F.col({c}).cast('string').isin({placeholder_values!r}) & F.col({c}).isNotNull()"
+        flag_col = repr(f"is_placeholder_{col_safe}")
+        return [
+            f"# Normalize registered placeholders for '{col}' to NULL for governance/auditability.",
+            f"{df} = {df}.withColumn({flag_col}, {placeholder_expr})",
+            f"{df} = {df}.withColumn({c}, F.when({placeholder_expr}, F.lit(None)).otherwise(F.col({c})))",
+        ]
+    if act == "flag_cross_field_violation":
+        col_safe = _safe(col or "col")
+        comparison_col = params.get("comparison_column") or params.get("related_column") or params.get("other_column")
+        flag_col = repr(f"{col_safe}_cross_field_violation")
+        if comparison_col:
+            return [
+                f"# Cross-field violation: flag rows where '{col}' violates the rule against '{comparison_col}'.",
+                f"{df} = {df}.withColumn({flag_col}, F.col({c}).cast('double') < F.col({repr(comparison_col)}).cast('double'))",
+            ]
+        return [
+            f"# Cross-field violation: flag rows where numeric '{col}' is negative (Phase 1 safeguard).",
+            f"{df} = {df}.withColumn({flag_col}, F.col({c}).cast('double') < F.lit(0))",
         ]
     return [f"# Unsupported in pyspark template v1: {act} on {col}"]
 
@@ -999,20 +1076,22 @@ def generate_pyspark_etl(plan: Dict[str, Any], assessment: Dict[str, Any]) -> st
         lines.append("    return dfs, OUTPUT_PATHS")
         lines.append("")
         lines.append("# Fabric notebooks pre-inject 'spark'; fall back to creating one for local dev.")
-        lines.append("try:")
-        lines.append("    spark  # type: ignore[name-defined]")
-        lines.append("except NameError:")
-        lines.append("    from pyspark.sql import SparkSession")
-        lines.append('    spark = SparkSession.builder.appName("AgentDharaETL").getOrCreate()')
-        lines.append("_dfs, _paths = run_pipeline(spark)")
+        lines.append("if __name__ == '__main__':")
+        lines.append("    try:")
+        lines.append("        spark  # type: ignore[name-defined]")
+        lines.append("    except NameError:")
+        lines.append("        from pyspark.sql import SparkSession")
+        lines.append('        spark = SparkSession.builder.appName("AgentDharaETL").getOrCreate()')
+        lines.append("    _dfs, _paths = run_pipeline(spark)")
     else:
         lines.append("# Fabric notebooks pre-inject 'spark'; fall back to creating one for local dev.")
-        lines.append("try:")
-        lines.append("    spark  # type: ignore[name-defined]")
-        lines.append("except NameError:")
-        lines.append("    from pyspark.sql import SparkSession")
-        lines.append('    spark = SparkSession.builder.appName("AgentDharaETL").getOrCreate()')
-        lines.append("logger.info('Empty pipeline executed successfully')")
+        lines.append("if __name__ == '__main__':")
+        lines.append("    try:")
+        lines.append("        spark  # type: ignore[name-defined]")
+        lines.append("    except NameError:")
+        lines.append("        from pyspark.sql import SparkSession")
+        lines.append('        spark = SparkSession.builder.appName("AgentDharaETL").getOrCreate()')
+        lines.append("    logger.info('Empty pipeline executed successfully')")
 
     code = "\n".join(lines)
     # Always unescape HTML entities -- LLM responses or Jinja templating can

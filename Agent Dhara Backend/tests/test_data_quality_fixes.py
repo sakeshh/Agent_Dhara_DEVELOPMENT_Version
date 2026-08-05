@@ -77,7 +77,7 @@ def test_suggestion_mappings():
         "datasets": {
             "test_ds": {
                 "columns": {
-                    "col1_id": {"semantic_type": "numeric_id"},
+                    "col1_qty": {"semantic_type": "numeric"},
                     "col2": {"semantic_type": "name"}
                 }
             }
@@ -86,7 +86,7 @@ def test_suggestion_mappings():
             "datasets": {
                 "test_ds": {
                     "issues": [
-                        {"type": "mixed_scalar_types", "column": "col1_id", "severity": "medium", "count": 10},
+                        {"type": "mixed_scalar_types", "column": "col1_qty", "severity": "medium", "count": 10},
                         {"type": "name_format_inconsistency", "column": "col2", "severity": "medium", "count": 5}
                     ]
                 }

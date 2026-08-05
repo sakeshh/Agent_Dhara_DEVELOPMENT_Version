@@ -82,7 +82,7 @@ from agent.etl_pipeline.llm_codegen import (
     parse_adf_json_from_llm,
 )
 from agent.etl_pipeline.schema_lineage import build_lineage
-from agent.etl_pipeline.validate_plan import validate_etl_plan, validate_etl_plan_for_confirm
+from agent.etl_pipeline.validate_plan import validate_etl_plan, validate_etl_plan_for_confirm, validate_promoted_plan, PlanValidationIssue
 from agent.etl_pipeline.validate_python import validate_etl_python_source, validate_python_source
 from agent.etl_pipeline.validate_pyspark import validate_pyspark_source
 from agent.etl_pipeline.source_context import build_source_context
@@ -793,6 +793,24 @@ def etl_apply_manual_resolutions(
     """Apply user picks for manual_review items; promotes steps into plan.datasets."""
     sid = (session_id or "default").strip() or "default"
     sess = load_session(sid)
+    
+    # ── Concurrency Check ──
+    from agent.session_store import _connect
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT version FROM sessions WHERE session_id = ?", (sid,)).fetchone()
+        db_version = row[0] if (row and row[0] is not None) else 1
+    finally:
+        conn.close()
+    
+    loaded_version = sess.get("_version")
+    if loaded_version is not None and db_version != loaded_version:
+        return {
+            "status": "PLAN_REVISION_CONFLICT",
+            "ok": False,
+            "message": "The plan has been modified by another process. Please refresh and try again."
+        }
+
     ctx = _ctx(sess)
     assess = _get_assessment(sess, None)
     flow = ctx.get("etl_flow") or {}
@@ -816,11 +834,28 @@ def etl_apply_manual_resolutions(
             res_map[iid] = r
     ctx["manual_review_resolutions"] = list(res_map.values())
     
-    # We also apply manual resolutions to the current rules in flow
-    rules = flow.get("business_rules") or plan.get("business_rules") or {}
-    updated, apply_errs = apply_manual_resolutions(plan, resolutions, business_rules=rules, assessment=assess)
+    # We apply manual resolutions to candidates to avoid altering original until validation passes
+    import copy
+    candidate_plan = copy.deepcopy(plan)
+    rules = copy.deepcopy(flow.get("business_rules") or plan.get("business_rules") or {})
+    
+    updated, apply_errs = apply_manual_resolutions(candidate_plan, resolutions, business_rules=rules, assessment=assess)
     if apply_errs:
         logger.warning(f"etl_apply_manual_resolutions: Errors applying resolutions: {apply_errs}")
+
+    # Validate candidate plan
+    valid, issues = validate_promoted_plan(updated, assess, rules)
+    if not valid:
+        return {
+            "status": "PROMOTION_REJECTED",
+            "ok": False,
+            "errors": [
+                f"{issue.message} (Column: '{issue.column}' in Dataset: '{issue.dataset_id or 'global'}')"
+                if issue.column else issue.message
+                for issue in issues
+            ],
+            "message": "Promotion rejected due to validation failures in candidate plan."
+        }
     
     if rules:
         flow["business_rules"] = rules
@@ -1517,17 +1552,29 @@ def etl_generate_code(
     ext = ext_map.get(eng, "py")
     fname = f"etl_{pid}_{eng}_v{version}_{ts}.{ext}"
 
-    abs_path = os.path.join(out_dir, fname)
-    with open(abs_path, "w", encoding="utf-8") as f:
-        f.write(combined_code)
-
-    rel = os.path.relpath(abs_path, root).replace("\\", "/")
+    import hashlib
+    saved_code_hash = hashlib.sha256(combined_code.encode("utf-8")).hexdigest()
+    logger.info(f"saved_code_hash: {saved_code_hash}")
 
     if ok:
+        abs_path = os.path.join(out_dir, fname)
+        with open(abs_path, "w", encoding="utf-8") as f:
+            f.write(combined_code)
+
+        # Read back once to verify
+        with open(abs_path, "r", encoding="utf-8") as f:
+            read_back_content = f.read()
+        persisted_hash = hashlib.sha256(read_back_content.encode("utf-8")).hexdigest()
+        logger.info(f"persisted file hash: {persisted_hash}")
+        assert persisted_hash == saved_code_hash, f"Persisted file hash mismatch! {persisted_hash} != {saved_code_hash}"
+
+        rel = os.path.relpath(abs_path, root).replace("\\", "/")
+
         _transition(flow, "validated", by="system", reason=f"validator_passed generated_by={generated_by}")
         _transition(flow, "code_ready", by="system", reason="artifact_written")
         sess["session_state"] = "generated"
     else:
+        rel = None
         rollback_on_failure(flow, reason=f"validation_failed: {(errs or ['unknown'])[:3]}", soft=True)
     latency_ms = (time.time() - t_gen) * 1000
     flow_update: Dict[str, Any] = {

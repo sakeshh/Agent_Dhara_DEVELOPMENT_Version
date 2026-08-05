@@ -666,6 +666,7 @@ export default function EtlGenerationPanel({
   ) => {
     setBusy(true);
     setErr(null);
+    setPlanValidationErrors([]);
     let bodyPlan: Record<string, unknown> | undefined = plan ?? undefined;
     if (planTab === 'json' && planJson) {
       try {
@@ -721,6 +722,7 @@ export default function EtlGenerationPanel({
     }
     setBusy(true);
     setErr(null);
+    setPlanValidationErrors([]);
     let bodyPlan: Record<string, unknown> | undefined = plan ?? undefined;
     if (planTab === 'json') {
       try {

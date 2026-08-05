@@ -5,9 +5,251 @@ from __future__ import annotations
 
 import ast
 import re
+import tokenize
+import io
+import logging
+from dataclasses import dataclass
 from typing import Any, Dict, List, Set, Tuple
 
 from agent.etl_pipeline.validate_python import validate_etl_python_source
+from agent.etl_pipeline.manual_review_promote import make_step_id
+
+
+@dataclass
+class ConformanceReport:
+    missing_steps: list[dict]
+    conforming_steps: list[dict]
+    errors: list[str]
+
+
+def inspect_plan_step_conformance(
+    code: str,
+    expected_steps: list[dict],
+    plan: dict | None = None,
+) -> ConformanceReport:
+    report = ConformanceReport(missing_steps=[], conforming_steps=[], errors=[])
+    
+    # 1. Parse AST to get statements and function names
+    try:
+        tree = ast.parse(code)
+    except Exception as e:
+        report.errors.append(f"AST parsing error: {e}")
+        report.missing_steps.extend(expected_steps)
+        return report
+
+    # Extract all executable statements and enclosing functions from AST
+    statements = []
+    
+    class ExecutableVisitor(ast.NodeVisitor):
+        def __init__(self):
+            self.current_function = None
+            
+        def visit_FunctionDef(self, node):
+            old_fn = self.current_function
+            self.current_function = node.name
+            self.generic_visit(node)
+            self.current_function = old_fn
+            
+        def visit_Assign(self, node):
+            statements.append({
+                "node": node,
+                "type": "Assign",
+                "start_line": node.lineno,
+                "end_line": getattr(node, "end_lineno", node.lineno),
+                "function": self.current_function,
+            })
+            self.generic_visit(node)
+            
+        def visit_Expr(self, node):
+            statements.append({
+                "node": node,
+                "type": "Expr",
+                "start_line": node.lineno,
+                "end_line": getattr(node, "end_lineno", node.lineno),
+                "function": self.current_function,
+            })
+            self.generic_visit(node)
+            
+        def visit_With(self, node):
+            statements.append({
+                "node": node,
+                "type": "With",
+                "start_line": node.lineno,
+                "end_line": getattr(node, "end_lineno", node.lineno),
+                "function": self.current_function,
+            })
+            self.generic_visit(node)
+            
+        def visit_For(self, node):
+            statements.append({
+                "node": node,
+                "type": "For",
+                "start_line": node.lineno,
+                "end_line": getattr(node, "end_lineno", node.lineno),
+                "function": self.current_function,
+            })
+            self.generic_visit(node)
+            
+        def visit_If(self, node):
+            statements.append({
+                "node": node,
+                "type": "If",
+                "start_line": node.lineno,
+                "end_line": getattr(node, "end_lineno", node.lineno),
+                "function": self.current_function,
+            })
+            self.generic_visit(node)
+
+    ExecutableVisitor().visit(tree)
+    
+    # 2. Extract markers using tokenize
+    comments_by_line = {}
+    try:
+        tokens = tokenize.tokenize(io.BytesIO(code.encode('utf-8')).readline)
+        for tok in tokens:
+            if tok.type == tokenize.COMMENT:
+                comment_text = tok.string.strip()
+                comments_by_line[tok.start[0]] = {
+                    "text": comment_text,
+                    "indent": tok.start[1],
+                    "line": tok.start[0]
+                }
+    except Exception as e:
+        report.errors.append(f"Tokenize error: {e}")
+        
+    lines = code.splitlines()
+
+    # 3. Match each expected step
+    for step in expected_steps:
+        action = step.get("action")
+        if action not in ("flag_duplicate_candidates", "flag_business_key_duplicate"):
+            report.conforming_steps.append(step)
+            continue
+            
+        ds_name = step.get("dataset") or ""
+        canon_ds = re.sub(r"[^0-9a-zA-Z_]+", "_", ds_name).strip("_")
+        expected_fn = f"transform_{canon_ds}"
+        
+        step_id, _ = make_step_id(step)
+        
+        marker_comment = None
+        for lineno, comm in comments_by_line.items():
+            if re.search(rf"#\s*DHARA_STEP\s*:\s*{re.escape(step_id)}", comm["text"], re.I):
+                marker_comment = comm
+                break
+                
+        if not marker_comment:
+            report.errors.append(f"PLAN_STEP_NOT_IMPLEMENTED: expected step marker '# DHARA_STEP: {step_id}' not found")
+            report.missing_steps.append(step)
+            continue
+            
+        marker_line = marker_comment["line"]
+        marker_indent = marker_comment["indent"]
+        
+        action_marker_found = False
+        for offset in (1, 2):
+            next_comm = comments_by_line.get(marker_line + offset)
+            if next_comm and re.search(rf"#\s*DHARA_ACTION\s*:\s*{re.escape(action)}", next_comm["text"], re.I):
+                action_marker_found = True
+                marker_end_line = marker_line + offset
+                break
+        if not action_marker_found:
+            marker_end_line = marker_line
+            
+        stmt = None
+        for s in sorted(statements, key=lambda x: x["start_line"]):
+            if s["function"] == expected_fn and s["start_line"] >= marker_end_line + 1:
+                stmt_line_text = lines[s["start_line"] - 1]
+                stmt_indent = len(stmt_line_text) - len(stmt_line_text.lstrip())
+                if s["start_line"] - marker_end_line <= 3 and stmt_indent == marker_indent:
+                    stmt = s
+                    break
+                    
+        if not stmt:
+            report.errors.append(f"PLAN_STEP_NOT_IMPLEMENTED: No executable statement found adjacent (within 3 lines, same indent, function {expected_fn}) for step '{step_id}'")
+            report.missing_steps.append(step)
+            continue
+            
+        node = stmt["node"]
+        
+        if not isinstance(node, ast.Assign):
+            report.errors.append(f"Validation error for step '{step_id}': Statement following marker must be an assignment (e.g. df = ...)")
+            report.missing_steps.append(step)
+            continue
+            
+        stmt_source = "\n".join(lines[stmt["start_line"] - 1 : stmt["end_line"]])
+        
+        if action == "flag_duplicate_candidates":
+            calls_helper = False
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name) and sub.func.id == "_flag_source_duplicates":
+                    calls_helper = True
+                    break
+            if not calls_helper:
+                report.errors.append(f"Validation error for step '{step_id}': action '{action}' must invoke '_flag_source_duplicates'")
+                report.missing_steps.append(step)
+                continue
+                
+            if "_duplicate_group_size" not in code or "_is_duplicate_row" not in code:
+                report.errors.append(f"Validation error for step '{step_id}': action '{action}' output columns '_duplicate_group_size' or '_is_duplicate_row' must be present in code")
+                report.missing_steps.append(step)
+                continue
+                
+            if "filter(" in stmt_source or "dropna(" in stmt_source:
+                report.errors.append(f"Validation error for step '{step_id}': action '{action}' must not drop or filter rows")
+                report.missing_steps.append(step)
+                continue
+
+        elif action == "flag_business_key_duplicate":
+            keys = []
+            params = step.get("params") or {}
+            if params.get("key_columns"):
+                keys.extend(params.get("key_columns"))
+            elif plan and plan.get("business_keys", {}).get(ds_name):
+                keys.extend(plan.get("business_keys", {}).get(ds_name))
+            elif step.get("column") and str(step.get("column")).lower() not in ("row-level", "[row-level]"):
+                keys.extend([c.strip() for c in str(step.get("column")).split(",") if c.strip()])
+                
+            expected_keys = []
+            for k in keys:
+                if k not in expected_keys:
+                    expected_keys.append(k)
+                    
+            calls_partition = False
+            partition_args = []
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr == "partitionBy":
+                    calls_partition = True
+                    for arg in sub.args:
+                        if isinstance(arg, ast.Constant):
+                            partition_args.append(str(arg.value))
+                        elif isinstance(arg, ast.Str):
+                            partition_args.append(str(arg.s))
+                            
+            if not calls_partition:
+                report.errors.append(f"Validation error for step '{step_id}': action '{action}' must partition by keys using Window.partitionBy")
+                report.missing_steps.append(step)
+                continue
+            else:
+                missing_keys = [k for k in expected_keys if k not in partition_args]
+                if missing_keys:
+                    report.errors.append(f"Validation error for step '{step_id}': action '{action}' missing expected partition key columns: {missing_keys}")
+                    report.missing_steps.append(step)
+                    continue
+                    
+            if "business_key_group_size" not in stmt_source or "is_business_key_duplicate" not in stmt_source:
+                report.errors.append(f"Validation error for step '{step_id}': action '{action}' output columns 'business_key_group_size' and 'is_business_key_duplicate' must be produced in statement")
+                report.missing_steps.append(step)
+                continue
+                
+            if "filter(" in stmt_source or "dropna(" in stmt_source:
+                report.errors.append(f"Validation error for step '{step_id}': action '{action}' must not drop or filter rows")
+                report.missing_steps.append(step)
+                continue
+                
+        report.conforming_steps.append(step)
+        
+    return report
 
 
 def _plan_columns(plan: Dict[str, Any]) -> Set[str]:
@@ -362,9 +604,26 @@ def validate_pyspark_source(
     source: str,
     plan: Dict[str, Any] | None = None,
 ) -> Tuple[bool, List[str]]:
+    import hashlib
+    validator_input_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    logging.getLogger("agent.etl_pipeline.validate_pyspark").info(f"validator_input_hash: {validator_input_hash}")
+
     errs: List[str] = []
     if not source or not source.strip():
         return False, ["empty source"]
+
+    if plan:
+        expected_steps = []
+        for ds_name, block in (plan.get("datasets") or {}).items():
+            if isinstance(block, dict) and block.get("steps"):
+                for st in block["steps"]:
+                    st_copy = dict(st)
+                    st_copy["dataset"] = ds_name
+                    expected_steps.append(st_copy)
+        
+        report = inspect_plan_step_conformance(source, expected_steps, plan)
+        if report.errors:
+            errs.extend(report.errors)
 
     try:
         tree = ast.parse(source)

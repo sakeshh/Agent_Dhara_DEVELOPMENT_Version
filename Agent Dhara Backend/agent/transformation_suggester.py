@@ -196,7 +196,7 @@ def _should_coerce_numeric(ds_name: str, col: str, issue_type: str, assessment_r
     semantic = (meta.get("semantic_type") or "unknown").lower()
     if semantic in _SKIP_COERCE_SEMANTIC:
         return False
-    if col_lower in ("price", "amount", "total", "quantity", "count", "qty") and issue_type in ("invalid_numeric", "mixed_types", "negative_values"):
+    if (col_lower in ("price", "amount", "total", "quantity", "count", "qty") or any(x in col_lower for x in ("price", "amount", "total", "quantity", "count", "qty"))) and issue_type in ("invalid_numeric", "mixed_types", "negative_values", "mixed_scalar_types"):
         return True
     return False
 

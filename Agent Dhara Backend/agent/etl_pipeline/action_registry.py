@@ -284,17 +284,28 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
         "description": "Fill missing values with an explicit approved constant.",
     },
     "preserve_null_and_flag": {
-        "phase": 1, "auto_eligible": True, "destructive": False,
-        "requires_review": False, "changes_row_population": False,
+        "phase": 1, "auto_eligible": False, "destructive": False,
+        "requires_review": True, "changes_row_population": False,
         "changes_business_meaning": False,
-        "description": "Preserve null and add a boolean indicator flag column.",
+        "required_params": ["status_column", "reason_column"],
+        "description": (
+            "Preserve null value and add validation status + reason columns. "
+            "When promoted via manual review, execution mode is APPROVED_MANUAL."
+        ),
     },
     "impute_numeric": {
         "phase": 1, "auto_eligible": False, "destructive": False,
-        "requires_review": True, "changes_row_population": False,
+        "requires_review": True, "requires_impact_preview": True,
+        "changes_row_population": False,
         "changes_business_meaning": True,
-        "required_params": [],
-        "description": "Impute numeric values using median, mean, mode or grouping.",
+        "dependency_scope": "SINGLE_DATASET",
+        "required_params": ["strategy", "preserve_raw", "output_column", "policy_id"],
+        "semantic_prohibitions": ["primary_key", "business_key", "foreign_key", "identifier"],
+        "description": (
+            "Statistical imputation for numeric non-key columns. "
+            "strategy: mean|median|mode|constant|grouped_mean|grouped_median|rule_based. "
+            "Prohibited on key/identifier columns."
+        ),
     },
     "impute_date": {
         "phase": 1, "auto_eligible": False, "destructive": False,
@@ -316,15 +327,41 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
         "description": "Preserve null keys unchanged for downstream triage.",
     },
 
-    # fill_nulls_simple: Phase 1 ONLY for non-identifier, non-key columns
-    # The catalog must enforce semantic-type guards before recommending this.
-    "fill_nulls_simple": {
-        "phase": 1, "auto_eligible": "CONDITIONAL", "destructive": False,
+    # ─────────────────────────────────────────────────────────────────────
+    # EXPLICIT NULL DISPOSITION ACTIONS — Phase 1 canonical replacements
+    # for fill_nulls_simple. Each encodes exactly one approved policy.
+    # ─────────────────────────────────────────────────────────────────────
+
+    "fill_null_with_constant": {
+        "phase": 1, "auto_eligible": False, "destructive": False,
         "requires_review": True, "changes_row_population": False,
         "changes_business_meaning": True,
+        "required_params": ["value", "policy_id", "preserve_raw"],
+        "semantic_prohibitions": ["primary_key", "business_key", "foreign_key", "identifier"],
         "description": (
-            "Fill null values using mean/median/mode/constant strategy. "
-            "NEVER auto-eligible for identifier, key, or declared-mandatory columns."
+            "Fill null with an approved registered constant. "
+            "Requires policy_id and preserve_raw=True. Prohibited on key/identifier columns."
+        ),
+    },
+    "quarantine_null_rows": {
+        "phase": 1, "auto_eligible": False, "destructive": False,
+        "requires_review": True, "changes_row_population": True,
+        "changes_business_meaning": False,
+        "required_params": ["reason_code", "policy_id"],
+        "description": (
+            "Route rows with null in a mandatory column to quarantine partition. "
+            "Source rows are partitioned — not deleted. Requires policy_id."
+        ),
+    },
+    "accept_null_as_optional": {
+        "phase": 1, "auto_eligible": False, "destructive": False,
+        "requires_review": True, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "action_kind": "POLICY_DISPOSITION",
+        "emits_code": False,
+        "description": (
+            "Accept null as valid for optional columns. "
+            "Emits no code — records the approved policy disposition only."
         ),
     },
 
@@ -378,10 +415,15 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
         "description": "Cap outliers to median or declared value. Phase 1 preparation.",
     },
     "clip_or_flag": {
-        "phase": 1, "auto_eligible": False, "destructive": False,
-        "requires_review": True, "changes_row_population": False,
-        "changes_business_meaning": True,
-        "description": "Clip or flag outliers depending on business rules. Phase 1 preparation.",
+        "phase": None, "auto_eligible": False, "destructive": None,
+        "requires_review": None, "invalid": True, "legacy": True,
+        "migration_required": True,
+        "description": (
+            "INVALID LEGACY ACTION: does not specify clip vs. flag disposition. "
+            "Replace with: flag_outliers (safe Phase 1 default) or clip_outliers (requires approval). "
+            "Migration: if saved outlier_method='flag' → flag_outliers; 'clip' → clip_outliers; "
+            "else AMBIGUOUS_OUTLIER_DISPOSITION — return to manual review."
+        ),
     },
     "nullify_future_dates": {
         "phase": 1, "auto_eligible": False, "destructive": False,
@@ -430,10 +472,25 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "fill_or_drop": {
         "phase": None, "auto_eligible": False, "destructive": None,
-        "requires_review": None, "invalid": True,
+        "requires_review": None, "invalid": True, "legacy": True,
+        "migration_required": True,
         "description": (
-            "INVALID: ambiguous action — does not specify whether to fill or drop. "
-            "Must be resolved to a specific action before phase classification."
+            "INVALID LEGACY ACTION: does not specify whether to fill or drop. "
+            "Replace with: preserve_null_and_flag, fill_null_with_constant, "
+            "quarantine_null_rows, or accept_null_as_optional."
+        ),
+    },
+    "fill_nulls_simple": {
+        "phase": None, "auto_eligible": False, "destructive": None,
+        "requires_review": None, "invalid": True, "legacy": True,
+        "migration_required": True,
+        "description": (
+            "INVALID LEGACY ACTION: does not specify null disposition. "
+            "Replace with: preserve_null_and_flag, fill_null_with_constant, "
+            "impute_numeric, quarantine_null_rows, or accept_null_as_optional. "
+            "Migration: if saved fill_strategy+value → fill_null_with_constant; "
+            "if saved fill_strategy='mean'/'median' → impute_numeric; "
+            "else AMBIGUOUS_NULL_DISPOSITION — return to manual review."
         ),
     },
 }
@@ -500,3 +557,18 @@ def is_phase2_action(action: str) -> bool:
 
 def is_invalid_action(action: str) -> bool:
     return bool(get_action_meta(action).get("invalid"))
+
+
+def is_legacy_action(action: str) -> bool:
+    """True if the action is a recognized legacy alias that requires migration."""
+    return bool(get_action_meta(action).get("legacy"))
+
+
+def get_semantic_prohibitions(action: str) -> list:
+    """Return the list of semantic role prohibitions for an action (e.g. 'primary_key')."""
+    return list(get_action_meta(action).get("semantic_prohibitions") or [])
+
+
+def requires_impact_preview(action: str) -> bool:
+    """True if the action requires an impact preview before execution."""
+    return bool(get_action_meta(action).get("requires_impact_preview"))

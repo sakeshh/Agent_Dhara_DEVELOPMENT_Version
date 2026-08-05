@@ -3,6 +3,9 @@ Promote user-selected manual review resolutions into executable plan steps.
 """
 from __future__ import annotations
 
+import json as _json
+import hashlib as _hashlib
+import re as _re
 from typing import Any, Dict, List, Optional, Tuple
 
 from agent.etl_pipeline.classify_steps import classify_step_bucket
@@ -11,15 +14,13 @@ from agent.etl_pipeline.manual_review_catalog import (
     enrich_manual_review_item,
     is_skip_action,
     manual_review_item_id,
+    LEGACY_AMBIGUOUS_RESOLUTIONS,
 )
 
 # Maps legacy Phase 2 resolution actions to their Phase 1 safe equivalents.
 # Used as a last-resort migration when a promoted action violates phase constraints.
 PHASE1_LEGACY_MIGRATIONS: Dict[str, str] = {
     "deduplicate":              "flag_duplicate_candidates",
-    "fill_nulls_simple":        "fill_nulls_flag",
-    "fill_or_drop":             "fill_nulls_flag",
-    "clip_or_flag":             "flag_outliers",
     "range_clip":               "flag_range_violation",
     "clip_outliers":            "flag_outliers",
     "cap_outliers":             "flag_outliers",
@@ -46,20 +47,54 @@ _ACTION_PRIORITY: Dict[str, int] = {
     "mask_phone": 57,
     "regex_replace": 60,
     "range_clip": 65,
-    "clip_or_flag": 65,
     "flag_outliers": 65,
     "clip_outliers": 65,
     "cap_outliers": 65,
-    "standardize_boolean": 70,
+    "preserve_null_and_flag": 66,
+    "fill_null_with_constant": 67,
+    "quarantine_null_rows": 68,
+    "impute_numeric": 69,
+    "accept_null_as_optional": 70,
+    "standardize_boolean": 72,
     "replace_values": 75,
-    "fill_or_drop": 80,
-    "fill_nulls_simple": 80,
     "drop_column": 85,
     "exclude_column": 86,
     "deduplicate": 200,
     "validate_referential_integrity_or_stage": 300,
     "noop": 999,
 }
+
+
+def canonical_json(obj: Any) -> str:
+    return _json.dumps(obj, sort_keys=True, default=str)
+
+
+def canonicalize_params(params: dict) -> dict:
+    """Recursively sort dictionary keys for canonical JSON serialization."""
+    if not isinstance(params, dict):
+        return params
+    return {k: canonicalize_params(v) for k, v in sorted(params.items())}
+
+
+def make_step_id(step: dict) -> Tuple[str, str]:
+    """Generates a compact deterministic step ID and a full action fingerprint hash."""
+    identity = {
+        "dataset_id": step.get("dataset_id") or step.get("dataset") or "",
+        "column": step.get("column"),
+        "action": step.get("action"),
+        "parameters": canonicalize_params(step.get("params") or step.get("parameters") or {}),
+        "source_issue_ids": sorted(step.get("source_issue_ids") or []),
+        "policy_id": step.get("policy_id") or step.get("params", {}).get("policy_id") or "",
+    }
+    raw_str = canonical_json(identity)
+    digest = _hashlib.sha256(raw_str.encode("utf-8")).hexdigest()
+    
+    # Clean column name for step ID readability
+    col = step.get("column") or "ROW"
+    safe_col = _re.sub(r'[^A-Z0-9]', '_', str(col).upper())[:20]
+    
+    return f"STEP-{safe_col}-{digest[:8].upper()}", f"sha256:{digest}"
+
 
 
 def _pending_items(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -122,15 +157,39 @@ def apply_manual_resolutions(
             continue
 
         issue_type = str(item.get("issue_type") or "")
+        
+        # Collect parameters from user resolution payload
+        res_payload = next((r for r in resolutions if str(r.get("item_id") or r.get("id")) == iid), {})
+        res_params = dict(res_payload.get("parameters") or {})
+        for pk, pv in res_payload.items():
+            if pk not in ("item_id", "id", "resolution_id", "resolution", "parameters"):
+                res_params[pk] = pv
+
         action = action_for_resolution(issue_type, rid, item.get("resolution_options"))
+        
+        # Check ambiguous legacy resolution IDs
+        if rid in LEGACY_AMBIGUOUS_RESOLUTIONS:
+            method = res_params.get("outlier_method") or res_params.get("method")
+            strat = res_params.get("fill_strategy") or res_params.get("strategy")
+            val = res_params.get("fill_value") or res_params.get("value")
+            
+            if rid == "clip_or_flag" and method == "flag":
+                action = "flag_outliers"
+            elif rid == "clip_or_flag" and method == "clip":
+                action = "clip_outliers"
+            elif rid in ("fill_nulls", "fill_null", "fill_nulls_simple") and strat == "constant" and val is not None:
+                action = "fill_null_with_constant"
+            elif rid in ("fill_nulls", "fill_null", "fill_nulls_simple") and strat in ("mean", "median", "mode"):
+                action = "impute_numeric"
+            else:
+                errs.append(f"Resolution '{rid}' for item '{iid}' is ambiguous and cannot be promoted without specific parameters.")
+                continue
+
         if not action:
             errs.append(f"No action for resolution '{rid}' on issue '{issue_type}'")
             continue
 
         # P0-C: Phase gate — migrate Phase 2 actions to Phase 1 safe equivalents.
-        # This is a last-resort safety net. The RESOLUTION_TO_ACTION_MAP and
-        # catalog options should already return Phase 1 actions. If they don't,
-        # we migrate rather than silently inserting an invalid action.
         from agent.etl_pipeline.action_registry import ACTION_REGISTRY
         plan_generation_mode = str(plan.get("generation_mode") or "full").lower()
         if plan_generation_mode in ("cleanse", "phase1"):
@@ -183,8 +242,7 @@ def apply_manual_resolutions(
 
         ds = str(item.get("dataset") or "").strip()
         col = item.get("column")
-        # P0-D: Block synthetic/global dataset scopes — these are not real datasets
-        # and will cause connector_manifest and assessment lookup failures.
+        # P0-D: Block synthetic/global dataset scopes
         if not ds or ds in ("_global", "global"):
             errs.append(
                 f"Item {iid} has synthetic global scope (dataset='{ds}'). "
@@ -194,6 +252,22 @@ def apply_manual_resolutions(
             item["status"] = "skipped"
             resolved_log.append({**item, "promoted": False, "skip_reason": "global_scope"})
             continue
+
+        params = dict(res_params)
+        # Inject explicit defaults for standard Phase 1 actions
+        if action == "preserve_null_and_flag":
+            params.setdefault("status_column", f"{col}_validation_status")
+            params.setdefault("reason_column", f"{col}_validation_reason")
+        elif action == "fill_null_with_constant":
+            params.setdefault("preserve_raw", True)
+            params.setdefault("policy_id", f"POL-{str(col).upper()}-NULL".replace(".", "_"))
+        elif action == "quarantine_null_rows":
+            params.setdefault("reason_code", "MANDATORY_NULL_VIOLATION")
+            params.setdefault("policy_id", f"POL-{str(col).upper()}-MANDATORY".replace(".", "_"))
+        elif action == "impute_numeric":
+            params.setdefault("preserve_raw", True)
+            params.setdefault("output_column", f"{col}_clean")
+            params.setdefault("policy_id", f"POL-{str(col).upper()}-IMPUTE".replace(".", "_"))
 
         block = datasets.setdefault(ds, {"steps": []})
         steps: List[Dict[str, Any]] = list(block.get("steps") or [])
@@ -205,6 +279,17 @@ def apply_manual_resolutions(
         )
         is_llm = (item.get("authority_source") == "LLM_ADVISORY")
         conf = item.get("llm_confidence") if is_llm else None
+
+        manual_resolution = {
+            "policy_card_id": item.get("policy_card_id") or f"POLICY-{str(issue_type).upper()}",
+            "selected_option_id": rid,
+            "selected_action": action,
+            "selected_parameters": params,
+            "selected_by": "user",
+            "selected_at": item.get("resolved_at") or "2026-08-05T13:00:00+05:30",
+            "approval_reference": item.get("approval_reference"),
+            "resolution_source": "USER_SELECTION"
+        }
 
         step = {
             "order": len(steps) + 1,
@@ -221,6 +306,8 @@ def apply_manual_resolutions(
             "auto_fixable": False,
             "selected_by": "user",
             "requires_impact_preview": True,
+            "params": params,
+            "manual_resolution": manual_resolution,
             "evidence": {
                 "why_this_action": item.get("guidance") or item.get("message") or "",
                 "confidence": conf if conf is not None else 0.95,
@@ -230,6 +317,18 @@ def apply_manual_resolutions(
             },
             "message": item.get("message"),
         }
+
+        step_id, action_fingerprint = make_step_id({
+            "dataset_id": ds,
+            "column": col,
+            "action": action,
+            "params": params,
+            "source_issue_ids": [iid],
+            "policy_id": params.get("policy_id") or "",
+        })
+        step["step_id"] = step_id
+        step["action_fingerprint"] = action_fingerprint
+
         if "llm_recommendation" in item:
             step["llm_recommendation"] = item["llm_recommendation"]
         if "llm_confidence" in item:
@@ -359,6 +458,16 @@ def apply_manual_resolutions(
     for item in resolved_log:
         existing_resolved[item["id"]] = item
 
+    from agent.etl_pipeline.action_registry import is_invalid_action
+    for ds_name, block in (plan.get("datasets") or {}).items():
+        if isinstance(block, dict) and "steps" in block:
+            for st in block["steps"]:
+                if is_invalid_action(st.get("action")):
+                    errs.append(
+                        f"[PostCanonical] Invalid action '{st.get('action')}' survived canonicalization "
+                        f"on {ds_name}.{st.get('column')}."
+                    )
+
     plan["resolved_manual_review"] = list(existing_resolved.values())
     return plan, errs
 
@@ -381,17 +490,16 @@ def promote_non_fixable_resolutions(
     Each resolution becomes a real step in plan.datasets[ds].steps.
     """
     resolution_step_map = {
-        "quarantine":          {"action": "validate_referential_integrity_or_stage", "params": {"enforcement_mode": "quarantine"}},
-        "quarantine_all_null": {"action": "validate_referential_integrity_or_stage", "params": {"enforcement_mode": "quarantine"}},
-        "reject_orphans":      {"action": "validate_referential_integrity_or_stage", "params": {"enforcement_mode": "quarantine"}},
-        "validate_referential_integrity_or_stage": {"action": "validate_referential_integrity_or_stage", "params": {"enforcement_mode": "quarantine"}},
-        "flag":                {"action": "clip_or_flag",    "params": {"outlier_method": "flag"}},
-        "flag_outliers":       {"action": "clip_or_flag",    "params": {"outlier_method": "flag"}},
-        "clip_or_flag":        {"action": "clip_or_flag",    "params": {"outlier_method": "flag"}},
-        "fill_null":           {"action": "fill_or_drop",    "params": {"fill_strategy": "value", "fill_value": None}},
-        "fill_nulls":          {"action": "fill_or_drop",    "params": {"fill_strategy": "value", "fill_value": None}},
-        "fill_nulls_simple":   {"action": "fill_or_drop",    "params": {"fill_strategy": "value", "fill_value": None}},
-        "fill_or_drop":        {"action": "fill_or_drop",    "params": {"fill_strategy": "value", "fill_value": None}},
+        "quarantine":          {"action": "validate_and_partition_relationship", "params": {"enforcement_mode": "quarantine"}},
+        "quarantine_all_null": {"action": "validate_and_partition_relationship", "params": {"enforcement_mode": "quarantine"}},
+        "reject_orphans":      {"action": "validate_and_partition_relationship", "params": {"enforcement_mode": "quarantine"}},
+        "validate_referential_integrity_or_stage": {"action": "validate_and_partition_relationship", "params": {"enforcement_mode": "quarantine"}},
+        "flag":                {"action": "flag_outliers",    "params": {}},
+        "flag_outliers":       {"action": "flag_outliers",    "params": {}},
+        "clip_or_flag":        {"action": "flag_outliers",    "params": {}},
+        "preserve_and_flag":   {"action": "preserve_null_and_flag", "params": {"preserve_raw": True}},
+        "fill_constant":       {"action": "fill_null_with_constant", "params": {"preserve_raw": True, "value": None}},
+        "quarantine_null":     {"action": "quarantine_null_rows", "params": {"reason_code": "NON_FIXABLE_NULL"}},
         "accept_risk":         None,
         "custom":              None,
     }
@@ -424,6 +532,23 @@ def promote_non_fixable_resolutions(
         ds_block = dict(datasets[ds])
         steps = list(ds_block.get("steps") or [])
         max_order = max((s.get("order", 0) for s in steps), default=0)
+        
+        params = dict(step_template["params"])
+        if step_template["action"] == "preserve_null_and_flag":
+            params.setdefault("status_column", f"{col}_validation_status")
+            params.setdefault("reason_column", f"{col}_validation_reason")
+            
+        manual_resolution = {
+            "policy_card_id": f"POLICY-{strategy.upper()}",
+            "selected_option_id": strategy,
+            "selected_action": step_template["action"],
+            "selected_parameters": params,
+            "selected_by": "user",
+            "selected_at": res.get("timestamp") or "2026-08-05T13:00:00+05:30",
+            "approval_reference": res.get("user_note"),
+            "resolution_source": "USER_SELECTION"
+        }
+        
         new_step = {
             "order": max_order + 1,
             "column": col,
@@ -431,10 +556,23 @@ def promote_non_fixable_resolutions(
             "bucket": "cleanse",
             "phase": "cleanse",
             "priority": 80,
-            "params": dict(step_template["params"]),
+            "params": params,
             "note": f"User resolution: {strategy}. {res.get('user_note', '')}",
             "source": "non_fixable_user_resolution",
+            "manual_resolution": manual_resolution,
         }
+        
+        step_id, action_fingerprint = make_step_id({
+            "dataset_id": ds,
+            "column": col,
+            "action": step_template["action"],
+            "params": params,
+            "source_issue_ids": [],
+            "policy_id": params.get("policy_id") or "",
+        })
+        new_step["step_id"] = step_id
+        new_step["action_fingerprint"] = action_fingerprint
+        
         steps.append(new_step)
         ds_block["steps"] = steps
         datasets[ds] = ds_block
@@ -473,6 +611,37 @@ def canonicalize_plan_steps(
     out_steps = list(other_steps)
 
     for col, col_steps in by_col.items():
+        # Rule: manual resolution supersedes automatic steps writing to the same output column
+        manual_output_cols = set()
+        for st in col_steps:
+            mr = st.get("manual_resolution")
+            is_man = mr or st.get("classification") == "review" or st.get("requires_user_choice") is True
+            out_col = st.get("params", {}).get("output_column")
+            if is_man and out_col:
+                manual_output_cols.add(out_col)
+
+        # Rule: manual parse_dates/coerce_numeric/cast_type supersedes automatic generic cast_type
+        has_manual_type_coerce = any(
+            (st.get("manual_resolution") or st.get("classification") == "review" or st.get("requires_user_choice") is True)
+            and st.get("action") in ("parse_dates", "coerce_numeric", "cast_type")
+            for st in col_steps
+        )
+
+        filtered_col_steps = []
+        for st in col_steps:
+            mr = st.get("manual_resolution")
+            is_man = mr or st.get("classification") == "review" or st.get("requires_user_choice") is True
+            out_col = st.get("params", {}).get("output_column")
+            act = st.get("action")
+            
+            if not is_man:
+                if out_col in manual_output_cols:
+                    continue
+                if has_manual_type_coerce and act == "cast_type":
+                    continue
+            filtered_col_steps.append(st)
+        col_steps = filtered_col_steps
+
         # Remove identical duplicate actions on the same column
         seen_acts = set()
         unique_steps = []
@@ -719,7 +888,9 @@ def canonicalize_promoted_plan(
             new_steps.append(st)
 
         # Apply grouping, pipeline composition, and deduplication of steps
-        block["steps"] = canonicalize_plan_steps(new_steps, rules, ds_name)
+        composed = canonicalize_plan_steps(new_steps, rules, ds_name)
+        from agent.etl_pipeline.step_metadata import finalize_dataset_steps
+        block["steps"] = finalize_dataset_steps(composed, assessment, rules)
         datasets[ds_name] = block
 
     plan["datasets"] = datasets

@@ -322,10 +322,7 @@ def _flag_source_duplicates(df):
 def _warn_duplicate_keys(df, key_col: str, label: str) -> None:
   """Log possible duplicate join keys (single scan — approx distinct, no full shuffle)."""
   import logging
-  import os
   if key_col not in df.columns:
-    return
-  if os.environ.get("DHARA_ETL_CHECK_DUP_KEYS", "1").strip().lower() in ("0", "false", "no"):
     return
   row = (
     df.agg(

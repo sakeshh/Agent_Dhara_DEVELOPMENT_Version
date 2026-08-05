@@ -295,16 +295,22 @@ def emit_pyspark_write_outputs(plan: Dict[str, Any], manifest: Dict[str, Any]) -
         lines.append(f'if "{canon_id}" in dfs:')
 
         # Fabric managed table writes use saveAsTable - resolve path only for blob/file writes.
-        is_fabric_table = "saveAsTable(" in wsnip
+        is_fabric_table = (
+            "saveAsTable(" in wsnip
+            or str(ent.get("source_type") or "").lower() == "fabric_files_zone"
+            or str(ent.get("execution_target") or "").lower() == "fabric"
+            or str(plan.get("execution_target") or "").lower() == "fabric"
+        )
         if is_fabric_table:
-            # _out is the lakehouse path for audit; write target comes from saveAsTable table name.
+            # Stage writes first to avoid destructive overwrite of stable Fabric tables.
             table_name = ent.get("clean_table_name") or canon_id + "_clean"
+            staging_table = f"{table_name}_staging"
             lines.append(f"    _out = 'Tables/{table_name}'  # Fabric managed table (audit path)")
             lines.append(f'    OUTPUT_PATHS[{canon_id!r}] = _out')
-            lines.append(f"    logger.info('Writing %s -> Fabric table %s', {canon_id!r}, {table_name!r})")
+            lines.append(f"    logger.info('Writing %s -> Fabric staging table %s', {canon_id!r}, {staging_table!r})")
             lines.append(
                 f'    dfs["{canon_id}"].write.format("delta").mode("overwrite")'
-                f'.option("overwriteSchema", "true").saveAsTable("{table_name}")'
+                f'.option("overwriteSchema", "true").saveAsTable("{staging_table}")'
             )
         else:
             lines.append(f'    _out = _resolve_data_path("{op}")')
