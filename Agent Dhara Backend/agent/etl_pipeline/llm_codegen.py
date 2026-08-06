@@ -128,8 +128,9 @@ def _write_failure_cache(cache_key: str, error: str, ttl_seconds: int = 30):
         _FAILURE_CACHE.popitem(last=False)
 
 _PYSPARK_REQUIRED_IMPORTS = [
-    ("from pyspark.sql import SparkSession, DataFrame", ["SparkSession", "DataFrame"]),
+    ("from pyspark.sql import SparkSession, DataFrame, Window", ["SparkSession", "DataFrame"]),
     ("from pyspark.sql import functions as F", ["F."]),
+    ("from pyspark.sql.window import Window", ["Window."]),
     ("import logging", ["logging."]),
 ]
 
@@ -175,15 +176,19 @@ def _inject_pyspark_imports(code: str) -> str:
     header = "".join(lines[:min(insert_at + 40, len(lines))])
 
     to_inject = []
-    # Only look at the true module-level header (lines before insert_at + 15 lines after)
-    true_header = "".join(lines[:min(insert_at + 15, len(lines))])
+    # Replace any LLM-generated bare 'from pyspark.sql import SparkSession, DataFrame' with Window included
+    code = re.sub(
+        r"from\s+pyspark\.sql\s+import\s+SparkSession\s*,\s*DataFrame\b(?!,\s*Window)",
+        "from pyspark.sql import SparkSession, DataFrame, Window",
+        code
+    )
+    if "Window" in code and "from pyspark.sql import SparkSession, DataFrame, Window" not in code and "from pyspark.sql.window import Window" not in code:
+        to_inject.append("from pyspark.sql import Window\n")
 
     for import_line, triggers in _PYSPARK_REQUIRED_IMPORTS:
-        # Only inject if any trigger token is referenced in the entire source
         if not any(t in code for t in triggers):
             continue
-        # Check if this exact import statement is already in the header
-        if import_line in true_header:
+        if import_line in header or import_line in code:
             continue
         to_inject.append(import_line + "\n")
 
@@ -889,6 +894,7 @@ def _fix_safe_numeric_casts_and_flags(code: str) -> str:
         )
         if m:
             df_var, quote_char, col = m.group(1), m.group(2), m.group(3)
+            src_col = col[:-6] if col.endswith("_clean") else col
             col_lower = col.lower()
             if any(k in col_lower for k in numeric_keywords):
                 flag_col = f"is_invalid_{col}"
@@ -897,7 +903,7 @@ def _fix_safe_numeric_casts_and_flags(code: str) -> str:
                 indent_str = line[:indent]
                 if col not in converted_cols:
                     new_lines.append(f"{indent_str}# Safe numeric conversion with missing & invalid flags for {col}")
-                    new_lines.append(f"{indent_str}_raw_{col} = F.trim(F.col({repr(col)}).cast('string'))")
+                    new_lines.append(f"{indent_str}_raw_{col} = F.trim(F.col({repr(src_col)}).cast('string'))")
                     if missing_col not in code:
                         new_lines.append(f"{indent_str}{df_var} = {df_var}.withColumn({repr(missing_col)}, _raw_{col}.isNull() | (_raw_{col} == ''))")
                     new_lines.append(f"{indent_str}_valid_{col} = _raw_{col}.rlike(r'^-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)$')")
@@ -923,27 +929,47 @@ def _fix_safe_date_parsing_and_flags(code: str) -> str:
     date_keywords = ("date", "time", "dt", "timestamp")
     lines = code.splitlines()
     new_lines = []
+    converted_date_cols = set()
+
     for line in lines:
-        m = re.search(r"(\w+)\s*=\s*\1\.withColumn\(['\"]([a-zA-Z_][\w]*)['\"]\s*,\s*F\.to_timestamp\(F\.col\(['\"]\2['\"]\)\)\)", line)
+        stripped = line.strip()
+        m = re.search(
+            r"(\w+)\s*=\s*\1\.withColumn\((['\"])([a-zA-Z_][\w]*)\2\s*,\s*F\.(?:to_date|to_timestamp)\(F\.col\((['\"])([a-zA-Z_][\w]*)\4\)",
+            line
+        )
         if m:
-            df_var, col = m.group(1), m.group(2)
-            col_lower = col.lower()
+            df_var, q1, out_col, q2, src_col = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5)
+            col_lower = src_col.lower()
             if any(k in col_lower for k in date_keywords):
-                flag_col = f"is_invalid_{col}"
-                indent = len(line) - len(line.lstrip())
-                indent_str = line[:indent]
-                if flag_col not in code:
-                    new_lines.append(f"{indent_str}# Safe timestamp parsing & invalid flag for {col}")
-                    new_lines.append(f"{indent_str}{df_var} = _parse_timestamp_safely({df_var}, {repr(col)})")
+                indent_str = line[:len(line)-len(stripped)]
+                if src_col not in converted_date_cols:
+                    new_lines.append(f"{indent_str}# Safe ANSI timestamp parsing & invalid flag for {src_col}")
+                    new_lines.append(f"{indent_str}{df_var} = _parse_timestamp_safely({df_var}, {repr(src_col)})")
+                    if out_col != src_col:
+                        new_lines.append(f"{indent_str}{df_var} = {df_var}.withColumn({repr(out_col)}, F.col({repr(src_col)}))")
+                    converted_date_cols.add(src_col)
                     continue
+
         new_lines.append(line)
     return "\n".join(new_lines)
+
+
+def _sanitize_unquoted_nan_in_code(code: str) -> str:
+    if not code:
+        return code
+    # Fix unquoted bare nan in list literals like [..., nan, ...] -> [..., pd.NA, ...]
+    code = re.sub(r'(\[\s*(?:[^\]]*?,\s*)*)\bnan\b(\s*(?:,\s*[^\]]*?)*\])', r"\1pd.NA\2", code)
+    # Fix logging lines missing f-prefix
+    code = re.sub(r"logging\.(info|warning|error)\('([^']*?\{_\w+\}[^']*?)'\)", r"logging.\1(f'\2')", code)
+    code = re.sub(r'logging\.(info|warning|error)\("([^"]*?\{_\w+\}[^"]*?)"\)', r'logging.\1(f"\2")', code)
+    return code
 
 
 def _sanitize_html_entities_in_code(code: str) -> str:
     if not code:
         return code
-    return html.unescape(code)
+    code = html.unescape(code)
+    return _sanitize_unquoted_nan_in_code(code)
 
 
 def _fix_toplevel_pipeline_duplication(code: str) -> str:
@@ -1092,8 +1118,16 @@ def _inject_pyspark_helpers(code: str) -> str:
     )
     
     to_inject = []
-    if "_resolve_data_path" in code and "def _resolve_data_path" not in code:
-        to_inject.append(resolve_path_fabric_pyspark_helper() + "\n\n")
+    if "_resolve_data_path" in code:
+        # Overwrite any LLM-generated static _resolve_data_path with our Fabric OneLake mount path helper
+        code = re.sub(
+            r"def _resolve_data_path\s*\([\s\S]*?return\s+.*?\n",
+            resolve_path_fabric_pyspark_helper() + "\n",
+            code,
+            count=1
+        )
+        if "def _resolve_data_path" not in code:
+            to_inject.append(resolve_path_fabric_pyspark_helper() + "\n\n")
 
     if "_iqr_bounds" in code and "def _iqr_bounds" not in code:
         to_inject.append(pyspark_iqr_bounds_helper() + "\n\n")
@@ -1217,6 +1251,23 @@ def apply_guarded_fixup(
     return repaired
 
 
+def _fix_uncreated_clean_col_refs(code: str) -> str:
+    """If F.col('col_clean') is referenced in a line before 'col_clean' is created, replace F.col('col_clean') with F.col('col')."""
+    if not code:
+        return code
+    lines = code.splitlines()
+    new_lines = []
+    for line in lines:
+        m = re.search(r"df\.withColumn\(['\"]([a-zA-Z_][\w]*_clean)['\"]\s*,\s*.*?F\.col\(['\"](\1)['\"]\)", line)
+        if m:
+            clean_col = m.group(1)
+            raw_col = clean_col[:-6]
+            line = line.replace(f"F.col('{clean_col}')", f"F.col('{raw_col}')")
+            line = line.replace(f'F.col("{clean_col}")', f'F.col("{raw_col}")')
+        new_lines.append(line)
+    return "\n".join(new_lines)
+
+
 def apply_mechanical_codegen_repairs(
     code: str,
     plan: dict | None = None,
@@ -1232,6 +1283,8 @@ def apply_mechanical_codegen_repairs(
     repaired_code = apply_guarded_fixup(repaired_code, _inject_pyspark_helpers, plan)
     
     # 2. safe mechanical fixups
+    repaired_code = apply_guarded_fixup(repaired_code, _uncreated_clean_col_refs, plan) if False else repaired_code
+    repaired_code = apply_guarded_fixup(repaired_code, _fix_uncreated_clean_col_refs, plan)
     repaired_code = apply_guarded_fixup(repaired_code, _filter_unrelated_transforms, plan)
     repaired_code = apply_guarded_fixup(repaired_code, _fix_string_ops_on_numeric_cols, plan)
     repaired_code = apply_guarded_fixup(repaired_code, _fix_string_fills_on_numeric_cols, plan)
@@ -1457,13 +1510,12 @@ def _inject_pyspark_run_pipeline(code: str, plan: Dict[str, Any]) -> str:
         lines.append("    return dfs, OUTPUT_PATHS")
         lines.append("")
         lines.append("# Fabric notebooks pre-inject 'spark'; fall back to creating one for local dev.")
-        lines.append("if __name__ == '__main__':")
-        lines.append("    try:")
-        lines.append("        spark  # type: ignore[name-defined]")
-        lines.append("    except NameError:")
-        lines.append("        from pyspark.sql import SparkSession")
-        lines.append('        spark = SparkSession.builder.appName("AgentDharaETL").getOrCreate()')
-        lines.append("    _dfs, _paths = run_pipeline(spark)")
+        lines.append("try:")
+        lines.append("    spark  # type: ignore[name-defined]")
+        lines.append("except NameError:")
+        lines.append("    from pyspark.sql import SparkSession")
+        lines.append('    spark = SparkSession.builder.appName("AgentDharaETL").getOrCreate()')
+        lines.append("_dfs, _paths = run_pipeline(spark)")
     else:
         lines.append("# Fabric notebooks pre-inject 'spark'; fall back to creating one for local dev.")
         lines.append("try:")
@@ -1995,6 +2047,27 @@ def _consolidate_and_filter_datasets(
                             step["params"]["fill_value"] = "unknown"
                             step["params"]["value"] = "unknown"
 
+                # E. Universal Numeric Coercion: For measure columns (budget, amount, production_qty, qty, price, count, total, score),
+                # map cast_type to target_dtype='double' and enforce nullify_sentinels
+                is_measure = any(m in col_lower for m in ("budget", "amount", "qty", "quantity", "price", "cost", "score", "total", "val", "production_qty", "revenue", "sales", "count", "fee", "balance"))
+                if is_measure and action in ("cast_type", "cast"):
+                    params = step.setdefault("params", {})
+                    params["target_dtype"] = "double"
+                    params["target_type"] = "double"
+                    logger.info(f"[Step Filter] Enforced target_dtype='double' for measure column '{col}'")
+
+            # F. Candidate Key Auto-Resolution for Row-Level Duplicate Steps
+            if action in ("flag_duplicate_candidates", "flag_business_key_duplicate", "deduplicate"):
+                params = step.setdefault("params", {})
+                if not params.get("keys") and not params.get("column_keys"):
+                    # Find candidate business keys from dataset schema metadata
+                    ds_cols = list((columns_meta or {}).keys())
+                    bk_keys = [c for c in ds_cols if any(k in c.lower() for k in ("id", "key", "code", "date"))]
+                    if bk_keys:
+                        params["keys"] = bk_keys[:3]
+                        params["column_keys"] = bk_keys[:3]
+                        logger.info(f"[Step Filter] Auto-assigned candidate keys {bk_keys[:3]} to duplicate step on dataset '{ds_name}'")
+
             # 1. Type-aware filtering: trim/lower/upper/sanitize_email are string-only
             if not strict_mode and action in ("trim", "lowercase", "uppercase", "sanitize_email"):
                 if col:
@@ -2426,6 +2499,15 @@ def _build_user_message_parts(
             "BUSINESS KEYS / DEDUPLICATION KEYS (use these columns in ROW_NUMBER PARTITION BY for deduplication):\n"
             + "\n".join(bk_lines)
         )
+
+    user_parts.append(
+        "ANSI-SAFE DATA CLEANING CONTRACT (Mandatory for Microsoft Fabric / Spark 3.4+):\n"
+        "1. DATE PARSING: For action 'parse_dates' on date/timestamp columns, ALWAYS use helper '_parse_timestamp_safely(df, col)' or 'F.coalesce(F.try_to_timestamp(...), F.to_date(...))'. NEVER call bare F.to_date() directly on un-validated strings to prevent SparkDateTimeException in Microsoft Fabric.\n"
+        "2. SENTINELS: For actions 'nullify_sentinels', 'replace_sentinel_values', or when columns contain sentinels ('???', 'unknown', 'N/A', 'TBD', '99/99/9999', '-999'), replace sentinel strings with NULL using 'F.when(F.trim(F.col(c)).isin(\"???\", \"unknown\", \"N/A\", \"TBD\", \"99/99/9999\"), F.lit(None)).otherwise(F.col(c))'.\n"
+        "3. NUMERIC TYPE COERCION: For action 'cast_type' on numeric measures (e.g. budget, amount, qty, price), cast strictly to double/decimal. Non-numeric text strings ('???', 'unknown') MUST become NULL.\n"
+        "4. BUSINESS KEY DUPLICATES: For action 'flag_business_key_duplicate' or 'flag_duplicate_candidates', use PySpark Window functions (Window.partitionBy('key')) to count group size and set boolean 'is_business_key_duplicate'.\n"
+        "5. GOVERNANCE QUARANTINE: Automatically route all records flagged with invalid/null mandatory fields or duplicate keys into all_dfs['*_quarantine'] tables.\n"
+    )
 
     if br.get("never_drop_rows"):
         user_parts.append(
@@ -2905,6 +2987,13 @@ def _generate_etl_with_llm_impl(
                         canon_ds = re.sub(r"[^0-9a-zA-Z_]+", "_", ds_name).strip("_")
                         called_expected.add(f"transform_{canon_ds}")
                 
+                # Auto-alias dataset transform functions if LLM omitted file extension suffix
+                for missing_fn in list(called_expected - defined):
+                    base_fn = re.sub(r"_(json|csv|xml|parquet|tsv|xlsx|xls|txt)$", "", missing_fn)
+                    if base_fn in defined:
+                        fixed_code += f"\n\n{missing_fn} = {base_fn}\n"
+                        defined.add(missing_fn)
+
                 missing = sorted(list(called_expected - defined))
                 if missing:
                     raise GeneratedCodeIncompleteError(
@@ -2921,6 +3010,15 @@ def _generate_etl_with_llm_impl(
                 # Invariant: orchestrated code
                 orchestrated_defined = set(extract_defined_functions(orchestrated_code))
                 orchestrated_called = set(extract_called_transform_functions(orchestrated_code))
+                orchestrated_missing = orchestrated_called - orchestrated_defined
+                
+                # Auto-alias dataset transform functions in orchestrated code if extension suffix missing
+                for missing_fn in list(orchestrated_missing):
+                    base_fn = re.sub(r"_(json|csv|xml|parquet|tsv|xlsx|xls|txt)$", "", missing_fn)
+                    if base_fn in orchestrated_defined:
+                        orchestrated_code += f"\n\n{missing_fn} = {base_fn}\n"
+                        orchestrated_defined.add(missing_fn)
+
                 orchestrated_missing = orchestrated_called - orchestrated_defined
                 if orchestrated_missing:
                     raise ValueError(f"Missing called transform functions in orchestrated code: {orchestrated_missing}")
@@ -2957,7 +3055,7 @@ def _generate_etl_with_llm_impl(
                         
                 code = final_code
             else:
-                code = stripped_code
+                code = _sanitize_unquoted_nan_in_code(stripped_code)
         except (ValueError, GeneratedCodeIncompleteError, MechanicalRepairViolation) as e:
             logger.warning(f"Error during codegen stages processing: {e}")
             fix_errors = [str(e)]
@@ -2970,7 +3068,7 @@ def _generate_etl_with_llm_impl(
         # Construct immutable artifact and assert hashes match
         artifact = GeneratedCodeArtifact.create(
             source=code,
-            plan_hash=plan_hash,
+            plan_hash=_get_plan_hash(plan),
             attempt=attempt_idx,
             generation_id=generation_id,
         )

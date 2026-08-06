@@ -150,7 +150,7 @@ ALLOWED_TRANSITIONS: Dict[str, List[str]] = {
     "generating": ["validated", "failed", "planned"],
     "validated": ["code_ready", "failed", "planned", "generating"],
     "code_ready": ["downloadable", "failed", "planned", "generating"],
-    "failed": ["planned", "generating"],
+    "failed": ["planned", "generating", "code_ready", "downloadable"],
     "downloadable": ["planned", "generating"],
 }
 

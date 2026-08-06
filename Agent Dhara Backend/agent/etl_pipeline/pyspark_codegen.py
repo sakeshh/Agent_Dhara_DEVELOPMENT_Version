@@ -754,14 +754,14 @@ def _emit_spark(
             f"# Normalized match-key for '{col}': trim + lowercase for fuzzy/join matching.",
             f"{df} = {df}.withColumn({repr(output_col_safe)}, F.trim(F.lower(F.col({c}).cast('string'))))",
         ]
-    if act == "normalize_registered_placeholder":
+    if act in ("normalize_registered_placeholder", "nullify_sentinels", "replace_sentinel_values", "nullify_sentinel"):
         col_safe = _safe(col or "col")
-        placeholder_values = params.get("placeholder_values") or ["NA", "N/A", "NULL", "null", "None", "none", "?", "-", "-1", "Unknown", "unknown", "<null>"]
+        placeholder_values = params.get("placeholder_values") or ["NA", "N/A", "NULL", "null", "None", "none", "?", "???", "-", "-1", "Unknown", "unknown", "<null>", "TBD", "99/99/9999"]
         placeholder_values = [str(v) for v in placeholder_values if v is not None]
-        placeholder_expr = f"F.col({c}).cast('string').isin({placeholder_values!r}) & F.col({c}).isNotNull()"
+        placeholder_expr = f"F.trim(F.col({c}).cast('string')).isin({placeholder_values!r}) & F.col({c}).isNotNull()"
         flag_col = repr(f"is_placeholder_{col_safe}")
         return [
-            f"# Normalize registered placeholders for '{col}' to NULL for governance/auditability.",
+            f"# Nullify registered sentinels and placeholders for '{col}' to NULL for governance/auditability.",
             f"{df} = {df}.withColumn({flag_col}, {placeholder_expr})",
             f"{df} = {df}.withColumn({c}, F.when({placeholder_expr}, F.lit(None)).otherwise(F.col({c})))",
         ]

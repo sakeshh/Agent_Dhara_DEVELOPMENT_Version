@@ -23,7 +23,7 @@ export async function proxyToBackend(
   const url = `${base}${path.startsWith('/') ? '' : '/'}${path}`;
 
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), init.timeoutMs ?? 90_000);
+  const t = setTimeout(() => controller.abort(), init.timeoutMs ?? 180_000);
   try {
     const { timeoutMs: _timeoutMs, ...rest } = init;
     const headers = new Headers(rest.headers || {});

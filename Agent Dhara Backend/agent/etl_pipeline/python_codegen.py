@@ -138,6 +138,12 @@ def _emit_coerce_numeric(col: str, ds_var: str, _p: Dict[str, Any]) -> List[str]
 
 
 def _emit_cast_type(col: str, ds_var: str, _p: Dict[str, Any]) -> List[str]:
+    c_lower = str(col).lower().strip()
+    target = _p.get("target_type") or _p.get("data_type")
+    if target:
+        return [f"{ds_var}[{_col_expr(col)}] = {ds_var}[{_col_expr(col)}].astype({repr(target)})"]
+    if c_lower in NON_NUMERIC_COLS or any(c_lower.endswith(x) for x in ("_id", "email", "name", "country", "status", "date", "phone", "code")):
+        return [f"{ds_var}[{_col_expr(col)}] = {ds_var}[{_col_expr(col)}].astype('string')"]
     return [f"{ds_var}[{_col_expr(col)}] = {ds_var}[{_col_expr(col)}].astype('Int64')"]
 
 
@@ -507,6 +513,8 @@ _ACTION_REGISTRY: Dict[str, Callable[[str, str, Dict[str, Any]], List[str]]] = {
     "standardize_boolean": _emit_standardize_boolean,
     "deduplicate": _emit_deduplicate_col,
     "replace_sentinel_values": _emit_replace_sentinel_values,
+    "nullify_sentinels": _emit_replace_sentinel_values,
+    "nullify_sentinel": _emit_replace_sentinel_values,
     "fill_nulls_flag": _emit_fill_nulls_flag,
     "parse_dates_safe": _emit_parse_dates_safe,
     "flag_domain_violation": _emit_flag_domain_violation,
@@ -522,7 +530,7 @@ _ACTION_REGISTRY: Dict[str, Callable[[str, str, Dict[str, Any]], List[str]]] = {
     "exclude_column": _emit_drop_column,
     "nullify_future_dates": _emit_nullify_future_dates,
     "nullify_punctuation": _emit_nullify_punctuation,
-        "noop": _emit_noop,
+    "noop": _emit_noop,
     "validate_referential_integrity_or_stage": _emit_ri,
     "validate_and_partition_relationship": _emit_ri,
     "at_least_one": _emit_at_least_one,
