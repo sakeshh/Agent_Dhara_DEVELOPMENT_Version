@@ -236,15 +236,13 @@ def _orchestrate_sql_execution_impl(
             logger.info(f"DQ gate issues detected for session {session_id} (proceeding with execution): {dq_warnings}")
 
 
-
-    # 3.3 Idempotency Cache Guard
+    # 3.3 Idempotency Cache Guard (Only return cache if previous run SUCCEEDED)
     idempotency_key = hashlib.sha256(f"{sql}_{dry_run}".encode("utf-8")).hexdigest()
     if idempotency_key in _EXEC_CACHE:
-        logger.info(f"Returning cached execution result for key: {idempotency_key}")
         cached_res = dict(_EXEC_CACHE[idempotency_key])
-        cached_res["run_id"] = rid
-        cached_res["timestamp_utc"] = now_str
-        return cached_res
+        if cached_res.get("ok"):
+            return cached_res
+
 
     # 1. Validate SQL with validate_sql_basic
     valid, hard_errors, advisory_warnings = validate_sql_basic(sql)

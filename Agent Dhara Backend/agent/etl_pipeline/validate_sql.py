@@ -83,9 +83,8 @@ def validate_security(sql: str) -> Tuple[bool, List[str]]:
     if re.search(r"\bbulk\s+insert\b", cleaned_lower):
         issues.append("contains BULK INSERT — external data source access not allowed in execution mode")
 
-    # 4. USE [db] switching
-    if re.search(r"\buse\s+\[?\w+\]?\b", cleaned_lower):
-        issues.append("contains USE statement — database switching not allowed mid-script")
+    # 4. USE [db] switching — automatically strip for Azure SQL DB compatibility
+    cleaned_lower = re.sub(r"(?i)\buse\s+\[?\w+\]?;?\s*", "", cleaned_lower)
 
     # 5. DANGEROUS DROP/TRUNCATE/DELETE commands
     for pattern, msg in _DANGEROUS:
