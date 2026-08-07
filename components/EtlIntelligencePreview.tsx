@@ -231,18 +231,18 @@ export function OverallReadinessBanner({
   const color =
     blockedCount > 0 || blockedStepCount > 0
       ? darkMode
-        ? 'border-rose-400/40 bg-rose-500/10'
-        : 'border-rose-200 bg-rose-50'
+        ? 'border-rose-400/40 bg-rose-950/60 text-rose-100'
+        : 'border-rose-300 bg-rose-50 text-slate-900'
       : manualPending > 0 || reviewCount > 0
         ? darkMode
-          ? 'border-amber-400/40 bg-amber-500/10'
-          : 'border-amber-200 bg-amber-50'
+          ? 'border-amber-400/40 bg-amber-950/60 text-amber-100'
+          : 'border-amber-300 bg-amber-50 text-slate-900'
         : darkMode
-          ? 'border-emerald-400/30 bg-emerald-500/10'
-          : 'border-emerald-200 bg-emerald-50';
+          ? 'border-emerald-400/30 bg-emerald-950/60 text-emerald-100'
+          : 'border-emerald-300 bg-emerald-50 text-slate-900';
 
-  const text = darkMode ? 'text-zinc-100' : 'text-zinc-800';
-  const sub = darkMode ? 'text-zinc-300' : 'text-zinc-600';
+  const text = darkMode ? 'text-zinc-100 font-bold' : 'text-slate-900 font-bold';
+  const sub = darkMode ? 'text-zinc-200 font-medium' : 'text-slate-800 font-semibold';
 
   const validationErrorsCount = Array.isArray(plan?.build_warnings)
     ? plan.build_warnings.length
@@ -258,9 +258,9 @@ export function OverallReadinessBanner({
   return (
     <div className={`rounded-xl border p-4 ${color}`}>
       <div className={`mb-2 flex items-center justify-between ${text}`}>
-        <span className="text-sm font-semibold">ETL Readiness Score</span>
+        <span className="text-sm font-bold">ETL Readiness Score</span>
         {isPlanFailed ? (
-          <span className="inline-block px-2 py-1 rounded bg-rose-500/20 text-rose-600 text-xs font-black uppercase">VALIDATION_FAILED</span>
+          <span className="inline-block px-2 py-1 rounded bg-rose-500/25 text-rose-700 dark:text-rose-300 text-xs font-black uppercase">VALIDATION_FAILED</span>
         ) : (
           <span className="text-2xl font-bold">{etlReadiness}%</span>
         )}
@@ -270,53 +270,53 @@ export function OverallReadinessBanner({
 
       {/* Premium Execution Gateway Grid */}
       <div className={`mb-4 p-3 rounded-lg border text-xs grid grid-cols-2 sm:grid-cols-3 gap-3 ${
-        darkMode ? 'bg-black/20 border-white/5' : 'bg-white/40 border-black/5'
+        darkMode ? 'bg-zinc-900/90 border-zinc-700 text-zinc-100' : 'bg-white border-amber-200/80 text-slate-900 shadow-sm'
       }`}>
         <div>
-          <span className="opacity-60 block text-[10px] font-bold uppercase tracking-wider">Phase 1 Plan Status</span>
-          <span className={`font-black text-xs ${isPlanFailed ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-800 dark:text-zinc-200">Phase 1 Plan Status</span>
+          <span className={`font-black text-xs ${isPlanFailed ? 'text-rose-700 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
             {isPlanFailed ? 'VALIDATION_FAILED' : 'VALIDATED'}
           </span>
         </div>
         <div>
-          <span className="opacity-60 block text-[10px] font-bold uppercase tracking-wider">Source DQ Score</span>
-          <span className="font-black text-xs text-amber-600 dark:text-amber-400">
+          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-800 dark:text-zinc-200">Source DQ Score</span>
+          <span className="font-black text-xs text-amber-700 dark:text-amber-400">
             {plan?.readiness_scorecard ? (plan.readiness_scorecard as any)["Overall"]?.ledger?.source_score ?? '65.2' : '65.2'}%
           </span>
         </div>
         <div>
-          <span className="opacity-60 block text-[10px] font-bold uppercase tracking-wider">Projected Post-Prep Score</span>
-          <span className="font-black text-xs text-sky-600 dark:text-sky-400">
+          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-800 dark:text-zinc-200">Projected Post-Prep Score</span>
+          <span className="font-black text-xs text-sky-700 dark:text-sky-400">
             {plan?.readiness_scorecard ? (plan.readiness_scorecard as any)["Overall"]?.score ?? '79.7' : '79.7'}%
           </span>
         </div>
         <div>
-          <span className="opacity-60 block text-[10px] font-bold uppercase tracking-wider">Projection Status</span>
-          <span className={`font-black text-xs ${isPlanFailed ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-800 dark:text-zinc-200">Projection Status</span>
+          <span className={`font-black text-xs ${isPlanFailed ? 'text-rose-700 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
             {isPlanFailed ? 'UNVALIDATED' : 'VALIDATED'}
           </span>
         </div>
         <div>
-          <span className="opacity-60 block text-[10px] font-bold uppercase tracking-wider">Code Gen Eligibility</span>
-          <span className={`font-black text-xs ${isPlanFailed ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-800 dark:text-zinc-200">Code Gen Eligibility</span>
+          <span className={`font-black text-xs ${isPlanFailed ? 'text-rose-700 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
             {isPlanFailed ? 'NO' : 'YES'}
           </span>
         </div>
         <div>
-          <span className="opacity-60 block text-[10px] font-bold uppercase tracking-wider">Automatic Steps</span>
-          <span className="font-black text-xs">{autoCount} / {totalDecisions} ({autoCoveragePct}%)</span>
+          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-800 dark:text-zinc-200">Automatic Steps</span>
+          <span className="font-extrabold text-xs text-slate-900 dark:text-zinc-100">{autoCount} / {totalDecisions} ({autoCoveragePct}%)</span>
         </div>
         <div>
-          <span className="opacity-60 block text-[10px] font-bold uppercase tracking-wider">Approved Manual Steps</span>
-          <span className="font-black text-xs">{approvedManualCount} / {totalDecisions} ({manualCoveragePct}%)</span>
+          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-800 dark:text-zinc-200">Approved Manual Steps</span>
+          <span className="font-extrabold text-xs text-slate-900 dark:text-zinc-100">{approvedManualCount} / {totalDecisions} ({manualCoveragePct}%)</span>
         </div>
         <div>
-          <span className="opacity-60 block text-[10px] font-bold uppercase tracking-wider">Destructive Steps</span>
-          <span className="font-black text-xs">{destructiveCount}</span>
+          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-800 dark:text-zinc-200">Destructive Steps</span>
+          <span className="font-extrabold text-xs text-slate-900 dark:text-zinc-100">{destructiveCount}</span>
         </div>
         <div>
-          <span className="opacity-60 block text-[10px] font-bold uppercase tracking-wider">Policy Cards Resolved</span>
-          <span className="font-black text-xs">{manualResolved} / {totalCards}</span>
+          <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-800 dark:text-zinc-200">Policy Cards Resolved</span>
+          <span className="font-extrabold text-xs text-slate-900 dark:text-zinc-100">{manualResolved} / {totalCards}</span>
         </div>
       </div>
 
@@ -391,15 +391,15 @@ export function OverallReadinessBanner({
 
       {plan?.readiness_scorecard && (
         <div className={`mt-3 mb-4 overflow-x-auto rounded-lg border p-2 ${
-          darkMode ? 'border-white/10 bg-black/30' : 'border-black/5 bg-white/60'
+          darkMode ? 'border-white/10 bg-black/40 text-zinc-100' : 'border-slate-200 bg-white/80 text-slate-900 shadow-sm'
         }`}>
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="border-b border-black/10 opacity-70">
-                <th className="pb-1.5 font-bold">Dataset</th>
-                <th className="pb-1.5 font-bold text-center">Score</th>
-                <th className="pb-1.5 font-bold text-center">Readiness</th>
-                <th className="pb-1.5 font-bold pl-2">Primary Reason</th>
+              <tr className="border-b border-slate-300 dark:border-white/20">
+                <th className="pb-1.5 font-extrabold text-slate-900 dark:text-zinc-100">Dataset</th>
+                <th className="pb-1.5 font-extrabold text-center text-slate-900 dark:text-zinc-100">Score</th>
+                <th className="pb-1.5 font-extrabold text-center text-slate-900 dark:text-zinc-100">Readiness</th>
+                <th className="pb-1.5 font-extrabold pl-2 text-slate-900 dark:text-zinc-100">Primary Reason</th>
               </tr>
             </thead>
             <tbody>
@@ -409,7 +409,7 @@ export function OverallReadinessBanner({
                 return (
                   <Fragment key={ds}>
                     <tr className="border-b border-black/5 last:border-0 hover:bg-black/5">
-                      <td className="py-1.5 font-semibold font-mono flex items-center gap-1">
+                      <td className="py-1.5 font-bold font-mono flex items-center gap-1 text-slate-900 dark:text-zinc-100">
                         {hasLedger && (
                           <button
                             type="button"
@@ -421,19 +421,19 @@ export function OverallReadinessBanner({
                         )}
                         {ds}
                       </td>
-                      <td className="py-1.5 text-center font-semibold">{card.score}%</td>
+                      <td className="py-1.5 text-center font-bold text-slate-900 dark:text-zinc-100">{card.score}%</td>
                       <td className="py-1.5 text-center">
                         <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
                           card.readiness === 'NEEDS_WORK' 
-                            ? 'bg-rose-500/20 text-rose-600' 
+                            ? 'bg-rose-500/20 text-rose-700 dark:text-rose-400' 
                             : card.readiness === 'READY_WITH_WARNINGS' 
-                              ? 'bg-amber-500/20 text-amber-600' 
-                              : 'bg-emerald-500/20 text-emerald-600'
+                              ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400' 
+                              : 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400'
                         }`}>
                           {card.readiness.replace(/_/g, ' ')}
                         </span>
                       </td>
-                      <td className="py-1.5 pl-2 opacity-80">{card.primary_reason}</td>
+                      <td className="py-1.5 pl-2 font-medium text-slate-800 dark:text-zinc-200">{card.primary_reason}</td>
                     </tr>
                     {hasLedger && isExpanded && (
                       <tr className={darkMode ? 'bg-white/5' : 'bg-black/5'}>
