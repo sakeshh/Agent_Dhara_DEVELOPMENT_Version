@@ -2052,9 +2052,10 @@ def _consolidate_and_filter_datasets(
                 is_measure = any(m in col_lower for m in ("budget", "amount", "qty", "quantity", "price", "cost", "score", "total", "val", "production_qty", "revenue", "sales", "count", "fee", "balance"))
                 if is_measure and action in ("cast_type", "cast"):
                     params = step.setdefault("params", {})
-                    params["target_dtype"] = "double"
-                    params["target_type"] = "double"
-                    logger.info(f"[Step Filter] Enforced target_dtype='double' for measure column '{col}'")
+                    if "target_type" not in params and "target_dtype" not in params:
+                        params["target_dtype"] = "double"
+                        params["target_type"] = "double"
+                        logger.info(f"[Step Filter] Enforced default target_dtype='double' for measure column '{col}'")
 
             # F. Candidate Key Auto-Resolution for Row-Level Duplicate Steps
             if action in ("flag_duplicate_candidates", "flag_business_key_duplicate", "deduplicate"):
@@ -2570,10 +2571,11 @@ def _call_llm(
     *,
     fix_errors: Optional[List[str]] = None,
     previous_output: Optional[str] = None,
-) -> str:
+) -> Tuple[str, str]:
     client, model = _get_llm_client()
     if not client or not model:
-        return f"{LLM_ERROR_PREFIX} No LLM credentials (configure AZURE_OPENAI_* or OPENAI_API_KEY)."
+        err = f"{LLM_ERROR_PREFIX} No LLM credentials (configure AZURE_OPENAI_* or OPENAI_API_KEY)."
+        return err, err
 
     # 1.5 dynamic system prompt injection
     system = SYSTEM_PROMPTS.get(engine_key, SYSTEM_PROMPTS["python"])
@@ -3224,4 +3226,46 @@ def run_codegen_sync(coro):
             return new_loop.run_until_complete(coro)
         finally:
             new_loop.close()
+
+
+def _enforce_plan_steps_in_code(code: str, plan: Dict[str, Any]) -> str:
+    """Post-processor that enforces missing plan steps in generated transformation code."""
+    if not code or not plan:
+        return code
+
+    datasets = plan.get("datasets") or {}
+    for ds_name, block in datasets.items():
+        steps = (block or {}).get("steps") or []
+        for st in steps:
+            col = st.get("column") or ""
+            action = str(st.get("action") or "").lower()
+
+            if action == "normalize_registered_placeholder":
+                flag_col = f"is_placeholder_{col}"
+                if flag_col not in code or "lit(None)" not in code:
+                    patch_lines = [
+                        f"    # Enforce normalize_registered_placeholder for {col}",
+                        f"    if '{col}' in df.columns:",
+                        f"        df = df.withColumn('{flag_col}', F.col('{col}').isin('placeholder', 'dummy', 'test', 'n/a', 'null', 'na'))",
+                        f"        df = df.withColumn('{col}', F.when(F.col('{flag_col}'), F.lit(None)).otherwise(F.col('{col}')))",
+                    ]
+                    if "return df" in code:
+                        code = code.replace("return df", "\n".join(patch_lines) + "\n    return df")
+                    else:
+                        code = code + "\n" + "\n".join(patch_lines)
+
+            elif action == "flag_cross_field_violation":
+                flag_col = f"is_cross_field_violation_{col}" if col else "cross_field_violation"
+                if "cross_field_violation" not in code.lower() and f"is_negative_{col}" not in code:
+                    patch_lines = [
+                        f"    # Enforce flag_cross_field_violation for {col}",
+                        f"    if '{col}' in df.columns:",
+                        f"        df = df.withColumn('{flag_col}', F.col('{col}') < 0)",
+                    ]
+                    if "return df" in code:
+                        code = code.replace("return df", "\n".join(patch_lines) + "\n    return df")
+                    else:
+                        code = code + "\n" + "\n".join(patch_lines)
+
+    return code
 

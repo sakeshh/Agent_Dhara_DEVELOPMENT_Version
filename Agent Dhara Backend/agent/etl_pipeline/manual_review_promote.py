@@ -801,9 +801,13 @@ def canonicalize_promoted_plan(
                 elif any(x in dtype for x in ("int", "decimal", "float", "double", "numeric")):
                     st["action"] = "preserve_null_and_flag"
                     st["note"] = f"Canonicalized: preserve null and flag for measure {col}"
+                    st.setdefault("params", {})["status_column"] = f"{col}_validation_status"
+                    st["params"]["reason_column"] = f"{col}_validation_reason"
                 elif any(x in dtype for x in ("date", "time")):
                     st["action"] = "preserve_null_and_flag"
                     st["note"] = f"Canonicalized: preserve null and flag for date {col}"
+                    st.setdefault("params", {})["status_column"] = f"{col}_validation_status"
+                    st["params"]["reason_column"] = f"{col}_validation_reason"
                 else:
                     st["action"] = "preserve_null"
                     st["note"] = f"Canonicalized: preserve null for optional text {col}"

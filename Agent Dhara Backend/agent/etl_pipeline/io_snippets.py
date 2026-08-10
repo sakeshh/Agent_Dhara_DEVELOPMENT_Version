@@ -67,12 +67,56 @@ def _resolve_data_path(location: str) -> str:
     low = loc.lower()
     if low.startswith(("abfss://", "wasbs://", "http" + "s://", "http" + "://")):
         return loc
+
+    # Configure Azure Storage ABFSS key if environment provides credentials
+    try:
+        _acc = os.environ.get("AZURE_STORAGE_ACCOUNT", "").strip()
+        _key = os.environ.get("AZURE_STORAGE_KEY", "").strip() or os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "").strip()
+        if _acc and _key and "DefaultEndpointsProtocol" not in _key and "spark" in globals():
+            spark.conf.set(f"fs.azure.account.key.{_acc}.dfs.core.windows.net", _key)
+    except Exception:
+        pass
+
     base = os.environ.get("DHARA_BLOB_BASE_PATH") or os.environ.get("DHARA_BLOB_MOUNT") or "."
     account = os.environ.get("AZURE_STORAGE_ACCOUNT", "").strip()
     container = os.environ.get("DHARA_BLOB_CONTAINER", "").strip()
     if account and container and not os.path.isabs(loc):
         return f"abfss://{container}@{account}.dfs.core.windows.net/{loc.lstrip('/')}"
-    return os.path.join(base, loc) if not os.path.isabs(loc) else loc
+
+    clean_loc = loc.lstrip("/")
+    filename = clean_loc.split("/")[-1]
+    candidates = []
+    if clean_loc.startswith(("Files/", "Tables/")):
+        candidates.append(clean_loc)
+    else:
+        candidates.extend([
+            f"Files/{clean_loc}",
+            f"Files/raw/{clean_loc}",
+            f"Files/landing/{clean_loc}",
+            os.path.join(base, loc) if not os.path.isabs(loc) else loc
+        ])
+    if filename and filename != clean_loc:
+        candidates.extend([
+            f"Files/{filename}",
+            f"Files/raw/{filename}"
+        ])
+
+    try:
+        from notebookutils import mssparkutils  # type: ignore
+        for cand in candidates:
+            try:
+                if mssparkutils.fs.exists(cand):
+                    return cand
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    for cand in candidates:
+        if os.path.exists(cand):
+            return cand
+
+    return candidates[0] if candidates else loc
 '''.strip()
 
 
@@ -80,15 +124,58 @@ def resolve_path_fabric_pyspark_helper(workspace_id: Optional[str] = None, lakeh
     """Path resolver for code running INSIDE a Fabric Spark Notebook."""
     return '''
 def _resolve_data_path(location: str) -> str:
+    import os
     loc = (location or "").strip()
     if not loc:
         raise ValueError("location is missing")
-    if loc.startswith("abfss://"):
+    if loc.startswith(("abfss://", "wasbs://", "http://", "https://")):
         return loc
     clean_loc = loc.lstrip("/")
-    if not clean_loc.startswith(("Files/", "Tables/")):
-        clean_loc = f"Files/{clean_loc}"
-    return clean_loc
+    filename = clean_loc.split("/")[-1]
+
+    # Configure Azure Storage ABFSS key if environment provides credentials
+    try:
+        _acc = os.environ.get("AZURE_STORAGE_ACCOUNT", "").strip()
+        _key = os.environ.get("AZURE_STORAGE_KEY", "").strip() or os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "").strip()
+        if _acc and _key and "DefaultEndpointsProtocol" not in _key and "spark" in globals():
+            spark.conf.set(f"fs.azure.account.key.{_acc}.dfs.core.windows.net", _key)
+    except Exception:
+        pass
+
+    candidates = []
+    if clean_loc.startswith(("Files/", "Tables/")):
+        candidates.append(clean_loc)
+        if not clean_loc.startswith("Files/raw/"):
+            candidates.append(f"Files/raw/{clean_loc.replace('Files/', '', 1)}")
+    else:
+        candidates.extend([
+            f"Files/{clean_loc}",
+            f"Files/raw/{clean_loc}",
+            f"Files/landing/{clean_loc}",
+            clean_loc
+        ])
+    if filename and filename != clean_loc:
+        candidates.extend([
+            f"Files/{filename}",
+            f"Files/raw/{filename}"
+        ])
+
+    try:
+        from notebookutils import mssparkutils  # type: ignore
+        for cand in candidates:
+            try:
+                if mssparkutils.fs.exists(cand):
+                    return cand
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    for cand in candidates:
+        if os.path.exists(cand):
+            return cand
+
+    return candidates[0] if candidates else clean_loc
 '''.strip()
 
 

@@ -30,6 +30,24 @@ def test_validate_ok_plan():
     assert ok and not errs
 
 
+def test_validate_preserve_null_and_flag_auto_defaults_params():
+    plan = {
+        "datasets": {
+            "customers": {
+                "steps": [
+                    {"step_id": "STEP-1", "order": 1, "column": "age", "action": "preserve_null_and_flag", "params": {}},
+                ]
+            }
+        },
+        "blocked": [],
+    }
+    ok, errs = validate_etl_plan(plan, _assess(), {})
+    assert ok, f"Expected plan to validate cleanly but got errors: {errs}"
+    step = plan["datasets"]["customers"]["steps"][0]
+    assert step["params"].get("status_column") == "age_validation_status"
+    assert step["params"].get("reason_column") == "age_validation_reason"
+
+
 def test_validate_missing_column():
     plan = {
         "datasets": {

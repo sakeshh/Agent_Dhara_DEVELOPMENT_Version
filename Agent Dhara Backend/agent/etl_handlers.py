@@ -1707,13 +1707,24 @@ def etl_execute_sql(
             "message": "No generated SQL/PySpark code found for this session. Generate code first."
         }
 
-    # Dynamically re-verify code validity before execution to prevent stale validation status
-    if is_fabric or target_engine in ("spark", "pyspark"):
+    # Dynamically re-verify code validity before execution using the actual code language
+    code_str = str(code or "")
+    is_pyspark_code = target_engine in ("spark", "pyspark", "fabric_pyspark") or "import pyspark" in code_str or "from pyspark" in code_str or "SparkSession" in code_str
+    is_sql_code = target_engine in ("sql", "tsql", "ansi", "fabric_tsql") or code_str.strip().startswith(("--", "CREATE PROCEDURE", "SELECT", "CREATE TABLE", "WITH", "EXEC", "TRUNCATE", "MERGE"))
+    is_python_code = target_engine == "python" and not is_pyspark_code
+
+    if is_pyspark_code:
         from agent.etl_pipeline.validate_pyspark import validate_pyspark_source
         v_ok, v_errs = validate_pyspark_source(code, flow.get("plan"))
         flow["validation_ok"] = v_ok
         flow["validation_errors"] = v_errs
-    elif target_engine == "python":
+    elif is_sql_code:
+        from agent.etl_pipeline.validate_sql import validate_sql_basic
+        v_ok, hard_errors, advisory_warnings = validate_sql_basic(code)
+        v_errs = hard_errors
+        flow["validation_ok"] = v_ok
+        flow["validation_errors"] = v_errs
+    elif is_python_code:
         from agent.etl_pipeline.validate_python import validate_etl_python_source
         v_ok, v_errs = validate_etl_python_source(code, flow.get("plan"))
         flow["validation_ok"] = v_ok
@@ -1741,11 +1752,13 @@ def etl_execute_sql(
         from datetime import datetime, timezone
         from agent.execution import execute_plan, ExecutionPlan, ExecutionEngine
         
+        fabric_engine = ExecutionEngine.FABRIC_WAREHOUSE if is_sql_code else ExecutionEngine.FABRIC_PYSPARK
         rid = f"fabric-run-{uuid.uuid4().hex[:8]}"
         plan = ExecutionPlan(
             plan_id=rid,
-            engine=ExecutionEngine.FABRIC_PYSPARK,
+            engine=fabric_engine,
             code=code,
+            dialect="tsql" if is_sql_code else "pyspark",
             metadata={
                 "session_id": sid,
                 "lakehouse_id": flow.get("lakehouse_id"),

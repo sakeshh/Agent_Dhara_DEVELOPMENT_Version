@@ -379,19 +379,21 @@ def _emit_spark(
                     f".otherwise(F.lit(None).cast({repr(target_type)})))"
                 ]
             res = [
+                f"{df} = {df}.withColumn({c}, F.col({c}).cast({repr(target_type)}))",
                 f"{df} = {df}.withColumn({repr(raw_col)}, F.col({c}).cast('string'))",
-                f"{df} = {df}.withColumn({repr(clean_col)}, F.col({repr(raw_col)}).cast({repr(target_type)}))",
+                f"{df} = {df}.withColumn({repr(clean_col)}, F.col({c}))",
             ]
             if any(m in str(col).lower() for m in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val")):
                 col_safe = _safe(col or "col")
                 neg_flag = repr(f"is_negative_{col_safe}")
-                res.append(f"{df} = {df}.withColumn({neg_flag}, (F.col({repr(clean_col)}).isNotNull() & (F.col({repr(clean_col)}) < 0)).cast('boolean'))")
+                res.append(f"{df} = {df}.withColumn({neg_flag}, (F.col({c}).isNotNull() & (F.col({c}) < 0)).cast('boolean'))")
             return res
         
         # For non-integer targets (e.g. double, string):
         res = [
+            f"{df} = {df}.withColumn({c}, F.col({c}).cast({repr(target_type)}))",
             f"{df} = {df}.withColumn({repr(raw_col)}, F.col({c}).cast('string'))",
-            f"{df} = {df}.withColumn({repr(clean_col)}, F.col({repr(raw_col)}).cast({repr(target_type)}))",
+            f"{df} = {df}.withColumn({repr(clean_col)}, F.col({c}))",
         ]
         if any(m in str(col).lower() for m in ("amount", "budget", "qty", "quantity", "price", "cost", "score", "total", "val")):
             col_safe = _safe(col or "col")
@@ -631,6 +633,7 @@ def _emit_spark(
                 expected_keys.append(k)
         key_cols_str = ", ".join(repr(k) for k in expected_keys)
         
+        col_safe = _safe(col or "business_key")
         return [
             f"# DHARA_STEP: {step_id}",
             f"# DHARA_ACTION: flag_business_key_duplicate",
@@ -638,6 +641,7 @@ def _emit_spark(
             f"_key_window = Window.partitionBy({key_cols_str})",
             f"{df} = {df}.withColumn('business_key_group_size', F.count(F.lit(1)).over(_key_window))",
             f"{df} = {df}.withColumn('is_business_key_duplicate', (F.col('business_key_group_size') > 1).cast('boolean'))",
+            f"{df} = {df}.withColumn({repr(f'is_duplicate_{col_safe}')}, F.col('is_business_key_duplicate'))",
         ]
     if act == "flag_near_duplicate_cluster":
         col_safe = _safe(col or "row")
@@ -1026,7 +1030,7 @@ def generate_pyspark_etl(plan: Dict[str, Any], assessment: Dict[str, Any]) -> st
     lines.append("")
 
     non_nullable = [str(c) for c in (rules.get("non_nullable") or []) if c]
-    if manifest.get("datasets") or rel.get("joins"):
+    if manifest.get("datasets") or rel.get("joins") or plan.get("datasets"):
         for sl in emit_pyspark_output_contract(plan, manifest):
             lines.append(sl)
         lines.append("def run_pipeline(spark):")

@@ -287,7 +287,7 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
         "phase": 1, "auto_eligible": False, "destructive": False,
         "requires_review": True, "changes_row_population": False,
         "changes_business_meaning": False,
-        "required_params": ["status_column", "reason_column"],
+        "required_params": [],
         "description": (
             "Preserve null value and add validation status + reason columns. "
             "When promoted via manual review, execution mode is APPROVED_MANUAL."

@@ -185,6 +185,43 @@ class TestFabricMirrorHandlerHook(unittest.TestCase):
         self.assertTrue(dummy_flow["fabric_mirror_result"]["ok"])
         self.assertEqual(dummy_flow["fabric_mirror_result"]["details"][0]["table"], "Customers_Clean")
 
+    @patch("agent.etl_handlers.load_session")
+    @patch("agent.etl_handlers.save_session")
+    @patch("agent.execution.execute_plan")
+    def test_etl_execute_sql_fabric_tsql_validation(
+        self,
+        mock_execute_plan,
+        mock_save_session,
+        mock_load_session
+    ):
+        dummy_flow = {
+            "phase": "code_ready",
+            "execution_target": "fabric",
+            "target_engine": "tsql",
+            "code": "SELECT TOP 10 * FROM dbo.Employees;",
+            "plan": {"plan_id": "p123"}
+        }
+        mock_load_session.return_value = {
+            "context": {
+                "etl_flow": dummy_flow
+            }
+        }
+        mock_exec_res = MagicMock()
+        mock_exec_res.ok = True
+        mock_exec_res.run_id = "run-1"
+        mock_exec_res.committed = True
+        mock_exec_res.rows_affected = 10
+        mock_exec_res.duration_ms = 120.0
+        mock_exec_res.batch_results = []
+        mock_exec_res.error = None
+        mock_exec_res.dict.return_value = {}
+        mock_execute_plan.return_value = mock_exec_res
+
+        res = etl_execute_sql("session-tsql-fabric")
+        self.assertTrue(res["ok"], f"Expected ok=True but got: {res}")
+        self.assertTrue(dummy_flow["validation_ok"])
+        self.assertEqual(dummy_flow["validation_errors"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

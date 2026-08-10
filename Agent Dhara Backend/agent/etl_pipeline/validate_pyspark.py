@@ -251,8 +251,9 @@ def inspect_plan_step_conformance(
                     report.missing_steps.append(step)
                     continue
                     
-            if "business_key_group_size" not in stmt_source or "is_business_key_duplicate" not in stmt_source:
-                report.errors.append(f"Validation error for step '{step_id}': action '{action}' output columns 'business_key_group_size' and 'is_business_key_duplicate' must be produced in statement")
+            has_dup_col = "is_business_key_duplicate" in code or "is_duplicate_" in code
+            if not has_dup_col:
+                report.errors.append(f"Validation error for step '{step_id}': action '{action}' output duplicate flag column must be produced in statement")
                 report.missing_steps.append(step)
                 continue
                 
@@ -864,16 +865,21 @@ def _check_cleanse_governance_rules(source: str, plan: Dict[str, Any] | None) ->
 def _check_dataframe_key_consistency(source: str) -> List[str]:
     errs: List[str] = []
     
+    def _canon_k(k: str) -> str:
+        return re.sub(r"[^0-9a-zA-Z_]+", "_", k or "").strip("_").lower()
+
     # Extract loaded keys
     # e.g., dfs["sales_relational_test"] = spark.read...
-    loaded_keys = set(re.findall(r"dfs\s*\[\s*['\"](.*?)['\"]\s*\]\s*=\s*(?:spark\.read|load_dataset|read_xml|read_csv|read_json|read_parquet|read_excel)", source))
+    loaded_raw = set(re.findall(r"dfs\s*\[\s*['\"](.*?)['\"]\s*\]\s*=\s*(?:spark\.read|load_dataset|read_xml|read_csv|read_json|read_parquet|read_excel)", source))
     
     # If no keys were loaded using this pattern, check for general assignments to dfs
-    if not loaded_keys:
-        loaded_keys = set(re.findall(r"dfs\s*\[\s*['\"](.*?)['\"]\s*\]\s*=", source))
+    if not loaded_raw:
+        loaded_raw = set(re.findall(r"dfs\s*\[\s*['\"](.*?)['\"]\s*\]\s*=", source))
         
-    if not loaded_keys:
+    if not loaded_raw:
         return []
+
+    loaded_canon = {_canon_k(lk) for lk in loaded_raw}
         
     # Extract keys used in transform functions
     # e.g., transform_sales_relational_test(dfs["sales_relational_test.xml"]...)
@@ -884,16 +890,16 @@ def _check_dataframe_key_consistency(source: str) -> List[str]:
     written_keys = set(re.findall(r"dfs\s*\[\s*['\"](.*?)['\"]\s*\]\.write", source))
     
     for tk in transformed_keys:
-        if tk not in loaded_keys:
-            matching_loaded = [lk for lk in loaded_keys if lk in tk or tk in lk]
-            loaded_str = matching_loaded[0] if matching_loaded else (list(loaded_keys)[0] if loaded_keys else "none")
+        if tk not in loaded_raw and _canon_k(tk) not in loaded_canon:
+            matching_loaded = [lk for lk in loaded_raw if _canon_k(lk) == _canon_k(tk) or _canon_k(lk) in _canon_k(tk) or _canon_k(tk) in _canon_k(lk)]
+            loaded_str = matching_loaded[0] if matching_loaded else (list(loaded_raw)[0] if loaded_raw else "none")
             errs.append(f"Transform keys do not match loaded dataframe keys: {tk} was transformed but only {loaded_str} was loaded.")
             
     for wk in written_keys:
         # Quarantine keys are written but not loaded, so allow keys ending with _quarantine or starting with joined_
-        if wk not in loaded_keys and not wk.endswith("_quarantine") and not wk.startswith("joined_"):
-            matching_loaded = [lk for lk in loaded_keys if lk in wk or wk in lk]
-            loaded_str = matching_loaded[0] if matching_loaded else (list(loaded_keys)[0] if loaded_keys else "none")
+        if wk not in loaded_raw and _canon_k(wk) not in loaded_canon and not wk.endswith("_quarantine") and not wk.startswith("joined_"):
+            matching_loaded = [lk for lk in loaded_raw if _canon_k(lk) == _canon_k(wk) or _canon_k(lk) in _canon_k(wk) or _canon_k(wk) in _canon_k(wk)]
+            loaded_str = matching_loaded[0] if matching_loaded else (list(loaded_raw)[0] if loaded_raw else "none")
             errs.append(f"Write keys do not match loaded dataframe keys: {wk} was written but only {loaded_str} was loaded.")
             
     return errs

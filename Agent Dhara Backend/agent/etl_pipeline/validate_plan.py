@@ -69,6 +69,10 @@ def validate_etl_plan(
                 continue
             action = str(st.get("action") or "")
             col = st.get("column")
+            params = st.setdefault("params", {})
+            if action == "preserve_null_and_flag" and col:
+                params.setdefault("status_column", f"{col}_validation_status")
+                params.setdefault("reason_column", f"{col}_validation_reason")
             if action == "drop_rows" and never_drop:
                 errs.append(f"never_drop_rows: drop_rows on {ds_name}.{col} is not allowed")
             if col and str(col) not in cols and str(col) not in ("*", "[Row-level]"):
@@ -358,7 +362,10 @@ def validate_promoted_plan(
             action = str(st.get("action") or "")
             col = st.get("column")
             step_id = st.get("step_id")
-            params = st.get("params") or {}
+            params = st.setdefault("params", {})
+            if action == "preserve_null_and_flag" and col:
+                params.setdefault("status_column", f"{col}_validation_status")
+                params.setdefault("reason_column", f"{col}_validation_reason")
             policy_card_id = st.get("evidence", {}).get("user_resolution") or st.get("note")
 
             # 1. Step ID uniqueness

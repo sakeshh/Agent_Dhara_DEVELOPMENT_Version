@@ -166,6 +166,10 @@ def write_to_lakehouse(df: pd.DataFrame, table_name: str, mode: str = "append", 
         return {"ok": False, "error": "LIBRARY_NOT_FOUND", "message": err_msg}
 
     storage_options = get_fabric_storage_options()
+    if "bearer_token" not in storage_options and "client_id" not in storage_options:
+        err_msg = "Authentication failed: Could not acquire Azure storage access token via DefaultAzureCredential or Service Principal. Please run 'az login --tenant <tenant-id>'."
+        logger.error(err_msg)
+        return {"ok": False, "error": "AUTH_FAILED", "message": err_msg}
 
     # Meta check & strict schema validation
     table_exists = False

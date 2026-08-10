@@ -952,10 +952,10 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     continue
                 col_clean = str(col).replace("'", "''")
                 if action in ("flag_outliers", "clip_or_flag"):
-                    ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{tbl_clean}') AND name = '{col_clean}_outlier_flagged')")
+                    ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{col_clean}_outlier_flagged')")
                     ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{col_clean}_outlier_flagged] BIT NOT NULL DEFAULT 0;")
                 elif action == "cast_type":
-                    ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{tbl_clean}') AND name = '{col_clean}_int')")
+                    ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{col_clean}_int')")
                     ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{col_clean}_int] BIGINT;")
                 
             if ddl_lines:
@@ -1520,11 +1520,8 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                         invalid_values_to_seed[key] = [str(v) for v in replace_vals]
                     
                         alias_iv = f"iv_{col_clean_name.replace('.', '_').replace(' ', '_')[:35]}"
-                        if col_class == "date":
-                            # Date columns compare as string explicitly to avoid conversion issues with sentinel values like '###'
-                            join_cond = f"CAST(c.{col_bracket} AS NVARCHAR(MAX)) = {alias_iv}.invalid_value"
-                        else:
-                            join_cond = f"{cast_func}({alias_iv}.invalid_value AS {cast_type}) = c.{col_bracket}"
+                        # Compare string-to-string for all columns to avoid conversion errors with sentinel values like '###' or 'nan' in staging
+                        join_cond = f"CAST(c.{col_bracket} AS NVARCHAR(MAX)) = {alias_iv}.invalid_value"
                         join_clauses.append(
                             f"LEFT JOIN dbo.etl_invalid_values {alias_iv} ON {alias_iv}.column_name = '{key}' "
                             f"AND {join_cond}"
@@ -1534,13 +1531,13 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     
                     if col in fill_step_map:
                         if strat == "mean" and fval is None and dialect == "tsql":
-                            expr = f"COALESCE({expr}, (SELECT AVG(CAST(c2.{col_bracket} AS FLOAT)) FROM {tbl_staging} c2 WHERE c2.{col_bracket} IS NOT NULL))"
+                            expr = f"COALESCE({expr}, (SELECT AVG(TRY_CAST(c2.{col_bracket} AS FLOAT)) FROM {tbl_staging} c2 WHERE TRY_CAST(c2.{col_bracket} AS FLOAT) IS NOT NULL))"
                             where_clauses.append(f"c.{col_bracket} IS NULL")
                         elif strat == "median" and fval is None and dialect == "tsql":
                             var_name = f"@fill_{col_clean_name.replace('.', '_').replace(' ', '_')[:40]}"
                             pre_queries.append(f"DECLARE {var_name} FLOAT;")
                             pre_queries.append(
-                                f"SELECT {var_name} = PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY {col_bracket}) FROM {tbl_staging} WHERE {col_bracket} IS NOT NULL;"
+                                f"SELECT {var_name} = PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY TRY_CAST({col_bracket} AS FLOAT)) FROM {tbl_staging} WHERE TRY_CAST({col_bracket} AS FLOAT) IS NOT NULL;"
                             )
                             expr = f"COALESCE({expr}, {var_name})"
                             where_clauses.append(f"c.{col_bracket} IS NULL")
