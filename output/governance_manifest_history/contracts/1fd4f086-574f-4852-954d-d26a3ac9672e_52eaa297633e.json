@@ -1,0 +1,87 @@
+{
+  "by_dataset": {
+    "dbo.Learners": {
+      "dataset_name": "dbo.Learners",
+      "critical_columns": [
+        "LearnerID",
+        "Email",
+        "SignupDate"
+      ],
+      "likely_key_columns": [
+        "LearnerID",
+        "SignupDate"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "LearnerID": "high",
+        "FullName": "medium",
+        "Email": "high",
+        "SignupDate": "high"
+      },
+      "semantic_confidence": 0.874,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 120
+      },
+      "suggested_domain_rules": []
+    },
+    "dbo.students_raw": {
+      "dataset_name": "dbo.students_raw",
+      "critical_columns": [
+        "student_id",
+        "name"
+      ],
+      "likely_key_columns": [
+        "student_id"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "student_id": "high",
+        "dob": "medium",
+        "email": "medium",
+        "name": "high",
+        "department": "medium",
+        "phone": "medium"
+      },
+      "semantic_confidence": 0.87,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 51
+      },
+      "suggested_domain_rules": []
+    },
+    "dbo.Lessons": {
+      "dataset_name": "dbo.Lessons",
+      "critical_columns": [
+        "LessonID",
+        "CourseID"
+      ],
+      "likely_key_columns": [
+        "LessonID"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "LessonID": "high",
+        "LessonTitle": "medium",
+        "CourseID": "high",
+        "DurationMinutes": "medium"
+      },
+      "semantic_confidence": 0.881,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 150
+      },
+      "suggested_domain_rules": []
+    }
+  },
+  "overall_semantic_confidence": 0.875
+}

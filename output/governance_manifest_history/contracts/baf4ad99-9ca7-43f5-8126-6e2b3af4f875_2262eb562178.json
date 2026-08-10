@@ -1,0 +1,32 @@
+{
+  "by_dataset": {
+    "dbo.Accounts": {
+      "dataset_name": "dbo.Accounts",
+      "critical_columns": [
+        "AccountID",
+        "CustomerID",
+        "Balance"
+      ],
+      "likely_key_columns": [
+        "AccountID"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "AccountID": "high",
+        "CustomerID": "high",
+        "AccountType": "medium",
+        "Balance": "high"
+      },
+      "semantic_confidence": 0.877,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 70
+      },
+      "suggested_domain_rules": []
+    }
+  },
+  "overall_semantic_confidence": 0.877
+}

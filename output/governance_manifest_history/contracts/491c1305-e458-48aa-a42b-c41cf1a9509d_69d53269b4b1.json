@@ -1,0 +1,61 @@
+{
+  "by_dataset": {
+    "dbo.Accounts": {
+      "dataset_name": "dbo.Accounts",
+      "critical_columns": [
+        "CustomerID",
+        "AccountID",
+        "Balance"
+      ],
+      "likely_key_columns": [
+        "AccountID"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "AccountType": "medium",
+        "CustomerID": "high",
+        "AccountID": "high",
+        "Balance": "high"
+      },
+      "semantic_confidence": 0.877,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 70
+      },
+      "suggested_domain_rules": []
+    },
+    "dbo.Courses": {
+      "dataset_name": "dbo.Courses",
+      "critical_columns": [
+        "InstructorID",
+        "CourseID",
+        "CreatedDate"
+      ],
+      "likely_key_columns": [
+        "CourseID",
+        "CreatedDate"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "InstructorID": "high",
+        "CourseID": "high",
+        "CourseTitle": "medium",
+        "CreatedDate": "high",
+        "Price": "medium"
+      },
+      "semantic_confidence": 0.876,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 80
+      },
+      "suggested_domain_rules": []
+    }
+  },
+  "overall_semantic_confidence": 0.877
+}

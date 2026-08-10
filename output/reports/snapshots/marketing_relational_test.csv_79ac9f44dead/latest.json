@@ -1,0 +1,53 @@
+{
+  "dataset_name": "marketing_relational_test.csv",
+  "saved_at": "2026-08-07T06:24:43.088675+00:00",
+  "run_id": "7be11bd0-c2ad-43ed-a90b-edeca7f9cf73",
+  "fingerprint": {
+    "row_count": 1000,
+    "column_count": 6,
+    "columns": {
+      "budget": {
+        "dtype": "object",
+        "null_pct": 0.246,
+        "unique": 280,
+        "semantic_type": "categorical",
+        "mean": 49084.23381294964,
+        "std": 28591.98045587569
+      },
+      "campaign_id": {
+        "dtype": "object",
+        "null_pct": 0.056,
+        "unique": 517,
+        "semantic_type": "categorical"
+      },
+      "channel": {
+        "dtype": "object",
+        "null_pct": 0.317,
+        "unique": 5,
+        "semantic_type": "categorical",
+        "mean": 123.0,
+        "std": 0.0
+      },
+      "customer_name": {
+        "dtype": "object",
+        "null_pct": 0.099,
+        "unique": 9,
+        "semantic_type": "categorical"
+      },
+      "factory_id": {
+        "dtype": "object",
+        "null_pct": 0.003,
+        "unique": 102,
+        "semantic_type": "categorical",
+        "mean": 123.0,
+        "std": 0.0
+      },
+      "start_date": {
+        "dtype": "object",
+        "null_pct": 0.195,
+        "unique": 4,
+        "semantic_type": "categorical"
+      }
+    }
+  }
+}

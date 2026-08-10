@@ -1,0 +1,37 @@
+{
+  "dataset_name": "dbo.Learners",
+  "saved_at": "2026-08-07T06:47:11.168244+00:00",
+  "run_id": "1fd4f086-574f-4852-954d-d26a3ac9672e",
+  "fingerprint": {
+    "row_count": 120,
+    "column_count": 4,
+    "columns": {
+      "Email": {
+        "dtype": "object",
+        "null_pct": 0.06666666666666667,
+        "unique": 101,
+        "semantic_type": "email"
+      },
+      "FullName": {
+        "dtype": "object",
+        "null_pct": 0.06666666666666667,
+        "unique": 50,
+        "semantic_type": "categorical"
+      },
+      "LearnerID": {
+        "dtype": "int64",
+        "null_pct": 0.0,
+        "unique": 120,
+        "semantic_type": "numeric_id",
+        "mean": 60.5,
+        "std": 34.785054261852174
+      },
+      "SignupDate": {
+        "dtype": "object",
+        "null_pct": 0.0,
+        "unique": 120,
+        "semantic_type": "date"
+      }
+    }
+  }
+}

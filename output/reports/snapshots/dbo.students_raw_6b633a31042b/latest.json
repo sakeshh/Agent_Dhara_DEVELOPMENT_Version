@@ -1,0 +1,49 @@
+{
+  "dataset_name": "dbo.students_raw",
+  "saved_at": "2026-08-07T06:47:11.181139+00:00",
+  "run_id": "1fd4f086-574f-4852-954d-d26a3ac9672e",
+  "fingerprint": {
+    "row_count": 51,
+    "column_count": 6,
+    "columns": {
+      "department": {
+        "dtype": "object",
+        "null_pct": 0.0196078431372549,
+        "unique": 8,
+        "semantic_type": "categorical"
+      },
+      "dob": {
+        "dtype": "object",
+        "null_pct": 0.0196078431372549,
+        "unique": 35,
+        "semantic_type": "date"
+      },
+      "email": {
+        "dtype": "object",
+        "null_pct": 0.0784313725490196,
+        "unique": 45,
+        "semantic_type": "email"
+      },
+      "name": {
+        "dtype": "object",
+        "null_pct": 0.0,
+        "unique": 49,
+        "semantic_type": "categorical"
+      },
+      "phone": {
+        "dtype": "object",
+        "null_pct": 0.0392156862745098,
+        "unique": 33,
+        "semantic_type": "phone",
+        "mean": 52533829273.02381,
+        "std": 214482826551.9425
+      },
+      "student_id": {
+        "dtype": "object",
+        "null_pct": 0.0,
+        "unique": 50,
+        "semantic_type": "categorical"
+      }
+    }
+  }
+}

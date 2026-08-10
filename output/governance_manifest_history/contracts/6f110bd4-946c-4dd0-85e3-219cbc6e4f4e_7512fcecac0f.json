@@ -1,0 +1,35 @@
+{
+  "by_dataset": {
+    "marketing.csv": {
+      "dataset_name": "marketing.csv",
+      "critical_columns": [
+        "product_id",
+        "campaign_id",
+        "campaign_date",
+        "ad_spend"
+      ],
+      "likely_key_columns": [
+        "product_id",
+        "campaign_id"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "product_id": "high",
+        "campaign_id": "high",
+        "channel": "medium",
+        "campaign_date": "high",
+        "ad_spend": "high"
+      },
+      "semantic_confidence": 0.873,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 1000
+      },
+      "suggested_domain_rules": []
+    }
+  },
+  "overall_semantic_confidence": 0.873
+}

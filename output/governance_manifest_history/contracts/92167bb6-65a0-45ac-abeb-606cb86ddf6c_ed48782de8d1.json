@@ -1,0 +1,31 @@
+{
+  "by_dataset": {
+    "data_quality_issues_v2.json": {
+      "dataset_name": "data_quality_issues_v2.json",
+      "critical_columns": [
+        "country",
+        "user_id"
+      ],
+      "likely_key_columns": [
+        "name",
+        "user_id"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "name": "medium",
+        "country": "high",
+        "user_id": "high"
+      },
+      "semantic_confidence": 0.87,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 10000
+      },
+      "suggested_domain_rules": []
+    }
+  },
+  "overall_semantic_confidence": 0.87
+}

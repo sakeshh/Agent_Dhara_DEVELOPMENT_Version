@@ -1,0 +1,33 @@
+{
+  "by_dataset": {
+    "client_registry_dirty.csv": {
+      "dataset_name": "client_registry_dirty.csv",
+      "critical_columns": [
+        "email",
+        "customer_id",
+        "full_name"
+      ],
+      "likely_key_columns": [
+        "customer_id"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "email": "high",
+        "phone": "medium",
+        "customer_id": "high",
+        "full_name": "high",
+        "country": "medium"
+      },
+      "semantic_confidence": 0.87,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 1000
+      },
+      "suggested_domain_rules": []
+    }
+  },
+  "overall_semantic_confidence": 0.87
+}

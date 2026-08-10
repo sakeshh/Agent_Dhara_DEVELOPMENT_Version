@@ -1,0 +1,88 @@
+{
+  "by_dataset": {
+    "factory_relational_test.json": {
+      "dataset_name": "factory_relational_test.json",
+      "critical_columns": [],
+      "likely_key_columns": [
+        "product_id",
+        "factory_id"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "product_id": "medium",
+        "inspection_date": "medium",
+        "machine_name": "medium",
+        "factory_id": "medium",
+        "location": "medium",
+        "production_qty": "medium"
+      },
+      "semantic_confidence": 0.87,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 1000
+      },
+      "suggested_domain_rules": []
+    },
+    "marketing_relational_test.csv": {
+      "dataset_name": "marketing_relational_test.csv",
+      "critical_columns": [
+        "campaign_id",
+        "start_date"
+      ],
+      "likely_key_columns": [
+        "campaign_id",
+        "factory_id"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "customer_name": "medium",
+        "campaign_id": "high",
+        "factory_id": "medium",
+        "start_date": "high",
+        "budget": "medium",
+        "channel": "medium"
+      },
+      "semantic_confidence": 0.87,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 1000
+      },
+      "suggested_domain_rules": []
+    },
+    "sales_relational_test.xml": {
+      "dataset_name": "sales_relational_test.xml",
+      "critical_columns": [],
+      "likely_key_columns": [
+        "product_id",
+        "sale_id",
+        "campaign_id"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "product_id": "medium",
+        "sale_id": "medium",
+        "customer": "medium",
+        "campaign_id": "medium",
+        "sale_date": "medium",
+        "amount": "medium",
+        "region": "medium"
+      },
+      "semantic_confidence": 0.87,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 1000
+      },
+      "suggested_domain_rules": []
+    }
+  },
+  "overall_semantic_confidence": 0.87
+}

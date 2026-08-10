@@ -1,0 +1,31 @@
+{
+  "dataset_name": "data_quality_issues.csv",
+  "saved_at": "2026-08-05T15:03:05.622243+00:00",
+  "run_id": "2b40d1cd-7bb1-4d6d-a888-7df4a901fc55",
+  "fingerprint": {
+    "row_count": 10000,
+    "column_count": 3,
+    "columns": {
+      "email": {
+        "dtype": "object",
+        "null_pct": 0.0166,
+        "unique": 9248,
+        "semantic_type": "email"
+      },
+      "id": {
+        "dtype": "object",
+        "null_pct": 0.0213,
+        "unique": 9787,
+        "semantic_type": "numeric_id",
+        "mean": 4993.065627902177,
+        "std": 2888.0314751882615
+      },
+      "name": {
+        "dtype": "object",
+        "null_pct": 0.0092,
+        "unique": 9908,
+        "semantic_type": "categorical"
+      }
+    }
+  }
+}

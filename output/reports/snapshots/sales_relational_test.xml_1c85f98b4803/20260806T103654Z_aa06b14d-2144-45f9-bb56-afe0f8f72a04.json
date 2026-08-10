@@ -1,0 +1,57 @@
+{
+  "dataset_name": "sales_relational_test.xml",
+  "saved_at": "2026-08-06T10:36:54.253817+00:00",
+  "run_id": "aa06b14d-2144-45f9-bb56-afe0f8f72a04",
+  "fingerprint": {
+    "row_count": 1000,
+    "column_count": 7,
+    "columns": {
+      "amount": {
+        "dtype": "object",
+        "null_pct": 0.26,
+        "unique": 251,
+        "semantic_type": "categorical",
+        "mean": 12768.723517382412,
+        "std": 16233.928247018192
+      },
+      "campaign_id": {
+        "dtype": "object",
+        "null_pct": 0.001,
+        "unique": 540,
+        "semantic_type": "categorical"
+      },
+      "customer": {
+        "dtype": "object",
+        "null_pct": 0.179,
+        "unique": 5,
+        "semantic_type": "categorical"
+      },
+      "product_id": {
+        "dtype": "object",
+        "null_pct": 0.002,
+        "unique": 434,
+        "semantic_type": "categorical"
+      },
+      "region": {
+        "dtype": "object",
+        "null_pct": 0.0,
+        "unique": 6,
+        "semantic_type": "categorical",
+        "mean": 123.0,
+        "std": 0.0
+      },
+      "sale_date": {
+        "dtype": "object",
+        "null_pct": 0.251,
+        "unique": 3,
+        "semantic_type": "categorical"
+      },
+      "sale_id": {
+        "dtype": "object",
+        "null_pct": 0.668,
+        "unique": 332,
+        "semantic_type": "categorical"
+      }
+    }
+  }
+}

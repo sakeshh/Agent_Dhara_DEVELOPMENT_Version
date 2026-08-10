@@ -1,0 +1,98 @@
+{
+  "by_dataset": {
+    "factory_relational_test.json": {
+      "dataset_name": "factory_relational_test.json",
+      "critical_columns": [
+        "product_id",
+        "inspection_date",
+        "production_qty"
+      ],
+      "likely_key_columns": [
+        "product_id",
+        "factory_id"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "machine_name": "medium",
+        "product_id": "high",
+        "inspection_date": "high",
+        "factory_id": "medium",
+        "location": "low",
+        "production_qty": "high"
+      },
+      "semantic_confidence": 0.87,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 1000
+      },
+      "suggested_domain_rules": []
+    },
+    "marketing_relational_test.csv": {
+      "dataset_name": "marketing_relational_test.csv",
+      "critical_columns": [
+        "campaign_id",
+        "start_date",
+        "budget"
+      ],
+      "likely_key_columns": [
+        "campaign_id",
+        "factory_id"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "campaign_id": "high",
+        "customer_name": "medium",
+        "factory_id": "medium",
+        "start_date": "high",
+        "budget": "high",
+        "channel": "medium"
+      },
+      "semantic_confidence": 0.87,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 1000
+      },
+      "suggested_domain_rules": []
+    },
+    "sales_relational_test.xml": {
+      "dataset_name": "sales_relational_test.xml",
+      "critical_columns": [
+        "sale_id",
+        "customer",
+        "amount",
+        "sale_date"
+      ],
+      "likely_key_columns": [
+        "campaign_id",
+        "sale_id",
+        "product_id"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "campaign_id": "medium",
+        "sale_id": "high",
+        "product_id": "medium",
+        "customer": "high",
+        "amount": "high",
+        "sale_date": "high",
+        "region": "medium"
+      },
+      "semantic_confidence": 0.87,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 1000
+      },
+      "suggested_domain_rules": []
+    }
+  },
+  "overall_semantic_confidence": 0.87
+}

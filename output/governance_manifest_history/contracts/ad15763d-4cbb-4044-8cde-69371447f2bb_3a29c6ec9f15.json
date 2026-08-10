@@ -1,0 +1,27 @@
+{
+  "by_dataset": {
+    "data_quality_issues.json": {
+      "dataset_name": "data_quality_issues.json",
+      "critical_columns": [],
+      "likely_key_columns": [
+        "id"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "email": "medium",
+        "name": "medium",
+        "id": "medium"
+      },
+      "semantic_confidence": 0.87,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 10000
+      },
+      "suggested_domain_rules": []
+    }
+  },
+  "overall_semantic_confidence": 0.87
+}

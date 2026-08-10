@@ -1,0 +1,43 @@
+{
+  "dataset_name": "marketing.csv",
+  "saved_at": "2026-08-10T10:53:23.337529+00:00",
+  "run_id": "6f110bd4-946c-4dd0-85e3-219cbc6e4f4e",
+  "fingerprint": {
+    "row_count": 1000,
+    "column_count": 5,
+    "columns": {
+      "ad_spend": {
+        "dtype": "int64",
+        "null_pct": 0.0,
+        "unique": 968,
+        "semantic_type": "numeric_id",
+        "mean": 5596.967,
+        "std": 2612.524437751511
+      },
+      "campaign_date": {
+        "dtype": "object",
+        "null_pct": 0.0,
+        "unique": 365,
+        "semantic_type": "date"
+      },
+      "campaign_id": {
+        "dtype": "object",
+        "null_pct": 0.0,
+        "unique": 1000,
+        "semantic_type": "categorical"
+      },
+      "channel": {
+        "dtype": "object",
+        "null_pct": 0.0,
+        "unique": 5,
+        "semantic_type": "categorical"
+      },
+      "product_id": {
+        "dtype": "object",
+        "null_pct": 0.0,
+        "unique": 100,
+        "semantic_type": "categorical"
+      }
+    }
+  }
+}

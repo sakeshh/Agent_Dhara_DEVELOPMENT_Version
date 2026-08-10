@@ -1,0 +1,36 @@
+{
+  "by_dataset": {
+    "factory.json": {
+      "dataset_name": "factory.json",
+      "critical_columns": [
+        "production_id",
+        "product_id",
+        "sales_id",
+        "units_produced"
+      ],
+      "likely_key_columns": [
+        "production_id",
+        "product_id",
+        "sales_id"
+      ],
+      "business_terms": {},
+      "column_importance": {
+        "production_id": "high",
+        "product_id": "high",
+        "sales_id": "high",
+        "plant": "medium",
+        "units_produced": "high"
+      },
+      "semantic_confidence": 0.873,
+      "user_notes": "",
+      "prior_report_hints": {},
+      "sample_row_count": 50,
+      "domain_hints": {
+        "source_root": "azure_blob:",
+        "row_count": 1000
+      },
+      "suggested_domain_rules": []
+    }
+  },
+  "overall_semantic_confidence": 0.873
+}

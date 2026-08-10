@@ -1,0 +1,45 @@
+{
+  "dataset_name": "dbo.Courses",
+  "saved_at": "2026-08-07T11:47:16.820223+00:00",
+  "run_id": "491c1305-e458-48aa-a42b-c41cf1a9509d",
+  "fingerprint": {
+    "row_count": 80,
+    "column_count": 5,
+    "columns": {
+      "CourseID": {
+        "dtype": "int64",
+        "null_pct": 0.0,
+        "unique": 80,
+        "semantic_type": "numeric_id",
+        "mean": 40.5,
+        "std": 23.2379000772445
+      },
+      "CourseTitle": {
+        "dtype": "object",
+        "null_pct": 0.0,
+        "unique": 30,
+        "semantic_type": "categorical"
+      },
+      "CreatedDate": {
+        "dtype": "object",
+        "null_pct": 0.0,
+        "unique": 80,
+        "semantic_type": "date"
+      },
+      "InstructorID": {
+        "dtype": "int64",
+        "null_pct": 0.0,
+        "unique": 41,
+        "semantic_type": "numeric_id",
+        "mean": 93.7,
+        "std": 259.6525624070692
+      },
+      "Price": {
+        "dtype": "object",
+        "null_pct": 0.0,
+        "unique": 71,
+        "semantic_type": "categorical"
+      }
+    }
+  }
+}

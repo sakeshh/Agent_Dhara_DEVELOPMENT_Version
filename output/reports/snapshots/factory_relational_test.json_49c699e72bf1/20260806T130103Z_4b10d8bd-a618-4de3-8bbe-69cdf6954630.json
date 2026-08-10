@@ -1,0 +1,53 @@
+{
+  "dataset_name": "factory_relational_test.json",
+  "saved_at": "2026-08-06T13:01:03.152490+00:00",
+  "run_id": "4b10d8bd-a618-4de3-8bbe-69cdf6954630",
+  "fingerprint": {
+    "row_count": 1000,
+    "column_count": 6,
+    "columns": {
+      "factory_id": {
+        "dtype": "object",
+        "null_pct": 0.009,
+        "unique": 102,
+        "semantic_type": "categorical",
+        "mean": 123.0,
+        "std": 0.0
+      },
+      "inspection_date": {
+        "dtype": "object",
+        "null_pct": 0.213,
+        "unique": 4,
+        "semantic_type": "categorical"
+      },
+      "location": {
+        "dtype": "object",
+        "null_pct": 0.192,
+        "unique": 5,
+        "semantic_type": "categorical",
+        "mean": 123.0,
+        "std": 0.0
+      },
+      "machine_name": {
+        "dtype": "object",
+        "null_pct": 0.148,
+        "unique": 6,
+        "semantic_type": "categorical"
+      },
+      "product_id": {
+        "dtype": "object",
+        "null_pct": 0.004,
+        "unique": 420,
+        "semantic_type": "categorical"
+      },
+      "production_qty": {
+        "dtype": "object",
+        "null_pct": 0.214,
+        "unique": 198,
+        "semantic_type": "categorical",
+        "mean": 1294.5125,
+        "std": 1623.3611438469663
+      }
+    }
+  }
+}

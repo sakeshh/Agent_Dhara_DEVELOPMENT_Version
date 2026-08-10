@@ -1,0 +1,39 @@
+{
+  "dataset_name": "dbo.Accounts",
+  "saved_at": "2026-08-07T11:38:48.066762+00:00",
+  "run_id": "baf4ad99-9ca7-43f5-8126-6e2b3af4f875",
+  "fingerprint": {
+    "row_count": 70,
+    "column_count": 4,
+    "columns": {
+      "AccountID": {
+        "dtype": "int64",
+        "null_pct": 0.0,
+        "unique": 70,
+        "semantic_type": "numeric_id",
+        "mean": 35.5,
+        "std": 20.351085147152883
+      },
+      "AccountType": {
+        "dtype": "object",
+        "null_pct": 0.12857142857142856,
+        "unique": 2,
+        "semantic_type": "categorical"
+      },
+      "Balance": {
+        "dtype": "object",
+        "null_pct": 0.08571428571428572,
+        "unique": 55,
+        "semantic_type": "categorical"
+      },
+      "CustomerID": {
+        "dtype": "int64",
+        "null_pct": 0.0,
+        "unique": 44,
+        "semantic_type": "numeric_id",
+        "mean": 35.871428571428574,
+        "std": 16.08755160893622
+      }
+    }
+  }
+}

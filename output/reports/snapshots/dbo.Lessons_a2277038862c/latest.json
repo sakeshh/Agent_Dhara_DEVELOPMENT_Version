@@ -1,0 +1,41 @@
+{
+  "dataset_name": "dbo.Lessons",
+  "saved_at": "2026-08-07T06:47:11.191653+00:00",
+  "run_id": "1fd4f086-574f-4852-954d-d26a3ac9672e",
+  "fingerprint": {
+    "row_count": 150,
+    "column_count": 4,
+    "columns": {
+      "CourseID": {
+        "dtype": "int64",
+        "null_pct": 0.0,
+        "unique": 80,
+        "semantic_type": "numeric_id",
+        "mean": 38.63333333333333,
+        "std": 21.95707119338777
+      },
+      "DurationMinutes": {
+        "dtype": "int64",
+        "null_pct": 0.0,
+        "unique": 61,
+        "semantic_type": "categorical",
+        "mean": 22.82,
+        "std": 26.552232934830613
+      },
+      "LessonID": {
+        "dtype": "int64",
+        "null_pct": 0.0,
+        "unique": 150,
+        "semantic_type": "numeric_id",
+        "mean": 75.5,
+        "std": 43.445367992456916
+      },
+      "LessonTitle": {
+        "dtype": "object",
+        "null_pct": 0.0,
+        "unique": 136,
+        "semantic_type": "categorical"
+      }
+    }
+  }
+}

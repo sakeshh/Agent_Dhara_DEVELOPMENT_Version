@@ -1,0 +1,49 @@
+{
+  "dataset_name": "client_registry_dirty.csv",
+  "saved_at": "2026-08-05T17:12:28.995282+00:00",
+  "run_id": "163d5d9e-db51-4b1a-8798-596c55f79fdf",
+  "fingerprint": {
+    "row_count": 1000,
+    "column_count": 5,
+    "columns": {
+      "country": {
+        "dtype": "object",
+        "null_pct": 0.3,
+        "unique": 19,
+        "semantic_type": "categorical",
+        "mean": 123.0,
+        "std": 0.0
+      },
+      "customer_id": {
+        "dtype": "object",
+        "null_pct": 0.2,
+        "unique": 702,
+        "semantic_type": "categorical",
+        "mean": 497.5,
+        "std": 290.0718301846401
+      },
+      "email": {
+        "dtype": "object",
+        "null_pct": 0.2,
+        "unique": 155,
+        "semantic_type": "email"
+      },
+      "full_name": {
+        "dtype": "object",
+        "null_pct": 0.305,
+        "unique": 159,
+        "semantic_type": "categorical",
+        "mean": 12345.0,
+        "std": 0.0
+      },
+      "phone": {
+        "dtype": "object",
+        "null_pct": 0.2,
+        "unique": 443,
+        "semantic_type": "phone",
+        "mean": 509008810966.97424,
+        "std": 455033967598.3931
+      }
+    }
+  }
+}
