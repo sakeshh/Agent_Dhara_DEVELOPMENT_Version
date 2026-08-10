@@ -1,0 +1,7002 @@
+[
+  {
+    "production_id": "F0001",
+    "product_id": "P082",
+    "plant": "Plant-B",
+    "units_produced": 35,
+    "sales_id": "S0001"
+  },
+  {
+    "production_id": "F0002",
+    "product_id": "P018",
+    "plant": "Plant-D",
+    "units_produced": 399,
+    "sales_id": "S0002"
+  },
+  {
+    "production_id": "F0003",
+    "product_id": "P004",
+    "plant": "Plant-A",
+    "units_produced": 169,
+    "sales_id": "S0003"
+  },
+  {
+    "production_id": "F0004",
+    "product_id": "P026",
+    "plant": "Plant-C",
+    "units_produced": 231,
+    "sales_id": "S0004"
+  },
+  {
+    "production_id": "F0005",
+    "product_id": "P098",
+    "plant": "Plant-B",
+    "units_produced": 206,
+    "sales_id": "S0005"
+  },
+  {
+    "production_id": "F0006",
+    "product_id": "P098",
+    "plant": "Plant-A",
+    "units_produced": 128,
+    "sales_id": "S0006"
+  },
+  {
+    "production_id": "F0007",
+    "product_id": "P045",
+    "plant": "Plant-D",
+    "units_produced": 109,
+    "sales_id": "S0007"
+  },
+  {
+    "production_id": "F0008",
+    "product_id": "P016",
+    "plant": "Plant-C",
+    "units_produced": 77,
+    "sales_id": "S0008"
+  },
+  {
+    "production_id": "F0009",
+    "product_id": "P025",
+    "plant": "Plant-C",
+    "units_produced": 33,
+    "sales_id": "S0009"
+  },
+  {
+    "production_id": "F0010",
+    "product_id": "P030",
+    "plant": "Plant-C",
+    "units_produced": 205,
+    "sales_id": "S0010"
+  },
+  {
+    "production_id": "F0011",
+    "product_id": "P048",
+    "plant": "Plant-A",
+    "units_produced": 109,
+    "sales_id": "S0011"
+  },
+  {
+    "production_id": "F0012",
+    "product_id": "P082",
+    "plant": "Plant-B",
+    "units_produced": 176,
+    "sales_id": "S0012"
+  },
+  {
+    "production_id": "F0013",
+    "product_id": "P049",
+    "plant": "Plant-A",
+    "units_produced": 86,
+    "sales_id": "S0013"
+  },
+  {
+    "production_id": "F0014",
+    "product_id": "P005",
+    "plant": "Plant-B",
+    "units_produced": 240,
+    "sales_id": "S0014"
+  },
+  {
+    "production_id": "F0015",
+    "product_id": "P092",
+    "plant": "Plant-D",
+    "units_produced": 114,
+    "sales_id": "S0015"
+  },
+  {
+    "production_id": "F0016",
+    "product_id": "P059",
+    "plant": "Plant-C",
+    "units_produced": 237,
+    "sales_id": "S0016"
+  },
+  {
+    "production_id": "F0017",
+    "product_id": "P075",
+    "plant": "Plant-B",
+    "units_produced": 207,
+    "sales_id": "S0017"
+  },
+  {
+    "production_id": "F0018",
+    "product_id": "P064",
+    "plant": "Plant-B",
+    "units_produced": 63,
+    "sales_id": "S0018"
+  },
+  {
+    "production_id": "F0019",
+    "product_id": "P021",
+    "plant": "Plant-D",
+    "units_produced": 79,
+    "sales_id": "S0019"
+  },
+  {
+    "production_id": "F0020",
+    "product_id": "P033",
+    "plant": "Plant-C",
+    "units_produced": 67,
+    "sales_id": "S0020"
+  },
+  {
+    "production_id": "F0021",
+    "product_id": "P083",
+    "plant": "Plant-B",
+    "units_produced": 103,
+    "sales_id": "S0021"
+  },
+  {
+    "production_id": "F0022",
+    "product_id": "P001",
+    "plant": "Plant-A",
+    "units_produced": 175,
+    "sales_id": "S0022"
+  },
+  {
+    "production_id": "F0023",
+    "product_id": "P039",
+    "plant": "Plant-B",
+    "units_produced": 180,
+    "sales_id": "S0023"
+  },
+  {
+    "production_id": "F0024",
+    "product_id": "P100",
+    "plant": "Plant-D",
+    "units_produced": 18,
+    "sales_id": "S0024"
+  },
+  {
+    "production_id": "F0025",
+    "product_id": "P015",
+    "plant": "Plant-B",
+    "units_produced": 208,
+    "sales_id": "S0025"
+  },
+  {
+    "production_id": "F0026",
+    "product_id": "P011",
+    "plant": "Plant-B",
+    "units_produced": 132,
+    "sales_id": "S0026"
+  },
+  {
+    "production_id": "F0027",
+    "product_id": "P085",
+    "plant": "Plant-D",
+    "units_produced": 115,
+    "sales_id": "S0027"
+  },
+  {
+    "production_id": "F0028",
+    "product_id": "P070",
+    "plant": "Plant-D",
+    "units_produced": 168,
+    "sales_id": "S0028"
+  },
+  {
+    "production_id": "F0029",
+    "product_id": "P058",
+    "plant": "Plant-C",
+    "units_produced": 149,
+    "sales_id": "S0029"
+  },
+  {
+    "production_id": "F0030",
+    "product_id": "P076",
+    "plant": "Plant-A",
+    "units_produced": 87,
+    "sales_id": "S0030"
+  },
+  {
+    "production_id": "F0031",
+    "product_id": "P091",
+    "plant": "Plant-C",
+    "units_produced": 201,
+    "sales_id": "S0031"
+  },
+  {
+    "production_id": "F0032",
+    "product_id": "P066",
+    "plant": "Plant-B",
+    "units_produced": 123,
+    "sales_id": "S0032"
+  },
+  {
+    "production_id": "F0033",
+    "product_id": "P017",
+    "plant": "Plant-D",
+    "units_produced": 261,
+    "sales_id": "S0033"
+  },
+  {
+    "production_id": "F0034",
+    "product_id": "P013",
+    "plant": "Plant-D",
+    "units_produced": 220,
+    "sales_id": "S0034"
+  },
+  {
+    "production_id": "F0035",
+    "product_id": "P094",
+    "plant": "Plant-C",
+    "units_produced": 119,
+    "sales_id": "S0035"
+  },
+  {
+    "production_id": "F0036",
+    "product_id": "P032",
+    "plant": "Plant-B",
+    "units_produced": 103,
+    "sales_id": "S0036"
+  },
+  {
+    "production_id": "F0037",
+    "product_id": "P024",
+    "plant": "Plant-D",
+    "units_produced": 280,
+    "sales_id": "S0037"
+  },
+  {
+    "production_id": "F0038",
+    "product_id": "P013",
+    "plant": "Plant-A",
+    "units_produced": 183,
+    "sales_id": "S0038"
+  },
+  {
+    "production_id": "F0039",
+    "product_id": "P031",
+    "plant": "Plant-B",
+    "units_produced": 175,
+    "sales_id": "S0039"
+  },
+  {
+    "production_id": "F0040",
+    "product_id": "P008",
+    "plant": "Plant-C",
+    "units_produced": 410,
+    "sales_id": "S0040"
+  },
+  {
+    "production_id": "F0041",
+    "product_id": "P059",
+    "plant": "Plant-D",
+    "units_produced": 132,
+    "sales_id": "S0041"
+  },
+  {
+    "production_id": "F0042",
+    "product_id": "P025",
+    "plant": "Plant-A",
+    "units_produced": 245,
+    "sales_id": "S0042"
+  },
+  {
+    "production_id": "F0043",
+    "product_id": "P041",
+    "plant": "Plant-B",
+    "units_produced": 34,
+    "sales_id": "S0043"
+  },
+  {
+    "production_id": "F0044",
+    "product_id": "P066",
+    "plant": "Plant-A",
+    "units_produced": 211,
+    "sales_id": "S0044"
+  },
+  {
+    "production_id": "F0045",
+    "product_id": "P031",
+    "plant": "Plant-B",
+    "units_produced": 74,
+    "sales_id": "S0045"
+  },
+  {
+    "production_id": "F0046",
+    "product_id": "P077",
+    "plant": "Plant-C",
+    "units_produced": 66,
+    "sales_id": "S0046"
+  },
+  {
+    "production_id": "F0047",
+    "product_id": "P027",
+    "plant": "Plant-B",
+    "units_produced": 178,
+    "sales_id": "S0047"
+  },
+  {
+    "production_id": "F0048",
+    "product_id": "P083",
+    "plant": "Plant-A",
+    "units_produced": 241,
+    "sales_id": "S0048"
+  },
+  {
+    "production_id": "F0049",
+    "product_id": "P080",
+    "plant": "Plant-B",
+    "units_produced": 141,
+    "sales_id": "S0049"
+  },
+  {
+    "production_id": "F0050",
+    "product_id": "P034",
+    "plant": "Plant-B",
+    "units_produced": 111,
+    "sales_id": "S0050"
+  },
+  {
+    "production_id": "F0051",
+    "product_id": "P037",
+    "plant": "Plant-C",
+    "units_produced": 151,
+    "sales_id": "S0051"
+  },
+  {
+    "production_id": "F0052",
+    "product_id": "P084",
+    "plant": "Plant-C",
+    "units_produced": 60,
+    "sales_id": "S0052"
+  },
+  {
+    "production_id": "F0053",
+    "product_id": "P014",
+    "plant": "Plant-B",
+    "units_produced": 214,
+    "sales_id": "S0053"
+  },
+  {
+    "production_id": "F0054",
+    "product_id": "P037",
+    "plant": "Plant-B",
+    "units_produced": 111,
+    "sales_id": "S0054"
+  },
+  {
+    "production_id": "F0055",
+    "product_id": "P082",
+    "plant": "Plant-A",
+    "units_produced": 186,
+    "sales_id": "S0055"
+  },
+  {
+    "production_id": "F0056",
+    "product_id": "P082",
+    "plant": "Plant-C",
+    "units_produced": 300,
+    "sales_id": "S0056"
+  },
+  {
+    "production_id": "F0057",
+    "product_id": "P017",
+    "plant": "Plant-D",
+    "units_produced": 89,
+    "sales_id": "S0057"
+  },
+  {
+    "production_id": "F0058",
+    "product_id": "P002",
+    "plant": "Plant-A",
+    "units_produced": 50,
+    "sales_id": "S0058"
+  },
+  {
+    "production_id": "F0059",
+    "product_id": "P075",
+    "plant": "Plant-A",
+    "units_produced": 91,
+    "sales_id": "S0059"
+  },
+  {
+    "production_id": "F0060",
+    "product_id": "P047",
+    "plant": "Plant-A",
+    "units_produced": 229,
+    "sales_id": "S0060"
+  },
+  {
+    "production_id": "F0061",
+    "product_id": "P100",
+    "plant": "Plant-B",
+    "units_produced": 139,
+    "sales_id": "S0061"
+  },
+  {
+    "production_id": "F0062",
+    "product_id": "P023",
+    "plant": "Plant-D",
+    "units_produced": 87,
+    "sales_id": "S0062"
+  },
+  {
+    "production_id": "F0063",
+    "product_id": "P095",
+    "plant": "Plant-D",
+    "units_produced": 181,
+    "sales_id": "S0063"
+  },
+  {
+    "production_id": "F0064",
+    "product_id": "P061",
+    "plant": "Plant-C",
+    "units_produced": 78,
+    "sales_id": "S0064"
+  },
+  {
+    "production_id": "F0065",
+    "product_id": "P030",
+    "plant": "Plant-D",
+    "units_produced": 43,
+    "sales_id": "S0065"
+  },
+  {
+    "production_id": "F0066",
+    "product_id": "P036",
+    "plant": "Plant-D",
+    "units_produced": 175,
+    "sales_id": "S0066"
+  },
+  {
+    "production_id": "F0067",
+    "product_id": "P069",
+    "plant": "Plant-B",
+    "units_produced": 90,
+    "sales_id": "S0067"
+  },
+  {
+    "production_id": "F0068",
+    "product_id": "P034",
+    "plant": "Plant-C",
+    "units_produced": 93,
+    "sales_id": "S0068"
+  },
+  {
+    "production_id": "F0069",
+    "product_id": "P041",
+    "plant": "Plant-B",
+    "units_produced": 363,
+    "sales_id": "S0069"
+  },
+  {
+    "production_id": "F0070",
+    "product_id": "P006",
+    "plant": "Plant-B",
+    "units_produced": 42,
+    "sales_id": "S0070"
+  },
+  {
+    "production_id": "F0071",
+    "product_id": "P056",
+    "plant": "Plant-A",
+    "units_produced": 154,
+    "sales_id": "S0071"
+  },
+  {
+    "production_id": "F0072",
+    "product_id": "P039",
+    "plant": "Plant-C",
+    "units_produced": 122,
+    "sales_id": "S0072"
+  },
+  {
+    "production_id": "F0073",
+    "product_id": "P090",
+    "plant": "Plant-D",
+    "units_produced": 139,
+    "sales_id": "S0073"
+  },
+  {
+    "production_id": "F0074",
+    "product_id": "P096",
+    "plant": "Plant-A",
+    "units_produced": 150,
+    "sales_id": "S0074"
+  },
+  {
+    "production_id": "F0075",
+    "product_id": "P037",
+    "plant": "Plant-C",
+    "units_produced": 143,
+    "sales_id": "S0075"
+  },
+  {
+    "production_id": "F0076",
+    "product_id": "P057",
+    "plant": "Plant-B",
+    "units_produced": 128,
+    "sales_id": "S0076"
+  },
+  {
+    "production_id": "F0077",
+    "product_id": "P011",
+    "plant": "Plant-C",
+    "units_produced": 157,
+    "sales_id": "S0077"
+  },
+  {
+    "production_id": "F0078",
+    "product_id": "P097",
+    "plant": "Plant-B",
+    "units_produced": 179,
+    "sales_id": "S0078"
+  },
+  {
+    "production_id": "F0079",
+    "product_id": "P006",
+    "plant": "Plant-D",
+    "units_produced": 174,
+    "sales_id": "S0079"
+  },
+  {
+    "production_id": "F0080",
+    "product_id": "P081",
+    "plant": "Plant-D",
+    "units_produced": 89,
+    "sales_id": "S0080"
+  },
+  {
+    "production_id": "F0081",
+    "product_id": "P032",
+    "plant": "Plant-D",
+    "units_produced": 28,
+    "sales_id": "S0081"
+  },
+  {
+    "production_id": "F0082",
+    "product_id": "P023",
+    "plant": "Plant-B",
+    "units_produced": 381,
+    "sales_id": "S0082"
+  },
+  {
+    "production_id": "F0083",
+    "product_id": "P059",
+    "plant": "Plant-C",
+    "units_produced": 186,
+    "sales_id": "S0083"
+  },
+  {
+    "production_id": "F0084",
+    "product_id": "P057",
+    "plant": "Plant-D",
+    "units_produced": 207,
+    "sales_id": "S0084"
+  },
+  {
+    "production_id": "F0085",
+    "product_id": "P096",
+    "plant": "Plant-C",
+    "units_produced": 281,
+    "sales_id": "S0085"
+  },
+  {
+    "production_id": "F0086",
+    "product_id": "P100",
+    "plant": "Plant-C",
+    "units_produced": 176,
+    "sales_id": "S0086"
+  },
+  {
+    "production_id": "F0087",
+    "product_id": "P010",
+    "plant": "Plant-C",
+    "units_produced": 164,
+    "sales_id": "S0087"
+  },
+  {
+    "production_id": "F0088",
+    "product_id": "P011",
+    "plant": "Plant-B",
+    "units_produced": 147,
+    "sales_id": "S0088"
+  },
+  {
+    "production_id": "F0089",
+    "product_id": "P028",
+    "plant": "Plant-D",
+    "units_produced": 195,
+    "sales_id": "S0089"
+  },
+  {
+    "production_id": "F0090",
+    "product_id": "P008",
+    "plant": "Plant-A",
+    "units_produced": 227,
+    "sales_id": "S0090"
+  },
+  {
+    "production_id": "F0091",
+    "product_id": "P074",
+    "plant": "Plant-C",
+    "units_produced": 488,
+    "sales_id": "S0091"
+  },
+  {
+    "production_id": "F0092",
+    "product_id": "P050",
+    "plant": "Plant-B",
+    "units_produced": 177,
+    "sales_id": "S0092"
+  },
+  {
+    "production_id": "F0093",
+    "product_id": "P029",
+    "plant": "Plant-D",
+    "units_produced": 180,
+    "sales_id": "S0093"
+  },
+  {
+    "production_id": "F0094",
+    "product_id": "P086",
+    "plant": "Plant-B",
+    "units_produced": 89,
+    "sales_id": "S0094"
+  },
+  {
+    "production_id": "F0095",
+    "product_id": "P069",
+    "plant": "Plant-A",
+    "units_produced": 135,
+    "sales_id": "S0095"
+  },
+  {
+    "production_id": "F0096",
+    "product_id": "P083",
+    "plant": "Plant-B",
+    "units_produced": 45,
+    "sales_id": "S0096"
+  },
+  {
+    "production_id": "F0097",
+    "product_id": "P034",
+    "plant": "Plant-C",
+    "units_produced": 213,
+    "sales_id": "S0097"
+  },
+  {
+    "production_id": "F0098",
+    "product_id": "P098",
+    "plant": "Plant-C",
+    "units_produced": 86,
+    "sales_id": "S0098"
+  },
+  {
+    "production_id": "F0099",
+    "product_id": "P061",
+    "plant": "Plant-B",
+    "units_produced": 468,
+    "sales_id": "S0099"
+  },
+  {
+    "production_id": "F0100",
+    "product_id": "P009",
+    "plant": "Plant-B",
+    "units_produced": 19,
+    "sales_id": "S0100"
+  },
+  {
+    "production_id": "F0101",
+    "product_id": "P080",
+    "plant": "Plant-A",
+    "units_produced": 211,
+    "sales_id": "S0101"
+  },
+  {
+    "production_id": "F0102",
+    "product_id": "P028",
+    "plant": "Plant-B",
+    "units_produced": 113,
+    "sales_id": "S0102"
+  },
+  {
+    "production_id": "F0103",
+    "product_id": "P078",
+    "plant": "Plant-A",
+    "units_produced": 113,
+    "sales_id": "S0103"
+  },
+  {
+    "production_id": "F0104",
+    "product_id": "P074",
+    "plant": "Plant-A",
+    "units_produced": 130,
+    "sales_id": "S0104"
+  },
+  {
+    "production_id": "F0105",
+    "product_id": "P089",
+    "plant": "Plant-A",
+    "units_produced": 91,
+    "sales_id": "S0105"
+  },
+  {
+    "production_id": "F0106",
+    "product_id": "P073",
+    "plant": "Plant-C",
+    "units_produced": 127,
+    "sales_id": "S0106"
+  },
+  {
+    "production_id": "F0107",
+    "product_id": "P065",
+    "plant": "Plant-D",
+    "units_produced": 22,
+    "sales_id": "S0107"
+  },
+  {
+    "production_id": "F0108",
+    "product_id": "P056",
+    "plant": "Plant-D",
+    "units_produced": 142,
+    "sales_id": "S0108"
+  },
+  {
+    "production_id": "F0109",
+    "product_id": "P094",
+    "plant": "Plant-D",
+    "units_produced": 120,
+    "sales_id": "S0109"
+  },
+  {
+    "production_id": "F0110",
+    "product_id": "P056",
+    "plant": "Plant-A",
+    "units_produced": 151,
+    "sales_id": "S0110"
+  },
+  {
+    "production_id": "F0111",
+    "product_id": "P058",
+    "plant": "Plant-D",
+    "units_produced": 174,
+    "sales_id": "S0111"
+  },
+  {
+    "production_id": "F0112",
+    "product_id": "P004",
+    "plant": "Plant-B",
+    "units_produced": 226,
+    "sales_id": "S0112"
+  },
+  {
+    "production_id": "F0113",
+    "product_id": "P034",
+    "plant": "Plant-C",
+    "units_produced": 108,
+    "sales_id": "S0113"
+  },
+  {
+    "production_id": "F0114",
+    "product_id": "P002",
+    "plant": "Plant-D",
+    "units_produced": 196,
+    "sales_id": "S0114"
+  },
+  {
+    "production_id": "F0115",
+    "product_id": "P072",
+    "plant": "Plant-D",
+    "units_produced": 194,
+    "sales_id": "S0115"
+  },
+  {
+    "production_id": "F0116",
+    "product_id": "P003",
+    "plant": "Plant-B",
+    "units_produced": 190,
+    "sales_id": "S0116"
+  },
+  {
+    "production_id": "F0117",
+    "product_id": "P085",
+    "plant": "Plant-C",
+    "units_produced": 167,
+    "sales_id": "S0117"
+  },
+  {
+    "production_id": "F0118",
+    "product_id": "P096",
+    "plant": "Plant-C",
+    "units_produced": 171,
+    "sales_id": "S0118"
+  },
+  {
+    "production_id": "F0119",
+    "product_id": "P033",
+    "plant": "Plant-C",
+    "units_produced": 52,
+    "sales_id": "S0119"
+  },
+  {
+    "production_id": "F0120",
+    "product_id": "P096",
+    "plant": "Plant-D",
+    "units_produced": 143,
+    "sales_id": "S0120"
+  },
+  {
+    "production_id": "F0121",
+    "product_id": "P093",
+    "plant": "Plant-A",
+    "units_produced": 177,
+    "sales_id": "S0121"
+  },
+  {
+    "production_id": "F0122",
+    "product_id": "P038",
+    "plant": "Plant-A",
+    "units_produced": 267,
+    "sales_id": "S0122"
+  },
+  {
+    "production_id": "F0123",
+    "product_id": "P069",
+    "plant": "Plant-C",
+    "units_produced": 293,
+    "sales_id": "S0123"
+  },
+  {
+    "production_id": "F0124",
+    "product_id": "P017",
+    "plant": "Plant-C",
+    "units_produced": 65,
+    "sales_id": "S0124"
+  },
+  {
+    "production_id": "F0125",
+    "product_id": "P062",
+    "plant": "Plant-C",
+    "units_produced": 242,
+    "sales_id": "S0125"
+  },
+  {
+    "production_id": "F0126",
+    "product_id": "P015",
+    "plant": "Plant-A",
+    "units_produced": 157,
+    "sales_id": "S0126"
+  },
+  {
+    "production_id": "F0127",
+    "product_id": "P020",
+    "plant": "Plant-A",
+    "units_produced": 274,
+    "sales_id": "S0127"
+  },
+  {
+    "production_id": "F0128",
+    "product_id": "P098",
+    "plant": "Plant-D",
+    "units_produced": 96,
+    "sales_id": "S0128"
+  },
+  {
+    "production_id": "F0129",
+    "product_id": "P057",
+    "plant": "Plant-A",
+    "units_produced": 244,
+    "sales_id": "S0129"
+  },
+  {
+    "production_id": "F0130",
+    "product_id": "P095",
+    "plant": "Plant-C",
+    "units_produced": 115,
+    "sales_id": "S0130"
+  },
+  {
+    "production_id": "F0131",
+    "product_id": "P011",
+    "plant": "Plant-A",
+    "units_produced": 169,
+    "sales_id": "S0131"
+  },
+  {
+    "production_id": "F0132",
+    "product_id": "P001",
+    "plant": "Plant-D",
+    "units_produced": 148,
+    "sales_id": "S0132"
+  },
+  {
+    "production_id": "F0133",
+    "product_id": "P005",
+    "plant": "Plant-D",
+    "units_produced": 92,
+    "sales_id": "S0133"
+  },
+  {
+    "production_id": "F0134",
+    "product_id": "P088",
+    "plant": "Plant-B",
+    "units_produced": 103,
+    "sales_id": "S0134"
+  },
+  {
+    "production_id": "F0135",
+    "product_id": "P015",
+    "plant": "Plant-C",
+    "units_produced": 85,
+    "sales_id": "S0135"
+  },
+  {
+    "production_id": "F0136",
+    "product_id": "P010",
+    "plant": "Plant-C",
+    "units_produced": 81,
+    "sales_id": "S0136"
+  },
+  {
+    "production_id": "F0137",
+    "product_id": "P016",
+    "plant": "Plant-C",
+    "units_produced": 125,
+    "sales_id": "S0137"
+  },
+  {
+    "production_id": "F0138",
+    "product_id": "P070",
+    "plant": "Plant-A",
+    "units_produced": 353,
+    "sales_id": "S0138"
+  },
+  {
+    "production_id": "F0139",
+    "product_id": "P095",
+    "plant": "Plant-B",
+    "units_produced": 285,
+    "sales_id": "S0139"
+  },
+  {
+    "production_id": "F0140",
+    "product_id": "P074",
+    "plant": "Plant-A",
+    "units_produced": 67,
+    "sales_id": "S0140"
+  },
+  {
+    "production_id": "F0141",
+    "product_id": "P097",
+    "plant": "Plant-C",
+    "units_produced": 175,
+    "sales_id": "S0141"
+  },
+  {
+    "production_id": "F0142",
+    "product_id": "P075",
+    "plant": "Plant-C",
+    "units_produced": 388,
+    "sales_id": "S0142"
+  },
+  {
+    "production_id": "F0143",
+    "product_id": "P043",
+    "plant": "Plant-C",
+    "units_produced": 62,
+    "sales_id": "S0143"
+  },
+  {
+    "production_id": "F0144",
+    "product_id": "P089",
+    "plant": "Plant-A",
+    "units_produced": 121,
+    "sales_id": "S0144"
+  },
+  {
+    "production_id": "F0145",
+    "product_id": "P012",
+    "plant": "Plant-D",
+    "units_produced": 160,
+    "sales_id": "S0145"
+  },
+  {
+    "production_id": "F0146",
+    "product_id": "P001",
+    "plant": "Plant-B",
+    "units_produced": 219,
+    "sales_id": "S0146"
+  },
+  {
+    "production_id": "F0147",
+    "product_id": "P047",
+    "plant": "Plant-A",
+    "units_produced": 165,
+    "sales_id": "S0147"
+  },
+  {
+    "production_id": "F0148",
+    "product_id": "P035",
+    "plant": "Plant-D",
+    "units_produced": 83,
+    "sales_id": "S0148"
+  },
+  {
+    "production_id": "F0149",
+    "product_id": "P063",
+    "plant": "Plant-B",
+    "units_produced": 69,
+    "sales_id": "S0149"
+  },
+  {
+    "production_id": "F0150",
+    "product_id": "P021",
+    "plant": "Plant-A",
+    "units_produced": 36,
+    "sales_id": "S0150"
+  },
+  {
+    "production_id": "F0151",
+    "product_id": "P015",
+    "plant": "Plant-D",
+    "units_produced": 92,
+    "sales_id": "S0151"
+  },
+  {
+    "production_id": "F0152",
+    "product_id": "P038",
+    "plant": "Plant-D",
+    "units_produced": 134,
+    "sales_id": "S0152"
+  },
+  {
+    "production_id": "F0153",
+    "product_id": "P059",
+    "plant": "Plant-B",
+    "units_produced": 80,
+    "sales_id": "S0153"
+  },
+  {
+    "production_id": "F0154",
+    "product_id": "P036",
+    "plant": "Plant-C",
+    "units_produced": 83,
+    "sales_id": "S0154"
+  },
+  {
+    "production_id": "F0155",
+    "product_id": "P037",
+    "plant": "Plant-D",
+    "units_produced": 154,
+    "sales_id": "S0155"
+  },
+  {
+    "production_id": "F0156",
+    "product_id": "P062",
+    "plant": "Plant-D",
+    "units_produced": 146,
+    "sales_id": "S0156"
+  },
+  {
+    "production_id": "F0157",
+    "product_id": "P042",
+    "plant": "Plant-B",
+    "units_produced": 136,
+    "sales_id": "S0157"
+  },
+  {
+    "production_id": "F0158",
+    "product_id": "P053",
+    "plant": "Plant-D",
+    "units_produced": 116,
+    "sales_id": "S0158"
+  },
+  {
+    "production_id": "F0159",
+    "product_id": "P085",
+    "plant": "Plant-C",
+    "units_produced": 420,
+    "sales_id": "S0159"
+  },
+  {
+    "production_id": "F0160",
+    "product_id": "P057",
+    "plant": "Plant-A",
+    "units_produced": 169,
+    "sales_id": "S0160"
+  },
+  {
+    "production_id": "F0161",
+    "product_id": "P019",
+    "plant": "Plant-C",
+    "units_produced": 168,
+    "sales_id": "S0161"
+  },
+  {
+    "production_id": "F0162",
+    "product_id": "P080",
+    "plant": "Plant-D",
+    "units_produced": 51,
+    "sales_id": "S0162"
+  },
+  {
+    "production_id": "F0163",
+    "product_id": "P081",
+    "plant": "Plant-A",
+    "units_produced": 463,
+    "sales_id": "S0163"
+  },
+  {
+    "production_id": "F0164",
+    "product_id": "P081",
+    "plant": "Plant-D",
+    "units_produced": 76,
+    "sales_id": "S0164"
+  },
+  {
+    "production_id": "F0165",
+    "product_id": "P098",
+    "plant": "Plant-A",
+    "units_produced": 277,
+    "sales_id": "S0165"
+  },
+  {
+    "production_id": "F0166",
+    "product_id": "P042",
+    "plant": "Plant-D",
+    "units_produced": 147,
+    "sales_id": "S0166"
+  },
+  {
+    "production_id": "F0167",
+    "product_id": "P032",
+    "plant": "Plant-B",
+    "units_produced": 149,
+    "sales_id": "S0167"
+  },
+  {
+    "production_id": "F0168",
+    "product_id": "P011",
+    "plant": "Plant-D",
+    "units_produced": 160,
+    "sales_id": "S0168"
+  },
+  {
+    "production_id": "F0169",
+    "product_id": "P019",
+    "plant": "Plant-D",
+    "units_produced": 158,
+    "sales_id": "S0169"
+  },
+  {
+    "production_id": "F0170",
+    "product_id": "P086",
+    "plant": "Plant-B",
+    "units_produced": 115,
+    "sales_id": "S0170"
+  },
+  {
+    "production_id": "F0171",
+    "product_id": "P057",
+    "plant": "Plant-C",
+    "units_produced": 127,
+    "sales_id": "S0171"
+  },
+  {
+    "production_id": "F0172",
+    "product_id": "P039",
+    "plant": "Plant-A",
+    "units_produced": 113,
+    "sales_id": "S0172"
+  },
+  {
+    "production_id": "F0173",
+    "product_id": "P049",
+    "plant": "Plant-C",
+    "units_produced": 123,
+    "sales_id": "S0173"
+  },
+  {
+    "production_id": "F0174",
+    "product_id": "P085",
+    "plant": "Plant-A",
+    "units_produced": 312,
+    "sales_id": "S0174"
+  },
+  {
+    "production_id": "F0175",
+    "product_id": "P096",
+    "plant": "Plant-C",
+    "units_produced": 96,
+    "sales_id": "S0175"
+  },
+  {
+    "production_id": "F0176",
+    "product_id": "P082",
+    "plant": "Plant-A",
+    "units_produced": 121,
+    "sales_id": "S0176"
+  },
+  {
+    "production_id": "F0177",
+    "product_id": "P083",
+    "plant": "Plant-A",
+    "units_produced": 123,
+    "sales_id": "S0177"
+  },
+  {
+    "production_id": "F0178",
+    "product_id": "P047",
+    "plant": "Plant-C",
+    "units_produced": 78,
+    "sales_id": "S0178"
+  },
+  {
+    "production_id": "F0179",
+    "product_id": "P054",
+    "plant": "Plant-C",
+    "units_produced": 186,
+    "sales_id": "S0179"
+  },
+  {
+    "production_id": "F0180",
+    "product_id": "P065",
+    "plant": "Plant-C",
+    "units_produced": 149,
+    "sales_id": "S0180"
+  },
+  {
+    "production_id": "F0181",
+    "product_id": "P044",
+    "plant": "Plant-B",
+    "units_produced": 404,
+    "sales_id": "S0181"
+  },
+  {
+    "production_id": "F0182",
+    "product_id": "P093",
+    "plant": "Plant-A",
+    "units_produced": 295,
+    "sales_id": "S0182"
+  },
+  {
+    "production_id": "F0183",
+    "product_id": "P069",
+    "plant": "Plant-D",
+    "units_produced": 236,
+    "sales_id": "S0183"
+  },
+  {
+    "production_id": "F0184",
+    "product_id": "P048",
+    "plant": "Plant-C",
+    "units_produced": 135,
+    "sales_id": "S0184"
+  },
+  {
+    "production_id": "F0185",
+    "product_id": "P029",
+    "plant": "Plant-D",
+    "units_produced": 117,
+    "sales_id": "S0185"
+  },
+  {
+    "production_id": "F0186",
+    "product_id": "P018",
+    "plant": "Plant-A",
+    "units_produced": 47,
+    "sales_id": "S0186"
+  },
+  {
+    "production_id": "F0187",
+    "product_id": "P031",
+    "plant": "Plant-C",
+    "units_produced": 115,
+    "sales_id": "S0187"
+  },
+  {
+    "production_id": "F0188",
+    "product_id": "P096",
+    "plant": "Plant-D",
+    "units_produced": 179,
+    "sales_id": "S0188"
+  },
+  {
+    "production_id": "F0189",
+    "product_id": "P013",
+    "plant": "Plant-A",
+    "units_produced": 140,
+    "sales_id": "S0189"
+  },
+  {
+    "production_id": "F0190",
+    "product_id": "P048",
+    "plant": "Plant-C",
+    "units_produced": 178,
+    "sales_id": "S0190"
+  },
+  {
+    "production_id": "F0191",
+    "product_id": "P088",
+    "plant": "Plant-A",
+    "units_produced": 153,
+    "sales_id": "S0191"
+  },
+  {
+    "production_id": "F0192",
+    "product_id": "P036",
+    "plant": "Plant-A",
+    "units_produced": 79,
+    "sales_id": "S0192"
+  },
+  {
+    "production_id": "F0193",
+    "product_id": "P028",
+    "plant": "Plant-B",
+    "units_produced": 66,
+    "sales_id": "S0193"
+  },
+  {
+    "production_id": "F0194",
+    "product_id": "P073",
+    "plant": "Plant-B",
+    "units_produced": 66,
+    "sales_id": "S0194"
+  },
+  {
+    "production_id": "F0195",
+    "product_id": "P028",
+    "plant": "Plant-A",
+    "units_produced": 109,
+    "sales_id": "S0195"
+  },
+  {
+    "production_id": "F0196",
+    "product_id": "P019",
+    "plant": "Plant-A",
+    "units_produced": 315,
+    "sales_id": "S0196"
+  },
+  {
+    "production_id": "F0197",
+    "product_id": "P004",
+    "plant": "Plant-C",
+    "units_produced": 30,
+    "sales_id": "S0197"
+  },
+  {
+    "production_id": "F0198",
+    "product_id": "P023",
+    "plant": "Plant-A",
+    "units_produced": 113,
+    "sales_id": "S0198"
+  },
+  {
+    "production_id": "F0199",
+    "product_id": "P009",
+    "plant": "Plant-A",
+    "units_produced": 148,
+    "sales_id": "S0199"
+  },
+  {
+    "production_id": "F0200",
+    "product_id": "P065",
+    "plant": "Plant-C",
+    "units_produced": 54,
+    "sales_id": "S0200"
+  },
+  {
+    "production_id": "F0201",
+    "product_id": "P083",
+    "plant": "Plant-D",
+    "units_produced": 82,
+    "sales_id": "S0201"
+  },
+  {
+    "production_id": "F0202",
+    "product_id": "P014",
+    "plant": "Plant-C",
+    "units_produced": 382,
+    "sales_id": "S0202"
+  },
+  {
+    "production_id": "F0203",
+    "product_id": "P019",
+    "plant": "Plant-C",
+    "units_produced": 106,
+    "sales_id": "S0203"
+  },
+  {
+    "production_id": "F0204",
+    "product_id": "P077",
+    "plant": "Plant-D",
+    "units_produced": 125,
+    "sales_id": "S0204"
+  },
+  {
+    "production_id": "F0205",
+    "product_id": "P090",
+    "plant": "Plant-B",
+    "units_produced": 122,
+    "sales_id": "S0205"
+  },
+  {
+    "production_id": "F0206",
+    "product_id": "P044",
+    "plant": "Plant-C",
+    "units_produced": 190,
+    "sales_id": "S0206"
+  },
+  {
+    "production_id": "F0207",
+    "product_id": "P041",
+    "plant": "Plant-A",
+    "units_produced": 250,
+    "sales_id": "S0207"
+  },
+  {
+    "production_id": "F0208",
+    "product_id": "P011",
+    "plant": "Plant-B",
+    "units_produced": 345,
+    "sales_id": "S0208"
+  },
+  {
+    "production_id": "F0209",
+    "product_id": "P008",
+    "plant": "Plant-D",
+    "units_produced": 125,
+    "sales_id": "S0209"
+  },
+  {
+    "production_id": "F0210",
+    "product_id": "P086",
+    "plant": "Plant-C",
+    "units_produced": 70,
+    "sales_id": "S0210"
+  },
+  {
+    "production_id": "F0211",
+    "product_id": "P014",
+    "plant": "Plant-D",
+    "units_produced": 296,
+    "sales_id": "S0211"
+  },
+  {
+    "production_id": "F0212",
+    "product_id": "P014",
+    "plant": "Plant-B",
+    "units_produced": 287,
+    "sales_id": "S0212"
+  },
+  {
+    "production_id": "F0213",
+    "product_id": "P072",
+    "plant": "Plant-A",
+    "units_produced": 35,
+    "sales_id": "S0213"
+  },
+  {
+    "production_id": "F0214",
+    "product_id": "P035",
+    "plant": "Plant-B",
+    "units_produced": 165,
+    "sales_id": "S0214"
+  },
+  {
+    "production_id": "F0215",
+    "product_id": "P073",
+    "plant": "Plant-A",
+    "units_produced": 120,
+    "sales_id": "S0215"
+  },
+  {
+    "production_id": "F0216",
+    "product_id": "P068",
+    "plant": "Plant-C",
+    "units_produced": 165,
+    "sales_id": "S0216"
+  },
+  {
+    "production_id": "F0217",
+    "product_id": "P048",
+    "plant": "Plant-A",
+    "units_produced": 94,
+    "sales_id": "S0217"
+  },
+  {
+    "production_id": "F0218",
+    "product_id": "P020",
+    "plant": "Plant-C",
+    "units_produced": 56,
+    "sales_id": "S0218"
+  },
+  {
+    "production_id": "F0219",
+    "product_id": "P085",
+    "plant": "Plant-D",
+    "units_produced": 171,
+    "sales_id": "S0219"
+  },
+  {
+    "production_id": "F0220",
+    "product_id": "P028",
+    "plant": "Plant-A",
+    "units_produced": 86,
+    "sales_id": "S0220"
+  },
+  {
+    "production_id": "F0221",
+    "product_id": "P087",
+    "plant": "Plant-A",
+    "units_produced": 183,
+    "sales_id": "S0221"
+  },
+  {
+    "production_id": "F0222",
+    "product_id": "P051",
+    "plant": "Plant-C",
+    "units_produced": 107,
+    "sales_id": "S0222"
+  },
+  {
+    "production_id": "F0223",
+    "product_id": "P099",
+    "plant": "Plant-A",
+    "units_produced": 136,
+    "sales_id": "S0223"
+  },
+  {
+    "production_id": "F0224",
+    "product_id": "P064",
+    "plant": "Plant-B",
+    "units_produced": 170,
+    "sales_id": "S0224"
+  },
+  {
+    "production_id": "F0225",
+    "product_id": "P072",
+    "plant": "Plant-D",
+    "units_produced": 49,
+    "sales_id": "S0225"
+  },
+  {
+    "production_id": "F0226",
+    "product_id": "P059",
+    "plant": "Plant-D",
+    "units_produced": 154,
+    "sales_id": "S0226"
+  },
+  {
+    "production_id": "F0227",
+    "product_id": "P082",
+    "plant": "Plant-A",
+    "units_produced": 232,
+    "sales_id": "S0227"
+  },
+  {
+    "production_id": "F0228",
+    "product_id": "P022",
+    "plant": "Plant-A",
+    "units_produced": 143,
+    "sales_id": "S0228"
+  },
+  {
+    "production_id": "F0229",
+    "product_id": "P014",
+    "plant": "Plant-A",
+    "units_produced": 167,
+    "sales_id": "S0229"
+  },
+  {
+    "production_id": "F0230",
+    "product_id": "P040",
+    "plant": "Plant-A",
+    "units_produced": 144,
+    "sales_id": "S0230"
+  },
+  {
+    "production_id": "F0231",
+    "product_id": "P082",
+    "plant": "Plant-C",
+    "units_produced": 208,
+    "sales_id": "S0231"
+  },
+  {
+    "production_id": "F0232",
+    "product_id": "P094",
+    "plant": "Plant-C",
+    "units_produced": 199,
+    "sales_id": "S0232"
+  },
+  {
+    "production_id": "F0233",
+    "product_id": "P023",
+    "plant": "Plant-B",
+    "units_produced": 100,
+    "sales_id": "S0233"
+  },
+  {
+    "production_id": "F0234",
+    "product_id": "P081",
+    "plant": "Plant-D",
+    "units_produced": 169,
+    "sales_id": "S0234"
+  },
+  {
+    "production_id": "F0235",
+    "product_id": "P073",
+    "plant": "Plant-C",
+    "units_produced": 92,
+    "sales_id": "S0235"
+  },
+  {
+    "production_id": "F0236",
+    "product_id": "P057",
+    "plant": "Plant-C",
+    "units_produced": 230,
+    "sales_id": "S0236"
+  },
+  {
+    "production_id": "F0237",
+    "product_id": "P036",
+    "plant": "Plant-A",
+    "units_produced": 64,
+    "sales_id": "S0237"
+  },
+  {
+    "production_id": "F0238",
+    "product_id": "P060",
+    "plant": "Plant-C",
+    "units_produced": 74,
+    "sales_id": "S0238"
+  },
+  {
+    "production_id": "F0239",
+    "product_id": "P083",
+    "plant": "Plant-A",
+    "units_produced": 239,
+    "sales_id": "S0239"
+  },
+  {
+    "production_id": "F0240",
+    "product_id": "P074",
+    "plant": "Plant-B",
+    "units_produced": 111,
+    "sales_id": "S0240"
+  },
+  {
+    "production_id": "F0241",
+    "product_id": "P058",
+    "plant": "Plant-B",
+    "units_produced": 103,
+    "sales_id": "S0241"
+  },
+  {
+    "production_id": "F0242",
+    "product_id": "P032",
+    "plant": "Plant-B",
+    "units_produced": 177,
+    "sales_id": "S0242"
+  },
+  {
+    "production_id": "F0243",
+    "product_id": "P048",
+    "plant": "Plant-A",
+    "units_produced": 209,
+    "sales_id": "S0243"
+  },
+  {
+    "production_id": "F0244",
+    "product_id": "P081",
+    "plant": "Plant-D",
+    "units_produced": 68,
+    "sales_id": "S0244"
+  },
+  {
+    "production_id": "F0245",
+    "product_id": "P033",
+    "plant": "Plant-B",
+    "units_produced": 106,
+    "sales_id": "S0245"
+  },
+  {
+    "production_id": "F0246",
+    "product_id": "P040",
+    "plant": "Plant-C",
+    "units_produced": 88,
+    "sales_id": "S0246"
+  },
+  {
+    "production_id": "F0247",
+    "product_id": "P049",
+    "plant": "Plant-A",
+    "units_produced": 90,
+    "sales_id": "S0247"
+  },
+  {
+    "production_id": "F0248",
+    "product_id": "P086",
+    "plant": "Plant-C",
+    "units_produced": 236,
+    "sales_id": "S0248"
+  },
+  {
+    "production_id": "F0249",
+    "product_id": "P024",
+    "plant": "Plant-B",
+    "units_produced": 96,
+    "sales_id": "S0249"
+  },
+  {
+    "production_id": "F0250",
+    "product_id": "P018",
+    "plant": "Plant-A",
+    "units_produced": 101,
+    "sales_id": "S0250"
+  },
+  {
+    "production_id": "F0251",
+    "product_id": "P044",
+    "plant": "Plant-B",
+    "units_produced": 64,
+    "sales_id": "S0251"
+  },
+  {
+    "production_id": "F0252",
+    "product_id": "P024",
+    "plant": "Plant-A",
+    "units_produced": 82,
+    "sales_id": "S0252"
+  },
+  {
+    "production_id": "F0253",
+    "product_id": "P047",
+    "plant": "Plant-D",
+    "units_produced": 154,
+    "sales_id": "S0253"
+  },
+  {
+    "production_id": "F0254",
+    "product_id": "P069",
+    "plant": "Plant-B",
+    "units_produced": 108,
+    "sales_id": "S0254"
+  },
+  {
+    "production_id": "F0255",
+    "product_id": "P087",
+    "plant": "Plant-D",
+    "units_produced": 199,
+    "sales_id": "S0255"
+  },
+  {
+    "production_id": "F0256",
+    "product_id": "P068",
+    "plant": "Plant-B",
+    "units_produced": 66,
+    "sales_id": "S0256"
+  },
+  {
+    "production_id": "F0257",
+    "product_id": "P007",
+    "plant": "Plant-A",
+    "units_produced": 146,
+    "sales_id": "S0257"
+  },
+  {
+    "production_id": "F0258",
+    "product_id": "P011",
+    "plant": "Plant-B",
+    "units_produced": 140,
+    "sales_id": "S0258"
+  },
+  {
+    "production_id": "F0259",
+    "product_id": "P012",
+    "plant": "Plant-A",
+    "units_produced": 136,
+    "sales_id": "S0259"
+  },
+  {
+    "production_id": "F0260",
+    "product_id": "P007",
+    "plant": "Plant-D",
+    "units_produced": 219,
+    "sales_id": "S0260"
+  },
+  {
+    "production_id": "F0261",
+    "product_id": "P048",
+    "plant": "Plant-C",
+    "units_produced": 86,
+    "sales_id": "S0261"
+  },
+  {
+    "production_id": "F0262",
+    "product_id": "P019",
+    "plant": "Plant-B",
+    "units_produced": 90,
+    "sales_id": "S0262"
+  },
+  {
+    "production_id": "F0263",
+    "product_id": "P091",
+    "plant": "Plant-A",
+    "units_produced": 142,
+    "sales_id": "S0263"
+  },
+  {
+    "production_id": "F0264",
+    "product_id": "P033",
+    "plant": "Plant-D",
+    "units_produced": 69,
+    "sales_id": "S0264"
+  },
+  {
+    "production_id": "F0265",
+    "product_id": "P100",
+    "plant": "Plant-A",
+    "units_produced": 140,
+    "sales_id": "S0265"
+  },
+  {
+    "production_id": "F0266",
+    "product_id": "P054",
+    "plant": "Plant-D",
+    "units_produced": 391,
+    "sales_id": "S0266"
+  },
+  {
+    "production_id": "F0267",
+    "product_id": "P069",
+    "plant": "Plant-B",
+    "units_produced": 186,
+    "sales_id": "S0267"
+  },
+  {
+    "production_id": "F0268",
+    "product_id": "P055",
+    "plant": "Plant-D",
+    "units_produced": 204,
+    "sales_id": "S0268"
+  },
+  {
+    "production_id": "F0269",
+    "product_id": "P086",
+    "plant": "Plant-A",
+    "units_produced": 246,
+    "sales_id": "S0269"
+  },
+  {
+    "production_id": "F0270",
+    "product_id": "P061",
+    "plant": "Plant-A",
+    "units_produced": 192,
+    "sales_id": "S0270"
+  },
+  {
+    "production_id": "F0271",
+    "product_id": "P009",
+    "plant": "Plant-A",
+    "units_produced": 124,
+    "sales_id": "S0271"
+  },
+  {
+    "production_id": "F0272",
+    "product_id": "P075",
+    "plant": "Plant-C",
+    "units_produced": 185,
+    "sales_id": "S0272"
+  },
+  {
+    "production_id": "F0273",
+    "product_id": "P023",
+    "plant": "Plant-B",
+    "units_produced": 151,
+    "sales_id": "S0273"
+  },
+  {
+    "production_id": "F0274",
+    "product_id": "P092",
+    "plant": "Plant-A",
+    "units_produced": 92,
+    "sales_id": "S0274"
+  },
+  {
+    "production_id": "F0275",
+    "product_id": "P026",
+    "plant": "Plant-D",
+    "units_produced": 112,
+    "sales_id": "S0275"
+  },
+  {
+    "production_id": "F0276",
+    "product_id": "P061",
+    "plant": "Plant-C",
+    "units_produced": 45,
+    "sales_id": "S0276"
+  },
+  {
+    "production_id": "F0277",
+    "product_id": "P100",
+    "plant": "Plant-C",
+    "units_produced": 201,
+    "sales_id": "S0277"
+  },
+  {
+    "production_id": "F0278",
+    "product_id": "P052",
+    "plant": "Plant-D",
+    "units_produced": 222,
+    "sales_id": "S0278"
+  },
+  {
+    "production_id": "F0279",
+    "product_id": "P064",
+    "plant": "Plant-D",
+    "units_produced": 261,
+    "sales_id": "S0279"
+  },
+  {
+    "production_id": "F0280",
+    "product_id": "P056",
+    "plant": "Plant-C",
+    "units_produced": 79,
+    "sales_id": "S0280"
+  },
+  {
+    "production_id": "F0281",
+    "product_id": "P011",
+    "plant": "Plant-D",
+    "units_produced": 159,
+    "sales_id": "S0281"
+  },
+  {
+    "production_id": "F0282",
+    "product_id": "P089",
+    "plant": "Plant-C",
+    "units_produced": 179,
+    "sales_id": "S0282"
+  },
+  {
+    "production_id": "F0283",
+    "product_id": "P056",
+    "plant": "Plant-C",
+    "units_produced": 112,
+    "sales_id": "S0283"
+  },
+  {
+    "production_id": "F0284",
+    "product_id": "P096",
+    "plant": "Plant-D",
+    "units_produced": 54,
+    "sales_id": "S0284"
+  },
+  {
+    "production_id": "F0285",
+    "product_id": "P017",
+    "plant": "Plant-C",
+    "units_produced": 94,
+    "sales_id": "S0285"
+  },
+  {
+    "production_id": "F0286",
+    "product_id": "P073",
+    "plant": "Plant-C",
+    "units_produced": 78,
+    "sales_id": "S0286"
+  },
+  {
+    "production_id": "F0287",
+    "product_id": "P057",
+    "plant": "Plant-D",
+    "units_produced": 81,
+    "sales_id": "S0287"
+  },
+  {
+    "production_id": "F0288",
+    "product_id": "P084",
+    "plant": "Plant-B",
+    "units_produced": 219,
+    "sales_id": "S0288"
+  },
+  {
+    "production_id": "F0289",
+    "product_id": "P067",
+    "plant": "Plant-D",
+    "units_produced": 94,
+    "sales_id": "S0289"
+  },
+  {
+    "production_id": "F0290",
+    "product_id": "P079",
+    "plant": "Plant-B",
+    "units_produced": 286,
+    "sales_id": "S0290"
+  },
+  {
+    "production_id": "F0291",
+    "product_id": "P058",
+    "plant": "Plant-C",
+    "units_produced": 376,
+    "sales_id": "S0291"
+  },
+  {
+    "production_id": "F0292",
+    "product_id": "P009",
+    "plant": "Plant-B",
+    "units_produced": 305,
+    "sales_id": "S0292"
+  },
+  {
+    "production_id": "F0293",
+    "product_id": "P091",
+    "plant": "Plant-A",
+    "units_produced": 145,
+    "sales_id": "S0293"
+  },
+  {
+    "production_id": "F0294",
+    "product_id": "P018",
+    "plant": "Plant-C",
+    "units_produced": 462,
+    "sales_id": "S0294"
+  },
+  {
+    "production_id": "F0295",
+    "product_id": "P071",
+    "plant": "Plant-D",
+    "units_produced": 145,
+    "sales_id": "S0295"
+  },
+  {
+    "production_id": "F0296",
+    "product_id": "P093",
+    "plant": "Plant-A",
+    "units_produced": 216,
+    "sales_id": "S0296"
+  },
+  {
+    "production_id": "F0297",
+    "product_id": "P041",
+    "plant": "Plant-C",
+    "units_produced": 178,
+    "sales_id": "S0297"
+  },
+  {
+    "production_id": "F0298",
+    "product_id": "P100",
+    "plant": "Plant-D",
+    "units_produced": 89,
+    "sales_id": "S0298"
+  },
+  {
+    "production_id": "F0299",
+    "product_id": "P008",
+    "plant": "Plant-B",
+    "units_produced": 337,
+    "sales_id": "S0299"
+  },
+  {
+    "production_id": "F0300",
+    "product_id": "P042",
+    "plant": "Plant-C",
+    "units_produced": 88,
+    "sales_id": "S0300"
+  },
+  {
+    "production_id": "F0301",
+    "product_id": "P033",
+    "plant": "Plant-C",
+    "units_produced": 235,
+    "sales_id": "S0301"
+  },
+  {
+    "production_id": "F0302",
+    "product_id": "P069",
+    "plant": "Plant-B",
+    "units_produced": 161,
+    "sales_id": "S0302"
+  },
+  {
+    "production_id": "F0303",
+    "product_id": "P085",
+    "plant": "Plant-A",
+    "units_produced": 90,
+    "sales_id": "S0303"
+  },
+  {
+    "production_id": "F0304",
+    "product_id": "P011",
+    "plant": "Plant-D",
+    "units_produced": 126,
+    "sales_id": "S0304"
+  },
+  {
+    "production_id": "F0305",
+    "product_id": "P082",
+    "plant": "Plant-C",
+    "units_produced": 161,
+    "sales_id": "S0305"
+  },
+  {
+    "production_id": "F0306",
+    "product_id": "P039",
+    "plant": "Plant-C",
+    "units_produced": 99,
+    "sales_id": "S0306"
+  },
+  {
+    "production_id": "F0307",
+    "product_id": "P010",
+    "plant": "Plant-D",
+    "units_produced": 103,
+    "sales_id": "S0307"
+  },
+  {
+    "production_id": "F0308",
+    "product_id": "P027",
+    "plant": "Plant-C",
+    "units_produced": 108,
+    "sales_id": "S0308"
+  },
+  {
+    "production_id": "F0309",
+    "product_id": "P017",
+    "plant": "Plant-C",
+    "units_produced": 186,
+    "sales_id": "S0309"
+  },
+  {
+    "production_id": "F0310",
+    "product_id": "P060",
+    "plant": "Plant-B",
+    "units_produced": 118,
+    "sales_id": "S0310"
+  },
+  {
+    "production_id": "F0311",
+    "product_id": "P007",
+    "plant": "Plant-D",
+    "units_produced": 112,
+    "sales_id": "S0311"
+  },
+  {
+    "production_id": "F0312",
+    "product_id": "P021",
+    "plant": "Plant-D",
+    "units_produced": 223,
+    "sales_id": "S0312"
+  },
+  {
+    "production_id": "F0313",
+    "product_id": "P060",
+    "plant": "Plant-A",
+    "units_produced": 143,
+    "sales_id": "S0313"
+  },
+  {
+    "production_id": "F0314",
+    "product_id": "P065",
+    "plant": "Plant-C",
+    "units_produced": 152,
+    "sales_id": "S0314"
+  },
+  {
+    "production_id": "F0315",
+    "product_id": "P007",
+    "plant": "Plant-C",
+    "units_produced": 191,
+    "sales_id": "S0315"
+  },
+  {
+    "production_id": "F0316",
+    "product_id": "P002",
+    "plant": "Plant-C",
+    "units_produced": 335,
+    "sales_id": "S0316"
+  },
+  {
+    "production_id": "F0317",
+    "product_id": "P052",
+    "plant": "Plant-B",
+    "units_produced": 61,
+    "sales_id": "S0317"
+  },
+  {
+    "production_id": "F0318",
+    "product_id": "P071",
+    "plant": "Plant-D",
+    "units_produced": 98,
+    "sales_id": "S0318"
+  },
+  {
+    "production_id": "F0319",
+    "product_id": "P071",
+    "plant": "Plant-D",
+    "units_produced": 128,
+    "sales_id": "S0319"
+  },
+  {
+    "production_id": "F0320",
+    "product_id": "P044",
+    "plant": "Plant-B",
+    "units_produced": 140,
+    "sales_id": "S0320"
+  },
+  {
+    "production_id": "F0321",
+    "product_id": "P066",
+    "plant": "Plant-A",
+    "units_produced": 425,
+    "sales_id": "S0321"
+  },
+  {
+    "production_id": "F0322",
+    "product_id": "P092",
+    "plant": "Plant-B",
+    "units_produced": 203,
+    "sales_id": "S0322"
+  },
+  {
+    "production_id": "F0323",
+    "product_id": "P066",
+    "plant": "Plant-C",
+    "units_produced": 90,
+    "sales_id": "S0323"
+  },
+  {
+    "production_id": "F0324",
+    "product_id": "P051",
+    "plant": "Plant-D",
+    "units_produced": 148,
+    "sales_id": "S0324"
+  },
+  {
+    "production_id": "F0325",
+    "product_id": "P073",
+    "plant": "Plant-C",
+    "units_produced": 142,
+    "sales_id": "S0325"
+  },
+  {
+    "production_id": "F0326",
+    "product_id": "P087",
+    "plant": "Plant-A",
+    "units_produced": 175,
+    "sales_id": "S0326"
+  },
+  {
+    "production_id": "F0327",
+    "product_id": "P061",
+    "plant": "Plant-D",
+    "units_produced": 81,
+    "sales_id": "S0327"
+  },
+  {
+    "production_id": "F0328",
+    "product_id": "P068",
+    "plant": "Plant-A",
+    "units_produced": 285,
+    "sales_id": "S0328"
+  },
+  {
+    "production_id": "F0329",
+    "product_id": "P090",
+    "plant": "Plant-C",
+    "units_produced": 222,
+    "sales_id": "S0329"
+  },
+  {
+    "production_id": "F0330",
+    "product_id": "P020",
+    "plant": "Plant-D",
+    "units_produced": 141,
+    "sales_id": "S0330"
+  },
+  {
+    "production_id": "F0331",
+    "product_id": "P094",
+    "plant": "Plant-C",
+    "units_produced": 103,
+    "sales_id": "S0331"
+  },
+  {
+    "production_id": "F0332",
+    "product_id": "P062",
+    "plant": "Plant-D",
+    "units_produced": 213,
+    "sales_id": "S0332"
+  },
+  {
+    "production_id": "F0333",
+    "product_id": "P044",
+    "plant": "Plant-D",
+    "units_produced": 120,
+    "sales_id": "S0333"
+  },
+  {
+    "production_id": "F0334",
+    "product_id": "P032",
+    "plant": "Plant-C",
+    "units_produced": 218,
+    "sales_id": "S0334"
+  },
+  {
+    "production_id": "F0335",
+    "product_id": "P027",
+    "plant": "Plant-C",
+    "units_produced": 141,
+    "sales_id": "S0335"
+  },
+  {
+    "production_id": "F0336",
+    "product_id": "P016",
+    "plant": "Plant-C",
+    "units_produced": 273,
+    "sales_id": "S0336"
+  },
+  {
+    "production_id": "F0337",
+    "product_id": "P019",
+    "plant": "Plant-C",
+    "units_produced": 72,
+    "sales_id": "S0337"
+  },
+  {
+    "production_id": "F0338",
+    "product_id": "P084",
+    "plant": "Plant-C",
+    "units_produced": 303,
+    "sales_id": "S0338"
+  },
+  {
+    "production_id": "F0339",
+    "product_id": "P090",
+    "plant": "Plant-B",
+    "units_produced": 139,
+    "sales_id": "S0339"
+  },
+  {
+    "production_id": "F0340",
+    "product_id": "P007",
+    "plant": "Plant-A",
+    "units_produced": 84,
+    "sales_id": "S0340"
+  },
+  {
+    "production_id": "F0341",
+    "product_id": "P053",
+    "plant": "Plant-A",
+    "units_produced": 371,
+    "sales_id": "S0341"
+  },
+  {
+    "production_id": "F0342",
+    "product_id": "P021",
+    "plant": "Plant-C",
+    "units_produced": 195,
+    "sales_id": "S0342"
+  },
+  {
+    "production_id": "F0343",
+    "product_id": "P037",
+    "plant": "Plant-B",
+    "units_produced": 74,
+    "sales_id": "S0343"
+  },
+  {
+    "production_id": "F0344",
+    "product_id": "P095",
+    "plant": "Plant-A",
+    "units_produced": 109,
+    "sales_id": "S0344"
+  },
+  {
+    "production_id": "F0345",
+    "product_id": "P064",
+    "plant": "Plant-A",
+    "units_produced": 94,
+    "sales_id": "S0345"
+  },
+  {
+    "production_id": "F0346",
+    "product_id": "P073",
+    "plant": "Plant-C",
+    "units_produced": 63,
+    "sales_id": "S0346"
+  },
+  {
+    "production_id": "F0347",
+    "product_id": "P083",
+    "plant": "Plant-D",
+    "units_produced": 205,
+    "sales_id": "S0347"
+  },
+  {
+    "production_id": "F0348",
+    "product_id": "P025",
+    "plant": "Plant-C",
+    "units_produced": 258,
+    "sales_id": "S0348"
+  },
+  {
+    "production_id": "F0349",
+    "product_id": "P024",
+    "plant": "Plant-B",
+    "units_produced": 104,
+    "sales_id": "S0349"
+  },
+  {
+    "production_id": "F0350",
+    "product_id": "P079",
+    "plant": "Plant-A",
+    "units_produced": 178,
+    "sales_id": "S0350"
+  },
+  {
+    "production_id": "F0351",
+    "product_id": "P086",
+    "plant": "Plant-C",
+    "units_produced": 158,
+    "sales_id": "S0351"
+  },
+  {
+    "production_id": "F0352",
+    "product_id": "P001",
+    "plant": "Plant-C",
+    "units_produced": 229,
+    "sales_id": "S0352"
+  },
+  {
+    "production_id": "F0353",
+    "product_id": "P039",
+    "plant": "Plant-B",
+    "units_produced": 35,
+    "sales_id": "S0353"
+  },
+  {
+    "production_id": "F0354",
+    "product_id": "P086",
+    "plant": "Plant-D",
+    "units_produced": 264,
+    "sales_id": "S0354"
+  },
+  {
+    "production_id": "F0355",
+    "product_id": "P065",
+    "plant": "Plant-C",
+    "units_produced": 87,
+    "sales_id": "S0355"
+  },
+  {
+    "production_id": "F0356",
+    "product_id": "P029",
+    "plant": "Plant-D",
+    "units_produced": 110,
+    "sales_id": "S0356"
+  },
+  {
+    "production_id": "F0357",
+    "product_id": "P078",
+    "plant": "Plant-D",
+    "units_produced": 170,
+    "sales_id": "S0357"
+  },
+  {
+    "production_id": "F0358",
+    "product_id": "P069",
+    "plant": "Plant-A",
+    "units_produced": 113,
+    "sales_id": "S0358"
+  },
+  {
+    "production_id": "F0359",
+    "product_id": "P058",
+    "plant": "Plant-A",
+    "units_produced": 291,
+    "sales_id": "S0359"
+  },
+  {
+    "production_id": "F0360",
+    "product_id": "P071",
+    "plant": "Plant-B",
+    "units_produced": 87,
+    "sales_id": "S0360"
+  },
+  {
+    "production_id": "F0361",
+    "product_id": "P042",
+    "plant": "Plant-D",
+    "units_produced": 310,
+    "sales_id": "S0361"
+  },
+  {
+    "production_id": "F0362",
+    "product_id": "P066",
+    "plant": "Plant-D",
+    "units_produced": 68,
+    "sales_id": "S0362"
+  },
+  {
+    "production_id": "F0363",
+    "product_id": "P073",
+    "plant": "Plant-A",
+    "units_produced": 161,
+    "sales_id": "S0363"
+  },
+  {
+    "production_id": "F0364",
+    "product_id": "P033",
+    "plant": "Plant-A",
+    "units_produced": 107,
+    "sales_id": "S0364"
+  },
+  {
+    "production_id": "F0365",
+    "product_id": "P045",
+    "plant": "Plant-D",
+    "units_produced": 430,
+    "sales_id": "S0365"
+  },
+  {
+    "production_id": "F0366",
+    "product_id": "P037",
+    "plant": "Plant-D",
+    "units_produced": 80,
+    "sales_id": "S0366"
+  },
+  {
+    "production_id": "F0367",
+    "product_id": "P049",
+    "plant": "Plant-B",
+    "units_produced": 204,
+    "sales_id": "S0367"
+  },
+  {
+    "production_id": "F0368",
+    "product_id": "P045",
+    "plant": "Plant-B",
+    "units_produced": 118,
+    "sales_id": "S0368"
+  },
+  {
+    "production_id": "F0369",
+    "product_id": "P029",
+    "plant": "Plant-D",
+    "units_produced": 69,
+    "sales_id": "S0369"
+  },
+  {
+    "production_id": "F0370",
+    "product_id": "P049",
+    "plant": "Plant-B",
+    "units_produced": 120,
+    "sales_id": "S0370"
+  },
+  {
+    "production_id": "F0371",
+    "product_id": "P025",
+    "plant": "Plant-A",
+    "units_produced": 36,
+    "sales_id": "S0371"
+  },
+  {
+    "production_id": "F0372",
+    "product_id": "P027",
+    "plant": "Plant-D",
+    "units_produced": 83,
+    "sales_id": "S0372"
+  },
+  {
+    "production_id": "F0373",
+    "product_id": "P087",
+    "plant": "Plant-D",
+    "units_produced": 102,
+    "sales_id": "S0373"
+  },
+  {
+    "production_id": "F0374",
+    "product_id": "P030",
+    "plant": "Plant-B",
+    "units_produced": 99,
+    "sales_id": "S0374"
+  },
+  {
+    "production_id": "F0375",
+    "product_id": "P038",
+    "plant": "Plant-C",
+    "units_produced": 126,
+    "sales_id": "S0375"
+  },
+  {
+    "production_id": "F0376",
+    "product_id": "P039",
+    "plant": "Plant-C",
+    "units_produced": 297,
+    "sales_id": "S0376"
+  },
+  {
+    "production_id": "F0377",
+    "product_id": "P008",
+    "plant": "Plant-D",
+    "units_produced": 67,
+    "sales_id": "S0377"
+  },
+  {
+    "production_id": "F0378",
+    "product_id": "P045",
+    "plant": "Plant-D",
+    "units_produced": 248,
+    "sales_id": "S0378"
+  },
+  {
+    "production_id": "F0379",
+    "product_id": "P039",
+    "plant": "Plant-D",
+    "units_produced": 74,
+    "sales_id": "S0379"
+  },
+  {
+    "production_id": "F0380",
+    "product_id": "P029",
+    "plant": "Plant-A",
+    "units_produced": 82,
+    "sales_id": "S0380"
+  },
+  {
+    "production_id": "F0381",
+    "product_id": "P053",
+    "plant": "Plant-B",
+    "units_produced": 361,
+    "sales_id": "S0381"
+  },
+  {
+    "production_id": "F0382",
+    "product_id": "P027",
+    "plant": "Plant-C",
+    "units_produced": 34,
+    "sales_id": "S0382"
+  },
+  {
+    "production_id": "F0383",
+    "product_id": "P069",
+    "plant": "Plant-A",
+    "units_produced": 53,
+    "sales_id": "S0383"
+  },
+  {
+    "production_id": "F0384",
+    "product_id": "P025",
+    "plant": "Plant-C",
+    "units_produced": 110,
+    "sales_id": "S0384"
+  },
+  {
+    "production_id": "F0385",
+    "product_id": "P002",
+    "plant": "Plant-D",
+    "units_produced": 76,
+    "sales_id": "S0385"
+  },
+  {
+    "production_id": "F0386",
+    "product_id": "P090",
+    "plant": "Plant-C",
+    "units_produced": 145,
+    "sales_id": "S0386"
+  },
+  {
+    "production_id": "F0387",
+    "product_id": "P037",
+    "plant": "Plant-C",
+    "units_produced": 175,
+    "sales_id": "S0387"
+  },
+  {
+    "production_id": "F0388",
+    "product_id": "P047",
+    "plant": "Plant-D",
+    "units_produced": 234,
+    "sales_id": "S0388"
+  },
+  {
+    "production_id": "F0389",
+    "product_id": "P041",
+    "plant": "Plant-A",
+    "units_produced": 212,
+    "sales_id": "S0389"
+  },
+  {
+    "production_id": "F0390",
+    "product_id": "P029",
+    "plant": "Plant-D",
+    "units_produced": 53,
+    "sales_id": "S0390"
+  },
+  {
+    "production_id": "F0391",
+    "product_id": "P020",
+    "plant": "Plant-B",
+    "units_produced": 219,
+    "sales_id": "S0391"
+  },
+  {
+    "production_id": "F0392",
+    "product_id": "P071",
+    "plant": "Plant-D",
+    "units_produced": 105,
+    "sales_id": "S0392"
+  },
+  {
+    "production_id": "F0393",
+    "product_id": "P022",
+    "plant": "Plant-D",
+    "units_produced": 145,
+    "sales_id": "S0393"
+  },
+  {
+    "production_id": "F0394",
+    "product_id": "P070",
+    "plant": "Plant-A",
+    "units_produced": 483,
+    "sales_id": "S0394"
+  },
+  {
+    "production_id": "F0395",
+    "product_id": "P001",
+    "plant": "Plant-B",
+    "units_produced": 48,
+    "sales_id": "S0395"
+  },
+  {
+    "production_id": "F0396",
+    "product_id": "P091",
+    "plant": "Plant-D",
+    "units_produced": 57,
+    "sales_id": "S0396"
+  },
+  {
+    "production_id": "F0397",
+    "product_id": "P008",
+    "plant": "Plant-A",
+    "units_produced": 143,
+    "sales_id": "S0397"
+  },
+  {
+    "production_id": "F0398",
+    "product_id": "P069",
+    "plant": "Plant-C",
+    "units_produced": 420,
+    "sales_id": "S0398"
+  },
+  {
+    "production_id": "F0399",
+    "product_id": "P037",
+    "plant": "Plant-B",
+    "units_produced": 134,
+    "sales_id": "S0399"
+  },
+  {
+    "production_id": "F0400",
+    "product_id": "P013",
+    "plant": "Plant-C",
+    "units_produced": 120,
+    "sales_id": "S0400"
+  },
+  {
+    "production_id": "F0401",
+    "product_id": "P035",
+    "plant": "Plant-D",
+    "units_produced": 89,
+    "sales_id": "S0401"
+  },
+  {
+    "production_id": "F0402",
+    "product_id": "P032",
+    "plant": "Plant-A",
+    "units_produced": 98,
+    "sales_id": "S0402"
+  },
+  {
+    "production_id": "F0403",
+    "product_id": "P052",
+    "plant": "Plant-A",
+    "units_produced": 170,
+    "sales_id": "S0403"
+  },
+  {
+    "production_id": "F0404",
+    "product_id": "P002",
+    "plant": "Plant-C",
+    "units_produced": 82,
+    "sales_id": "S0404"
+  },
+  {
+    "production_id": "F0405",
+    "product_id": "P013",
+    "plant": "Plant-D",
+    "units_produced": 66,
+    "sales_id": "S0405"
+  },
+  {
+    "production_id": "F0406",
+    "product_id": "P006",
+    "plant": "Plant-A",
+    "units_produced": 83,
+    "sales_id": "S0406"
+  },
+  {
+    "production_id": "F0407",
+    "product_id": "P041",
+    "plant": "Plant-D",
+    "units_produced": 81,
+    "sales_id": "S0407"
+  },
+  {
+    "production_id": "F0408",
+    "product_id": "P039",
+    "plant": "Plant-C",
+    "units_produced": 112,
+    "sales_id": "S0408"
+  },
+  {
+    "production_id": "F0409",
+    "product_id": "P097",
+    "plant": "Plant-A",
+    "units_produced": 49,
+    "sales_id": "S0409"
+  },
+  {
+    "production_id": "F0410",
+    "product_id": "P056",
+    "plant": "Plant-D",
+    "units_produced": 103,
+    "sales_id": "S0410"
+  },
+  {
+    "production_id": "F0411",
+    "product_id": "P042",
+    "plant": "Plant-D",
+    "units_produced": 92,
+    "sales_id": "S0411"
+  },
+  {
+    "production_id": "F0412",
+    "product_id": "P046",
+    "plant": "Plant-D",
+    "units_produced": 157,
+    "sales_id": "S0412"
+  },
+  {
+    "production_id": "F0413",
+    "product_id": "P099",
+    "plant": "Plant-A",
+    "units_produced": 87,
+    "sales_id": "S0413"
+  },
+  {
+    "production_id": "F0414",
+    "product_id": "P035",
+    "plant": "Plant-D",
+    "units_produced": 131,
+    "sales_id": "S0414"
+  },
+  {
+    "production_id": "F0415",
+    "product_id": "P047",
+    "plant": "Plant-D",
+    "units_produced": 147,
+    "sales_id": "S0415"
+  },
+  {
+    "production_id": "F0416",
+    "product_id": "P098",
+    "plant": "Plant-B",
+    "units_produced": 122,
+    "sales_id": "S0416"
+  },
+  {
+    "production_id": "F0417",
+    "product_id": "P058",
+    "plant": "Plant-A",
+    "units_produced": 209,
+    "sales_id": "S0417"
+  },
+  {
+    "production_id": "F0418",
+    "product_id": "P046",
+    "plant": "Plant-C",
+    "units_produced": 67,
+    "sales_id": "S0418"
+  },
+  {
+    "production_id": "F0419",
+    "product_id": "P002",
+    "plant": "Plant-B",
+    "units_produced": 212,
+    "sales_id": "S0419"
+  },
+  {
+    "production_id": "F0420",
+    "product_id": "P067",
+    "plant": "Plant-C",
+    "units_produced": 260,
+    "sales_id": "S0420"
+  },
+  {
+    "production_id": "F0421",
+    "product_id": "P035",
+    "plant": "Plant-D",
+    "units_produced": 158,
+    "sales_id": "S0421"
+  },
+  {
+    "production_id": "F0422",
+    "product_id": "P054",
+    "plant": "Plant-C",
+    "units_produced": 143,
+    "sales_id": "S0422"
+  },
+  {
+    "production_id": "F0423",
+    "product_id": "P032",
+    "plant": "Plant-B",
+    "units_produced": 104,
+    "sales_id": "S0423"
+  },
+  {
+    "production_id": "F0424",
+    "product_id": "P001",
+    "plant": "Plant-D",
+    "units_produced": 109,
+    "sales_id": "S0424"
+  },
+  {
+    "production_id": "F0425",
+    "product_id": "P057",
+    "plant": "Plant-B",
+    "units_produced": 130,
+    "sales_id": "S0425"
+  },
+  {
+    "production_id": "F0426",
+    "product_id": "P042",
+    "plant": "Plant-B",
+    "units_produced": 110,
+    "sales_id": "S0426"
+  },
+  {
+    "production_id": "F0427",
+    "product_id": "P041",
+    "plant": "Plant-C",
+    "units_produced": 185,
+    "sales_id": "S0427"
+  },
+  {
+    "production_id": "F0428",
+    "product_id": "P036",
+    "plant": "Plant-B",
+    "units_produced": 295,
+    "sales_id": "S0428"
+  },
+  {
+    "production_id": "F0429",
+    "product_id": "P070",
+    "plant": "Plant-B",
+    "units_produced": 46,
+    "sales_id": "S0429"
+  },
+  {
+    "production_id": "F0430",
+    "product_id": "P038",
+    "plant": "Plant-B",
+    "units_produced": 162,
+    "sales_id": "S0430"
+  },
+  {
+    "production_id": "F0431",
+    "product_id": "P039",
+    "plant": "Plant-D",
+    "units_produced": 132,
+    "sales_id": "S0431"
+  },
+  {
+    "production_id": "F0432",
+    "product_id": "P049",
+    "plant": "Plant-D",
+    "units_produced": 178,
+    "sales_id": "S0432"
+  },
+  {
+    "production_id": "F0433",
+    "product_id": "P065",
+    "plant": "Plant-A",
+    "units_produced": 456,
+    "sales_id": "S0433"
+  },
+  {
+    "production_id": "F0434",
+    "product_id": "P099",
+    "plant": "Plant-A",
+    "units_produced": 263,
+    "sales_id": "S0434"
+  },
+  {
+    "production_id": "F0435",
+    "product_id": "P083",
+    "plant": "Plant-A",
+    "units_produced": 91,
+    "sales_id": "S0435"
+  },
+  {
+    "production_id": "F0436",
+    "product_id": "P013",
+    "plant": "Plant-B",
+    "units_produced": 117,
+    "sales_id": "S0436"
+  },
+  {
+    "production_id": "F0437",
+    "product_id": "P048",
+    "plant": "Plant-B",
+    "units_produced": 146,
+    "sales_id": "S0437"
+  },
+  {
+    "production_id": "F0438",
+    "product_id": "P004",
+    "plant": "Plant-A",
+    "units_produced": 78,
+    "sales_id": "S0438"
+  },
+  {
+    "production_id": "F0439",
+    "product_id": "P094",
+    "plant": "Plant-D",
+    "units_produced": 221,
+    "sales_id": "S0439"
+  },
+  {
+    "production_id": "F0440",
+    "product_id": "P027",
+    "plant": "Plant-A",
+    "units_produced": 240,
+    "sales_id": "S0440"
+  },
+  {
+    "production_id": "F0441",
+    "product_id": "P093",
+    "plant": "Plant-A",
+    "units_produced": 304,
+    "sales_id": "S0441"
+  },
+  {
+    "production_id": "F0442",
+    "product_id": "P015",
+    "plant": "Plant-B",
+    "units_produced": 155,
+    "sales_id": "S0442"
+  },
+  {
+    "production_id": "F0443",
+    "product_id": "P032",
+    "plant": "Plant-C",
+    "units_produced": 105,
+    "sales_id": "S0443"
+  },
+  {
+    "production_id": "F0444",
+    "product_id": "P055",
+    "plant": "Plant-B",
+    "units_produced": 78,
+    "sales_id": "S0444"
+  },
+  {
+    "production_id": "F0445",
+    "product_id": "P082",
+    "plant": "Plant-B",
+    "units_produced": 384,
+    "sales_id": "S0445"
+  },
+  {
+    "production_id": "F0446",
+    "product_id": "P076",
+    "plant": "Plant-B",
+    "units_produced": 385,
+    "sales_id": "S0446"
+  },
+  {
+    "production_id": "F0447",
+    "product_id": "P097",
+    "plant": "Plant-B",
+    "units_produced": 60,
+    "sales_id": "S0447"
+  },
+  {
+    "production_id": "F0448",
+    "product_id": "P042",
+    "plant": "Plant-D",
+    "units_produced": 347,
+    "sales_id": "S0448"
+  },
+  {
+    "production_id": "F0449",
+    "product_id": "P082",
+    "plant": "Plant-A",
+    "units_produced": 146,
+    "sales_id": "S0449"
+  },
+  {
+    "production_id": "F0450",
+    "product_id": "P046",
+    "plant": "Plant-A",
+    "units_produced": 96,
+    "sales_id": "S0450"
+  },
+  {
+    "production_id": "F0451",
+    "product_id": "P018",
+    "plant": "Plant-A",
+    "units_produced": 94,
+    "sales_id": "S0451"
+  },
+  {
+    "production_id": "F0452",
+    "product_id": "P048",
+    "plant": "Plant-B",
+    "units_produced": 248,
+    "sales_id": "S0452"
+  },
+  {
+    "production_id": "F0453",
+    "product_id": "P050",
+    "plant": "Plant-B",
+    "units_produced": 114,
+    "sales_id": "S0453"
+  },
+  {
+    "production_id": "F0454",
+    "product_id": "P022",
+    "plant": "Plant-C",
+    "units_produced": 232,
+    "sales_id": "S0454"
+  },
+  {
+    "production_id": "F0455",
+    "product_id": "P080",
+    "plant": "Plant-D",
+    "units_produced": 94,
+    "sales_id": "S0455"
+  },
+  {
+    "production_id": "F0456",
+    "product_id": "P025",
+    "plant": "Plant-D",
+    "units_produced": 195,
+    "sales_id": "S0456"
+  },
+  {
+    "production_id": "F0457",
+    "product_id": "P063",
+    "plant": "Plant-A",
+    "units_produced": 198,
+    "sales_id": "S0457"
+  },
+  {
+    "production_id": "F0458",
+    "product_id": "P004",
+    "plant": "Plant-B",
+    "units_produced": 296,
+    "sales_id": "S0458"
+  },
+  {
+    "production_id": "F0459",
+    "product_id": "P037",
+    "plant": "Plant-A",
+    "units_produced": 187,
+    "sales_id": "S0459"
+  },
+  {
+    "production_id": "F0460",
+    "product_id": "P015",
+    "plant": "Plant-A",
+    "units_produced": 185,
+    "sales_id": "S0460"
+  },
+  {
+    "production_id": "F0461",
+    "product_id": "P093",
+    "plant": "Plant-A",
+    "units_produced": 348,
+    "sales_id": "S0461"
+  },
+  {
+    "production_id": "F0462",
+    "product_id": "P084",
+    "plant": "Plant-D",
+    "units_produced": 94,
+    "sales_id": "S0462"
+  },
+  {
+    "production_id": "F0463",
+    "product_id": "P045",
+    "plant": "Plant-B",
+    "units_produced": 122,
+    "sales_id": "S0463"
+  },
+  {
+    "production_id": "F0464",
+    "product_id": "P095",
+    "plant": "Plant-D",
+    "units_produced": 99,
+    "sales_id": "S0464"
+  },
+  {
+    "production_id": "F0465",
+    "product_id": "P079",
+    "plant": "Plant-A",
+    "units_produced": 96,
+    "sales_id": "S0465"
+  },
+  {
+    "production_id": "F0466",
+    "product_id": "P045",
+    "plant": "Plant-B",
+    "units_produced": 116,
+    "sales_id": "S0466"
+  },
+  {
+    "production_id": "F0467",
+    "product_id": "P091",
+    "plant": "Plant-A",
+    "units_produced": 110,
+    "sales_id": "S0467"
+  },
+  {
+    "production_id": "F0468",
+    "product_id": "P097",
+    "plant": "Plant-B",
+    "units_produced": 68,
+    "sales_id": "S0468"
+  },
+  {
+    "production_id": "F0469",
+    "product_id": "P019",
+    "plant": "Plant-D",
+    "units_produced": 83,
+    "sales_id": "S0469"
+  },
+  {
+    "production_id": "F0470",
+    "product_id": "P074",
+    "plant": "Plant-A",
+    "units_produced": 216,
+    "sales_id": "S0470"
+  },
+  {
+    "production_id": "F0471",
+    "product_id": "P099",
+    "plant": "Plant-C",
+    "units_produced": 175,
+    "sales_id": "S0471"
+  },
+  {
+    "production_id": "F0472",
+    "product_id": "P063",
+    "plant": "Plant-D",
+    "units_produced": 53,
+    "sales_id": "S0472"
+  },
+  {
+    "production_id": "F0473",
+    "product_id": "P086",
+    "plant": "Plant-D",
+    "units_produced": 42,
+    "sales_id": "S0473"
+  },
+  {
+    "production_id": "F0474",
+    "product_id": "P055",
+    "plant": "Plant-C",
+    "units_produced": 267,
+    "sales_id": "S0474"
+  },
+  {
+    "production_id": "F0475",
+    "product_id": "P071",
+    "plant": "Plant-C",
+    "units_produced": 99,
+    "sales_id": "S0475"
+  },
+  {
+    "production_id": "F0476",
+    "product_id": "P098",
+    "plant": "Plant-D",
+    "units_produced": 68,
+    "sales_id": "S0476"
+  },
+  {
+    "production_id": "F0477",
+    "product_id": "P016",
+    "plant": "Plant-D",
+    "units_produced": 179,
+    "sales_id": "S0477"
+  },
+  {
+    "production_id": "F0478",
+    "product_id": "P089",
+    "plant": "Plant-A",
+    "units_produced": 239,
+    "sales_id": "S0478"
+  },
+  {
+    "production_id": "F0479",
+    "product_id": "P047",
+    "plant": "Plant-A",
+    "units_produced": 79,
+    "sales_id": "S0479"
+  },
+  {
+    "production_id": "F0480",
+    "product_id": "P081",
+    "plant": "Plant-A",
+    "units_produced": 102,
+    "sales_id": "S0480"
+  },
+  {
+    "production_id": "F0481",
+    "product_id": "P028",
+    "plant": "Plant-B",
+    "units_produced": 114,
+    "sales_id": "S0481"
+  },
+  {
+    "production_id": "F0482",
+    "product_id": "P088",
+    "plant": "Plant-A",
+    "units_produced": 84,
+    "sales_id": "S0482"
+  },
+  {
+    "production_id": "F0483",
+    "product_id": "P089",
+    "plant": "Plant-D",
+    "units_produced": 372,
+    "sales_id": "S0483"
+  },
+  {
+    "production_id": "F0484",
+    "product_id": "P094",
+    "plant": "Plant-C",
+    "units_produced": 75,
+    "sales_id": "S0484"
+  },
+  {
+    "production_id": "F0485",
+    "product_id": "P049",
+    "plant": "Plant-A",
+    "units_produced": 178,
+    "sales_id": "S0485"
+  },
+  {
+    "production_id": "F0486",
+    "product_id": "P084",
+    "plant": "Plant-B",
+    "units_produced": 221,
+    "sales_id": "S0486"
+  },
+  {
+    "production_id": "F0487",
+    "product_id": "P079",
+    "plant": "Plant-B",
+    "units_produced": 230,
+    "sales_id": "S0487"
+  },
+  {
+    "production_id": "F0488",
+    "product_id": "P016",
+    "plant": "Plant-C",
+    "units_produced": 223,
+    "sales_id": "S0488"
+  },
+  {
+    "production_id": "F0489",
+    "product_id": "P018",
+    "plant": "Plant-B",
+    "units_produced": 125,
+    "sales_id": "S0489"
+  },
+  {
+    "production_id": "F0490",
+    "product_id": "P077",
+    "plant": "Plant-C",
+    "units_produced": 95,
+    "sales_id": "S0490"
+  },
+  {
+    "production_id": "F0491",
+    "product_id": "P067",
+    "plant": "Plant-C",
+    "units_produced": 333,
+    "sales_id": "S0491"
+  },
+  {
+    "production_id": "F0492",
+    "product_id": "P007",
+    "plant": "Plant-B",
+    "units_produced": 238,
+    "sales_id": "S0492"
+  },
+  {
+    "production_id": "F0493",
+    "product_id": "P082",
+    "plant": "Plant-C",
+    "units_produced": 60,
+    "sales_id": "S0493"
+  },
+  {
+    "production_id": "F0494",
+    "product_id": "P017",
+    "plant": "Plant-B",
+    "units_produced": 231,
+    "sales_id": "S0494"
+  },
+  {
+    "production_id": "F0495",
+    "product_id": "P061",
+    "plant": "Plant-A",
+    "units_produced": 38,
+    "sales_id": "S0495"
+  },
+  {
+    "production_id": "F0496",
+    "product_id": "P028",
+    "plant": "Plant-C",
+    "units_produced": 64,
+    "sales_id": "S0496"
+  },
+  {
+    "production_id": "F0497",
+    "product_id": "P092",
+    "plant": "Plant-A",
+    "units_produced": 206,
+    "sales_id": "S0497"
+  },
+  {
+    "production_id": "F0498",
+    "product_id": "P069",
+    "plant": "Plant-C",
+    "units_produced": 99,
+    "sales_id": "S0498"
+  },
+  {
+    "production_id": "F0499",
+    "product_id": "P066",
+    "plant": "Plant-D",
+    "units_produced": 102,
+    "sales_id": "S0499"
+  },
+  {
+    "production_id": "F0500",
+    "product_id": "P082",
+    "plant": "Plant-B",
+    "units_produced": 98,
+    "sales_id": "S0500"
+  },
+  {
+    "production_id": "F0501",
+    "product_id": "P032",
+    "plant": "Plant-A",
+    "units_produced": 319,
+    "sales_id": "S0501"
+  },
+  {
+    "production_id": "F0502",
+    "product_id": "P086",
+    "plant": "Plant-A",
+    "units_produced": 157,
+    "sales_id": "S0502"
+  },
+  {
+    "production_id": "F0503",
+    "product_id": "P064",
+    "plant": "Plant-B",
+    "units_produced": 203,
+    "sales_id": "S0503"
+  },
+  {
+    "production_id": "F0504",
+    "product_id": "P017",
+    "plant": "Plant-C",
+    "units_produced": 69,
+    "sales_id": "S0504"
+  },
+  {
+    "production_id": "F0505",
+    "product_id": "P035",
+    "plant": "Plant-A",
+    "units_produced": 87,
+    "sales_id": "S0505"
+  },
+  {
+    "production_id": "F0506",
+    "product_id": "P059",
+    "plant": "Plant-B",
+    "units_produced": 323,
+    "sales_id": "S0506"
+  },
+  {
+    "production_id": "F0507",
+    "product_id": "P021",
+    "plant": "Plant-A",
+    "units_produced": 48,
+    "sales_id": "S0507"
+  },
+  {
+    "production_id": "F0508",
+    "product_id": "P095",
+    "plant": "Plant-B",
+    "units_produced": 49,
+    "sales_id": "S0508"
+  },
+  {
+    "production_id": "F0509",
+    "product_id": "P061",
+    "plant": "Plant-B",
+    "units_produced": 95,
+    "sales_id": "S0509"
+  },
+  {
+    "production_id": "F0510",
+    "product_id": "P071",
+    "plant": "Plant-D",
+    "units_produced": 162,
+    "sales_id": "S0510"
+  },
+  {
+    "production_id": "F0511",
+    "product_id": "P041",
+    "plant": "Plant-A",
+    "units_produced": 72,
+    "sales_id": "S0511"
+  },
+  {
+    "production_id": "F0512",
+    "product_id": "P087",
+    "plant": "Plant-A",
+    "units_produced": 140,
+    "sales_id": "S0512"
+  },
+  {
+    "production_id": "F0513",
+    "product_id": "P009",
+    "plant": "Plant-C",
+    "units_produced": 86,
+    "sales_id": "S0513"
+  },
+  {
+    "production_id": "F0514",
+    "product_id": "P071",
+    "plant": "Plant-C",
+    "units_produced": 62,
+    "sales_id": "S0514"
+  },
+  {
+    "production_id": "F0515",
+    "product_id": "P039",
+    "plant": "Plant-D",
+    "units_produced": 150,
+    "sales_id": "S0515"
+  },
+  {
+    "production_id": "F0516",
+    "product_id": "P100",
+    "plant": "Plant-B",
+    "units_produced": 146,
+    "sales_id": "S0516"
+  },
+  {
+    "production_id": "F0517",
+    "product_id": "P053",
+    "plant": "Plant-A",
+    "units_produced": 110,
+    "sales_id": "S0517"
+  },
+  {
+    "production_id": "F0518",
+    "product_id": "P001",
+    "plant": "Plant-B",
+    "units_produced": 258,
+    "sales_id": "S0518"
+  },
+  {
+    "production_id": "F0519",
+    "product_id": "P063",
+    "plant": "Plant-A",
+    "units_produced": 53,
+    "sales_id": "S0519"
+  },
+  {
+    "production_id": "F0520",
+    "product_id": "P030",
+    "plant": "Plant-D",
+    "units_produced": 168,
+    "sales_id": "S0520"
+  },
+  {
+    "production_id": "F0521",
+    "product_id": "P011",
+    "plant": "Plant-D",
+    "units_produced": 53,
+    "sales_id": "S0521"
+  },
+  {
+    "production_id": "F0522",
+    "product_id": "P076",
+    "plant": "Plant-B",
+    "units_produced": 60,
+    "sales_id": "S0522"
+  },
+  {
+    "production_id": "F0523",
+    "product_id": "P034",
+    "plant": "Plant-C",
+    "units_produced": 144,
+    "sales_id": "S0523"
+  },
+  {
+    "production_id": "F0524",
+    "product_id": "P035",
+    "plant": "Plant-B",
+    "units_produced": 76,
+    "sales_id": "S0524"
+  },
+  {
+    "production_id": "F0525",
+    "product_id": "P099",
+    "plant": "Plant-B",
+    "units_produced": 124,
+    "sales_id": "S0525"
+  },
+  {
+    "production_id": "F0526",
+    "product_id": "P060",
+    "plant": "Plant-C",
+    "units_produced": 332,
+    "sales_id": "S0526"
+  },
+  {
+    "production_id": "F0527",
+    "product_id": "P027",
+    "plant": "Plant-A",
+    "units_produced": 128,
+    "sales_id": "S0527"
+  },
+  {
+    "production_id": "F0528",
+    "product_id": "P021",
+    "plant": "Plant-B",
+    "units_produced": 55,
+    "sales_id": "S0528"
+  },
+  {
+    "production_id": "F0529",
+    "product_id": "P092",
+    "plant": "Plant-A",
+    "units_produced": 194,
+    "sales_id": "S0529"
+  },
+  {
+    "production_id": "F0530",
+    "product_id": "P039",
+    "plant": "Plant-D",
+    "units_produced": 218,
+    "sales_id": "S0530"
+  },
+  {
+    "production_id": "F0531",
+    "product_id": "P096",
+    "plant": "Plant-A",
+    "units_produced": 245,
+    "sales_id": "S0531"
+  },
+  {
+    "production_id": "F0532",
+    "product_id": "P018",
+    "plant": "Plant-B",
+    "units_produced": 63,
+    "sales_id": "S0532"
+  },
+  {
+    "production_id": "F0533",
+    "product_id": "P052",
+    "plant": "Plant-C",
+    "units_produced": 45,
+    "sales_id": "S0533"
+  },
+  {
+    "production_id": "F0534",
+    "product_id": "P003",
+    "plant": "Plant-B",
+    "units_produced": 60,
+    "sales_id": "S0534"
+  },
+  {
+    "production_id": "F0535",
+    "product_id": "P043",
+    "plant": "Plant-A",
+    "units_produced": 31,
+    "sales_id": "S0535"
+  },
+  {
+    "production_id": "F0536",
+    "product_id": "P074",
+    "plant": "Plant-D",
+    "units_produced": 189,
+    "sales_id": "S0536"
+  },
+  {
+    "production_id": "F0537",
+    "product_id": "P055",
+    "plant": "Plant-C",
+    "units_produced": 223,
+    "sales_id": "S0537"
+  },
+  {
+    "production_id": "F0538",
+    "product_id": "P058",
+    "plant": "Plant-B",
+    "units_produced": 67,
+    "sales_id": "S0538"
+  },
+  {
+    "production_id": "F0539",
+    "product_id": "P038",
+    "plant": "Plant-D",
+    "units_produced": 104,
+    "sales_id": "S0539"
+  },
+  {
+    "production_id": "F0540",
+    "product_id": "P012",
+    "plant": "Plant-B",
+    "units_produced": 300,
+    "sales_id": "S0540"
+  },
+  {
+    "production_id": "F0541",
+    "product_id": "P068",
+    "plant": "Plant-D",
+    "units_produced": 191,
+    "sales_id": "S0541"
+  },
+  {
+    "production_id": "F0542",
+    "product_id": "P092",
+    "plant": "Plant-C",
+    "units_produced": 200,
+    "sales_id": "S0542"
+  },
+  {
+    "production_id": "F0543",
+    "product_id": "P065",
+    "plant": "Plant-A",
+    "units_produced": 219,
+    "sales_id": "S0543"
+  },
+  {
+    "production_id": "F0544",
+    "product_id": "P077",
+    "plant": "Plant-A",
+    "units_produced": 49,
+    "sales_id": "S0544"
+  },
+  {
+    "production_id": "F0545",
+    "product_id": "P068",
+    "plant": "Plant-B",
+    "units_produced": 202,
+    "sales_id": "S0545"
+  },
+  {
+    "production_id": "F0546",
+    "product_id": "P031",
+    "plant": "Plant-B",
+    "units_produced": 171,
+    "sales_id": "S0546"
+  },
+  {
+    "production_id": "F0547",
+    "product_id": "P050",
+    "plant": "Plant-C",
+    "units_produced": 171,
+    "sales_id": "S0547"
+  },
+  {
+    "production_id": "F0548",
+    "product_id": "P090",
+    "plant": "Plant-B",
+    "units_produced": 58,
+    "sales_id": "S0548"
+  },
+  {
+    "production_id": "F0549",
+    "product_id": "P025",
+    "plant": "Plant-D",
+    "units_produced": 255,
+    "sales_id": "S0549"
+  },
+  {
+    "production_id": "F0550",
+    "product_id": "P012",
+    "plant": "Plant-A",
+    "units_produced": 115,
+    "sales_id": "S0550"
+  },
+  {
+    "production_id": "F0551",
+    "product_id": "P062",
+    "plant": "Plant-B",
+    "units_produced": 90,
+    "sales_id": "S0551"
+  },
+  {
+    "production_id": "F0552",
+    "product_id": "P044",
+    "plant": "Plant-B",
+    "units_produced": 310,
+    "sales_id": "S0552"
+  },
+  {
+    "production_id": "F0553",
+    "product_id": "P091",
+    "plant": "Plant-C",
+    "units_produced": 42,
+    "sales_id": "S0553"
+  },
+  {
+    "production_id": "F0554",
+    "product_id": "P048",
+    "plant": "Plant-C",
+    "units_produced": 72,
+    "sales_id": "S0554"
+  },
+  {
+    "production_id": "F0555",
+    "product_id": "P021",
+    "plant": "Plant-B",
+    "units_produced": 192,
+    "sales_id": "S0555"
+  },
+  {
+    "production_id": "F0556",
+    "product_id": "P072",
+    "plant": "Plant-B",
+    "units_produced": 225,
+    "sales_id": "S0556"
+  },
+  {
+    "production_id": "F0557",
+    "product_id": "P040",
+    "plant": "Plant-D",
+    "units_produced": 148,
+    "sales_id": "S0557"
+  },
+  {
+    "production_id": "F0558",
+    "product_id": "P073",
+    "plant": "Plant-B",
+    "units_produced": 108,
+    "sales_id": "S0558"
+  },
+  {
+    "production_id": "F0559",
+    "product_id": "P073",
+    "plant": "Plant-A",
+    "units_produced": 329,
+    "sales_id": "S0559"
+  },
+  {
+    "production_id": "F0560",
+    "product_id": "P045",
+    "plant": "Plant-C",
+    "units_produced": 90,
+    "sales_id": "S0560"
+  },
+  {
+    "production_id": "F0561",
+    "product_id": "P002",
+    "plant": "Plant-C",
+    "units_produced": 142,
+    "sales_id": "S0561"
+  },
+  {
+    "production_id": "F0562",
+    "product_id": "P014",
+    "plant": "Plant-D",
+    "units_produced": 50,
+    "sales_id": "S0562"
+  },
+  {
+    "production_id": "F0563",
+    "product_id": "P053",
+    "plant": "Plant-D",
+    "units_produced": 177,
+    "sales_id": "S0563"
+  },
+  {
+    "production_id": "F0564",
+    "product_id": "P062",
+    "plant": "Plant-A",
+    "units_produced": 158,
+    "sales_id": "S0564"
+  },
+  {
+    "production_id": "F0565",
+    "product_id": "P038",
+    "plant": "Plant-A",
+    "units_produced": 193,
+    "sales_id": "S0565"
+  },
+  {
+    "production_id": "F0566",
+    "product_id": "P022",
+    "plant": "Plant-A",
+    "units_produced": 76,
+    "sales_id": "S0566"
+  },
+  {
+    "production_id": "F0567",
+    "product_id": "P077",
+    "plant": "Plant-D",
+    "units_produced": 178,
+    "sales_id": "S0567"
+  },
+  {
+    "production_id": "F0568",
+    "product_id": "P022",
+    "plant": "Plant-A",
+    "units_produced": 291,
+    "sales_id": "S0568"
+  },
+  {
+    "production_id": "F0569",
+    "product_id": "P027",
+    "plant": "Plant-C",
+    "units_produced": 162,
+    "sales_id": "S0569"
+  },
+  {
+    "production_id": "F0570",
+    "product_id": "P037",
+    "plant": "Plant-D",
+    "units_produced": 224,
+    "sales_id": "S0570"
+  },
+  {
+    "production_id": "F0571",
+    "product_id": "P071",
+    "plant": "Plant-A",
+    "units_produced": 179,
+    "sales_id": "S0571"
+  },
+  {
+    "production_id": "F0572",
+    "product_id": "P012",
+    "plant": "Plant-A",
+    "units_produced": 290,
+    "sales_id": "S0572"
+  },
+  {
+    "production_id": "F0573",
+    "product_id": "P022",
+    "plant": "Plant-C",
+    "units_produced": 96,
+    "sales_id": "S0573"
+  },
+  {
+    "production_id": "F0574",
+    "product_id": "P051",
+    "plant": "Plant-A",
+    "units_produced": 158,
+    "sales_id": "S0574"
+  },
+  {
+    "production_id": "F0575",
+    "product_id": "P070",
+    "plant": "Plant-C",
+    "units_produced": 104,
+    "sales_id": "S0575"
+  },
+  {
+    "production_id": "F0576",
+    "product_id": "P058",
+    "plant": "Plant-C",
+    "units_produced": 124,
+    "sales_id": "S0576"
+  },
+  {
+    "production_id": "F0577",
+    "product_id": "P035",
+    "plant": "Plant-A",
+    "units_produced": 111,
+    "sales_id": "S0577"
+  },
+  {
+    "production_id": "F0578",
+    "product_id": "P045",
+    "plant": "Plant-B",
+    "units_produced": 149,
+    "sales_id": "S0578"
+  },
+  {
+    "production_id": "F0579",
+    "product_id": "P008",
+    "plant": "Plant-D",
+    "units_produced": 243,
+    "sales_id": "S0579"
+  },
+  {
+    "production_id": "F0580",
+    "product_id": "P031",
+    "plant": "Plant-A",
+    "units_produced": 267,
+    "sales_id": "S0580"
+  },
+  {
+    "production_id": "F0581",
+    "product_id": "P074",
+    "plant": "Plant-B",
+    "units_produced": 136,
+    "sales_id": "S0581"
+  },
+  {
+    "production_id": "F0582",
+    "product_id": "P028",
+    "plant": "Plant-A",
+    "units_produced": 182,
+    "sales_id": "S0582"
+  },
+  {
+    "production_id": "F0583",
+    "product_id": "P056",
+    "plant": "Plant-C",
+    "units_produced": 66,
+    "sales_id": "S0583"
+  },
+  {
+    "production_id": "F0584",
+    "product_id": "P094",
+    "plant": "Plant-D",
+    "units_produced": 90,
+    "sales_id": "S0584"
+  },
+  {
+    "production_id": "F0585",
+    "product_id": "P042",
+    "plant": "Plant-D",
+    "units_produced": 201,
+    "sales_id": "S0585"
+  },
+  {
+    "production_id": "F0586",
+    "product_id": "P054",
+    "plant": "Plant-A",
+    "units_produced": 67,
+    "sales_id": "S0586"
+  },
+  {
+    "production_id": "F0587",
+    "product_id": "P073",
+    "plant": "Plant-C",
+    "units_produced": 101,
+    "sales_id": "S0587"
+  },
+  {
+    "production_id": "F0588",
+    "product_id": "P034",
+    "plant": "Plant-D",
+    "units_produced": 161,
+    "sales_id": "S0588"
+  },
+  {
+    "production_id": "F0589",
+    "product_id": "P023",
+    "plant": "Plant-D",
+    "units_produced": 264,
+    "sales_id": "S0589"
+  },
+  {
+    "production_id": "F0590",
+    "product_id": "P051",
+    "plant": "Plant-C",
+    "units_produced": 235,
+    "sales_id": "S0590"
+  },
+  {
+    "production_id": "F0591",
+    "product_id": "P003",
+    "plant": "Plant-D",
+    "units_produced": 196,
+    "sales_id": "S0591"
+  },
+  {
+    "production_id": "F0592",
+    "product_id": "P088",
+    "plant": "Plant-D",
+    "units_produced": 218,
+    "sales_id": "S0592"
+  },
+  {
+    "production_id": "F0593",
+    "product_id": "P042",
+    "plant": "Plant-B",
+    "units_produced": 162,
+    "sales_id": "S0593"
+  },
+  {
+    "production_id": "F0594",
+    "product_id": "P028",
+    "plant": "Plant-C",
+    "units_produced": 134,
+    "sales_id": "S0594"
+  },
+  {
+    "production_id": "F0595",
+    "product_id": "P066",
+    "plant": "Plant-D",
+    "units_produced": 61,
+    "sales_id": "S0595"
+  },
+  {
+    "production_id": "F0596",
+    "product_id": "P100",
+    "plant": "Plant-B",
+    "units_produced": 50,
+    "sales_id": "S0596"
+  },
+  {
+    "production_id": "F0597",
+    "product_id": "P032",
+    "plant": "Plant-B",
+    "units_produced": 385,
+    "sales_id": "S0597"
+  },
+  {
+    "production_id": "F0598",
+    "product_id": "P048",
+    "plant": "Plant-A",
+    "units_produced": 221,
+    "sales_id": "S0598"
+  },
+  {
+    "production_id": "F0599",
+    "product_id": "P048",
+    "plant": "Plant-C",
+    "units_produced": 290,
+    "sales_id": "S0599"
+  },
+  {
+    "production_id": "F0600",
+    "product_id": "P021",
+    "plant": "Plant-D",
+    "units_produced": 68,
+    "sales_id": "S0600"
+  },
+  {
+    "production_id": "F0601",
+    "product_id": "P021",
+    "plant": "Plant-B",
+    "units_produced": 103,
+    "sales_id": "S0601"
+  },
+  {
+    "production_id": "F0602",
+    "product_id": "P027",
+    "plant": "Plant-A",
+    "units_produced": 178,
+    "sales_id": "S0602"
+  },
+  {
+    "production_id": "F0603",
+    "product_id": "P017",
+    "plant": "Plant-C",
+    "units_produced": 78,
+    "sales_id": "S0603"
+  },
+  {
+    "production_id": "F0604",
+    "product_id": "P091",
+    "plant": "Plant-C",
+    "units_produced": 132,
+    "sales_id": "S0604"
+  },
+  {
+    "production_id": "F0605",
+    "product_id": "P033",
+    "plant": "Plant-D",
+    "units_produced": 258,
+    "sales_id": "S0605"
+  },
+  {
+    "production_id": "F0606",
+    "product_id": "P014",
+    "plant": "Plant-C",
+    "units_produced": 170,
+    "sales_id": "S0606"
+  },
+  {
+    "production_id": "F0607",
+    "product_id": "P088",
+    "plant": "Plant-C",
+    "units_produced": 410,
+    "sales_id": "S0607"
+  },
+  {
+    "production_id": "F0608",
+    "product_id": "P042",
+    "plant": "Plant-B",
+    "units_produced": 95,
+    "sales_id": "S0608"
+  },
+  {
+    "production_id": "F0609",
+    "product_id": "P067",
+    "plant": "Plant-D",
+    "units_produced": 69,
+    "sales_id": "S0609"
+  },
+  {
+    "production_id": "F0610",
+    "product_id": "P041",
+    "plant": "Plant-C",
+    "units_produced": 39,
+    "sales_id": "S0610"
+  },
+  {
+    "production_id": "F0611",
+    "product_id": "P054",
+    "plant": "Plant-B",
+    "units_produced": 130,
+    "sales_id": "S0611"
+  },
+  {
+    "production_id": "F0612",
+    "product_id": "P093",
+    "plant": "Plant-C",
+    "units_produced": 194,
+    "sales_id": "S0612"
+  },
+  {
+    "production_id": "F0613",
+    "product_id": "P039",
+    "plant": "Plant-D",
+    "units_produced": 112,
+    "sales_id": "S0613"
+  },
+  {
+    "production_id": "F0614",
+    "product_id": "P095",
+    "plant": "Plant-A",
+    "units_produced": 63,
+    "sales_id": "S0614"
+  },
+  {
+    "production_id": "F0615",
+    "product_id": "P046",
+    "plant": "Plant-C",
+    "units_produced": 147,
+    "sales_id": "S0615"
+  },
+  {
+    "production_id": "F0616",
+    "product_id": "P075",
+    "plant": "Plant-D",
+    "units_produced": 119,
+    "sales_id": "S0616"
+  },
+  {
+    "production_id": "F0617",
+    "product_id": "P082",
+    "plant": "Plant-A",
+    "units_produced": 86,
+    "sales_id": "S0617"
+  },
+  {
+    "production_id": "F0618",
+    "product_id": "P049",
+    "plant": "Plant-B",
+    "units_produced": 136,
+    "sales_id": "S0618"
+  },
+  {
+    "production_id": "F0619",
+    "product_id": "P026",
+    "plant": "Plant-B",
+    "units_produced": 157,
+    "sales_id": "S0619"
+  },
+  {
+    "production_id": "F0620",
+    "product_id": "P092",
+    "plant": "Plant-B",
+    "units_produced": 65,
+    "sales_id": "S0620"
+  },
+  {
+    "production_id": "F0621",
+    "product_id": "P082",
+    "plant": "Plant-B",
+    "units_produced": 70,
+    "sales_id": "S0621"
+  },
+  {
+    "production_id": "F0622",
+    "product_id": "P100",
+    "plant": "Plant-B",
+    "units_produced": 109,
+    "sales_id": "S0622"
+  },
+  {
+    "production_id": "F0623",
+    "product_id": "P056",
+    "plant": "Plant-D",
+    "units_produced": 161,
+    "sales_id": "S0623"
+  },
+  {
+    "production_id": "F0624",
+    "product_id": "P005",
+    "plant": "Plant-A",
+    "units_produced": 84,
+    "sales_id": "S0624"
+  },
+  {
+    "production_id": "F0625",
+    "product_id": "P097",
+    "plant": "Plant-B",
+    "units_produced": 210,
+    "sales_id": "S0625"
+  },
+  {
+    "production_id": "F0626",
+    "product_id": "P089",
+    "plant": "Plant-D",
+    "units_produced": 250,
+    "sales_id": "S0626"
+  },
+  {
+    "production_id": "F0627",
+    "product_id": "P076",
+    "plant": "Plant-C",
+    "units_produced": 173,
+    "sales_id": "S0627"
+  },
+  {
+    "production_id": "F0628",
+    "product_id": "P059",
+    "plant": "Plant-B",
+    "units_produced": 254,
+    "sales_id": "S0628"
+  },
+  {
+    "production_id": "F0629",
+    "product_id": "P063",
+    "plant": "Plant-A",
+    "units_produced": 150,
+    "sales_id": "S0629"
+  },
+  {
+    "production_id": "F0630",
+    "product_id": "P029",
+    "plant": "Plant-B",
+    "units_produced": 74,
+    "sales_id": "S0630"
+  },
+  {
+    "production_id": "F0631",
+    "product_id": "P047",
+    "plant": "Plant-A",
+    "units_produced": 132,
+    "sales_id": "S0631"
+  },
+  {
+    "production_id": "F0632",
+    "product_id": "P007",
+    "plant": "Plant-D",
+    "units_produced": 85,
+    "sales_id": "S0632"
+  },
+  {
+    "production_id": "F0633",
+    "product_id": "P049",
+    "plant": "Plant-B",
+    "units_produced": 289,
+    "sales_id": "S0633"
+  },
+  {
+    "production_id": "F0634",
+    "product_id": "P089",
+    "plant": "Plant-C",
+    "units_produced": 167,
+    "sales_id": "S0634"
+  },
+  {
+    "production_id": "F0635",
+    "product_id": "P078",
+    "plant": "Plant-A",
+    "units_produced": 125,
+    "sales_id": "S0635"
+  },
+  {
+    "production_id": "F0636",
+    "product_id": "P015",
+    "plant": "Plant-B",
+    "units_produced": 335,
+    "sales_id": "S0636"
+  },
+  {
+    "production_id": "F0637",
+    "product_id": "P034",
+    "plant": "Plant-C",
+    "units_produced": 112,
+    "sales_id": "S0637"
+  },
+  {
+    "production_id": "F0638",
+    "product_id": "P006",
+    "plant": "Plant-D",
+    "units_produced": 138,
+    "sales_id": "S0638"
+  },
+  {
+    "production_id": "F0639",
+    "product_id": "P031",
+    "plant": "Plant-A",
+    "units_produced": 55,
+    "sales_id": "S0639"
+  },
+  {
+    "production_id": "F0640",
+    "product_id": "P086",
+    "plant": "Plant-A",
+    "units_produced": 89,
+    "sales_id": "S0640"
+  },
+  {
+    "production_id": "F0641",
+    "product_id": "P093",
+    "plant": "Plant-D",
+    "units_produced": 103,
+    "sales_id": "S0641"
+  },
+  {
+    "production_id": "F0642",
+    "product_id": "P034",
+    "plant": "Plant-A",
+    "units_produced": 88,
+    "sales_id": "S0642"
+  },
+  {
+    "production_id": "F0643",
+    "product_id": "P047",
+    "plant": "Plant-A",
+    "units_produced": 167,
+    "sales_id": "S0643"
+  },
+  {
+    "production_id": "F0644",
+    "product_id": "P006",
+    "plant": "Plant-C",
+    "units_produced": 74,
+    "sales_id": "S0644"
+  },
+  {
+    "production_id": "F0645",
+    "product_id": "P057",
+    "plant": "Plant-C",
+    "units_produced": 91,
+    "sales_id": "S0645"
+  },
+  {
+    "production_id": "F0646",
+    "product_id": "P024",
+    "plant": "Plant-C",
+    "units_produced": 192,
+    "sales_id": "S0646"
+  },
+  {
+    "production_id": "F0647",
+    "product_id": "P089",
+    "plant": "Plant-A",
+    "units_produced": 137,
+    "sales_id": "S0647"
+  },
+  {
+    "production_id": "F0648",
+    "product_id": "P090",
+    "plant": "Plant-D",
+    "units_produced": 174,
+    "sales_id": "S0648"
+  },
+  {
+    "production_id": "F0649",
+    "product_id": "P087",
+    "plant": "Plant-C",
+    "units_produced": 106,
+    "sales_id": "S0649"
+  },
+  {
+    "production_id": "F0650",
+    "product_id": "P004",
+    "plant": "Plant-A",
+    "units_produced": 140,
+    "sales_id": "S0650"
+  },
+  {
+    "production_id": "F0651",
+    "product_id": "P057",
+    "plant": "Plant-A",
+    "units_produced": 101,
+    "sales_id": "S0651"
+  },
+  {
+    "production_id": "F0652",
+    "product_id": "P087",
+    "plant": "Plant-A",
+    "units_produced": 102,
+    "sales_id": "S0652"
+  },
+  {
+    "production_id": "F0653",
+    "product_id": "P085",
+    "plant": "Plant-B",
+    "units_produced": 246,
+    "sales_id": "S0653"
+  },
+  {
+    "production_id": "F0654",
+    "product_id": "P079",
+    "plant": "Plant-D",
+    "units_produced": 50,
+    "sales_id": "S0654"
+  },
+  {
+    "production_id": "F0655",
+    "product_id": "P022",
+    "plant": "Plant-C",
+    "units_produced": 243,
+    "sales_id": "S0655"
+  },
+  {
+    "production_id": "F0656",
+    "product_id": "P007",
+    "plant": "Plant-D",
+    "units_produced": 99,
+    "sales_id": "S0656"
+  },
+  {
+    "production_id": "F0657",
+    "product_id": "P011",
+    "plant": "Plant-D",
+    "units_produced": 121,
+    "sales_id": "S0657"
+  },
+  {
+    "production_id": "F0658",
+    "product_id": "P064",
+    "plant": "Plant-A",
+    "units_produced": 234,
+    "sales_id": "S0658"
+  },
+  {
+    "production_id": "F0659",
+    "product_id": "P052",
+    "plant": "Plant-A",
+    "units_produced": 33,
+    "sales_id": "S0659"
+  },
+  {
+    "production_id": "F0660",
+    "product_id": "P078",
+    "plant": "Plant-B",
+    "units_produced": 119,
+    "sales_id": "S0660"
+  },
+  {
+    "production_id": "F0661",
+    "product_id": "P086",
+    "plant": "Plant-B",
+    "units_produced": 182,
+    "sales_id": "S0661"
+  },
+  {
+    "production_id": "F0662",
+    "product_id": "P043",
+    "plant": "Plant-D",
+    "units_produced": 141,
+    "sales_id": "S0662"
+  },
+  {
+    "production_id": "F0663",
+    "product_id": "P013",
+    "plant": "Plant-C",
+    "units_produced": 60,
+    "sales_id": "S0663"
+  },
+  {
+    "production_id": "F0664",
+    "product_id": "P067",
+    "plant": "Plant-D",
+    "units_produced": 132,
+    "sales_id": "S0664"
+  },
+  {
+    "production_id": "F0665",
+    "product_id": "P092",
+    "plant": "Plant-B",
+    "units_produced": 88,
+    "sales_id": "S0665"
+  },
+  {
+    "production_id": "F0666",
+    "product_id": "P016",
+    "plant": "Plant-C",
+    "units_produced": 98,
+    "sales_id": "S0666"
+  },
+  {
+    "production_id": "F0667",
+    "product_id": "P097",
+    "plant": "Plant-A",
+    "units_produced": 71,
+    "sales_id": "S0667"
+  },
+  {
+    "production_id": "F0668",
+    "product_id": "P058",
+    "plant": "Plant-A",
+    "units_produced": 363,
+    "sales_id": "S0668"
+  },
+  {
+    "production_id": "F0669",
+    "product_id": "P095",
+    "plant": "Plant-D",
+    "units_produced": 142,
+    "sales_id": "S0669"
+  },
+  {
+    "production_id": "F0670",
+    "product_id": "P100",
+    "plant": "Plant-A",
+    "units_produced": 82,
+    "sales_id": "S0670"
+  },
+  {
+    "production_id": "F0671",
+    "product_id": "P085",
+    "plant": "Plant-D",
+    "units_produced": 158,
+    "sales_id": "S0671"
+  },
+  {
+    "production_id": "F0672",
+    "product_id": "P089",
+    "plant": "Plant-C",
+    "units_produced": 149,
+    "sales_id": "S0672"
+  },
+  {
+    "production_id": "F0673",
+    "product_id": "P018",
+    "plant": "Plant-C",
+    "units_produced": 177,
+    "sales_id": "S0673"
+  },
+  {
+    "production_id": "F0674",
+    "product_id": "P071",
+    "plant": "Plant-C",
+    "units_produced": 185,
+    "sales_id": "S0674"
+  },
+  {
+    "production_id": "F0675",
+    "product_id": "P045",
+    "plant": "Plant-C",
+    "units_produced": 120,
+    "sales_id": "S0675"
+  },
+  {
+    "production_id": "F0676",
+    "product_id": "P015",
+    "plant": "Plant-D",
+    "units_produced": 198,
+    "sales_id": "S0676"
+  },
+  {
+    "production_id": "F0677",
+    "product_id": "P096",
+    "plant": "Plant-A",
+    "units_produced": 107,
+    "sales_id": "S0677"
+  },
+  {
+    "production_id": "F0678",
+    "product_id": "P014",
+    "plant": "Plant-A",
+    "units_produced": 261,
+    "sales_id": "S0678"
+  },
+  {
+    "production_id": "F0679",
+    "product_id": "P035",
+    "plant": "Plant-B",
+    "units_produced": 93,
+    "sales_id": "S0679"
+  },
+  {
+    "production_id": "F0680",
+    "product_id": "P089",
+    "plant": "Plant-A",
+    "units_produced": 85,
+    "sales_id": "S0680"
+  },
+  {
+    "production_id": "F0681",
+    "product_id": "P058",
+    "plant": "Plant-D",
+    "units_produced": 84,
+    "sales_id": "S0681"
+  },
+  {
+    "production_id": "F0682",
+    "product_id": "P066",
+    "plant": "Plant-D",
+    "units_produced": 48,
+    "sales_id": "S0682"
+  },
+  {
+    "production_id": "F0683",
+    "product_id": "P088",
+    "plant": "Plant-B",
+    "units_produced": 133,
+    "sales_id": "S0683"
+  },
+  {
+    "production_id": "F0684",
+    "product_id": "P100",
+    "plant": "Plant-B",
+    "units_produced": 109,
+    "sales_id": "S0684"
+  },
+  {
+    "production_id": "F0685",
+    "product_id": "P093",
+    "plant": "Plant-A",
+    "units_produced": 132,
+    "sales_id": "S0685"
+  },
+  {
+    "production_id": "F0686",
+    "product_id": "P023",
+    "plant": "Plant-D",
+    "units_produced": 84,
+    "sales_id": "S0686"
+  },
+  {
+    "production_id": "F0687",
+    "product_id": "P072",
+    "plant": "Plant-C",
+    "units_produced": 104,
+    "sales_id": "S0687"
+  },
+  {
+    "production_id": "F0688",
+    "product_id": "P043",
+    "plant": "Plant-C",
+    "units_produced": 198,
+    "sales_id": "S0688"
+  },
+  {
+    "production_id": "F0689",
+    "product_id": "P007",
+    "plant": "Plant-C",
+    "units_produced": 120,
+    "sales_id": "S0689"
+  },
+  {
+    "production_id": "F0690",
+    "product_id": "P091",
+    "plant": "Plant-A",
+    "units_produced": 332,
+    "sales_id": "S0690"
+  },
+  {
+    "production_id": "F0691",
+    "product_id": "P065",
+    "plant": "Plant-D",
+    "units_produced": 149,
+    "sales_id": "S0691"
+  },
+  {
+    "production_id": "F0692",
+    "product_id": "P045",
+    "plant": "Plant-C",
+    "units_produced": 95,
+    "sales_id": "S0692"
+  },
+  {
+    "production_id": "F0693",
+    "product_id": "P038",
+    "plant": "Plant-A",
+    "units_produced": 200,
+    "sales_id": "S0693"
+  },
+  {
+    "production_id": "F0694",
+    "product_id": "P086",
+    "plant": "Plant-B",
+    "units_produced": 239,
+    "sales_id": "S0694"
+  },
+  {
+    "production_id": "F0695",
+    "product_id": "P088",
+    "plant": "Plant-D",
+    "units_produced": 108,
+    "sales_id": "S0695"
+  },
+  {
+    "production_id": "F0696",
+    "product_id": "P070",
+    "plant": "Plant-C",
+    "units_produced": 50,
+    "sales_id": "S0696"
+  },
+  {
+    "production_id": "F0697",
+    "product_id": "P066",
+    "plant": "Plant-B",
+    "units_produced": 427,
+    "sales_id": "S0697"
+  },
+  {
+    "production_id": "F0698",
+    "product_id": "P066",
+    "plant": "Plant-A",
+    "units_produced": 125,
+    "sales_id": "S0698"
+  },
+  {
+    "production_id": "F0699",
+    "product_id": "P009",
+    "plant": "Plant-A",
+    "units_produced": 72,
+    "sales_id": "S0699"
+  },
+  {
+    "production_id": "F0700",
+    "product_id": "P069",
+    "plant": "Plant-A",
+    "units_produced": 61,
+    "sales_id": "S0700"
+  },
+  {
+    "production_id": "F0701",
+    "product_id": "P092",
+    "plant": "Plant-A",
+    "units_produced": 75,
+    "sales_id": "S0701"
+  },
+  {
+    "production_id": "F0702",
+    "product_id": "P033",
+    "plant": "Plant-C",
+    "units_produced": 64,
+    "sales_id": "S0702"
+  },
+  {
+    "production_id": "F0703",
+    "product_id": "P050",
+    "plant": "Plant-A",
+    "units_produced": 186,
+    "sales_id": "S0703"
+  },
+  {
+    "production_id": "F0704",
+    "product_id": "P087",
+    "plant": "Plant-A",
+    "units_produced": 536,
+    "sales_id": "S0704"
+  },
+  {
+    "production_id": "F0705",
+    "product_id": "P096",
+    "plant": "Plant-C",
+    "units_produced": 59,
+    "sales_id": "S0705"
+  },
+  {
+    "production_id": "F0706",
+    "product_id": "P014",
+    "plant": "Plant-C",
+    "units_produced": 150,
+    "sales_id": "S0706"
+  },
+  {
+    "production_id": "F0707",
+    "product_id": "P057",
+    "plant": "Plant-D",
+    "units_produced": 113,
+    "sales_id": "S0707"
+  },
+  {
+    "production_id": "F0708",
+    "product_id": "P069",
+    "plant": "Plant-C",
+    "units_produced": 88,
+    "sales_id": "S0708"
+  },
+  {
+    "production_id": "F0709",
+    "product_id": "P019",
+    "plant": "Plant-B",
+    "units_produced": 95,
+    "sales_id": "S0709"
+  },
+  {
+    "production_id": "F0710",
+    "product_id": "P006",
+    "plant": "Plant-A",
+    "units_produced": 157,
+    "sales_id": "S0710"
+  },
+  {
+    "production_id": "F0711",
+    "product_id": "P027",
+    "plant": "Plant-B",
+    "units_produced": 107,
+    "sales_id": "S0711"
+  },
+  {
+    "production_id": "F0712",
+    "product_id": "P024",
+    "plant": "Plant-B",
+    "units_produced": 202,
+    "sales_id": "S0712"
+  },
+  {
+    "production_id": "F0713",
+    "product_id": "P073",
+    "plant": "Plant-A",
+    "units_produced": 221,
+    "sales_id": "S0713"
+  },
+  {
+    "production_id": "F0714",
+    "product_id": "P086",
+    "plant": "Plant-D",
+    "units_produced": 217,
+    "sales_id": "S0714"
+  },
+  {
+    "production_id": "F0715",
+    "product_id": "P046",
+    "plant": "Plant-A",
+    "units_produced": 198,
+    "sales_id": "S0715"
+  },
+  {
+    "production_id": "F0716",
+    "product_id": "P041",
+    "plant": "Plant-C",
+    "units_produced": 248,
+    "sales_id": "S0716"
+  },
+  {
+    "production_id": "F0717",
+    "product_id": "P075",
+    "plant": "Plant-D",
+    "units_produced": 108,
+    "sales_id": "S0717"
+  },
+  {
+    "production_id": "F0718",
+    "product_id": "P001",
+    "plant": "Plant-D",
+    "units_produced": 88,
+    "sales_id": "S0718"
+  },
+  {
+    "production_id": "F0719",
+    "product_id": "P047",
+    "plant": "Plant-D",
+    "units_produced": 112,
+    "sales_id": "S0719"
+  },
+  {
+    "production_id": "F0720",
+    "product_id": "P046",
+    "plant": "Plant-B",
+    "units_produced": 204,
+    "sales_id": "S0720"
+  },
+  {
+    "production_id": "F0721",
+    "product_id": "P078",
+    "plant": "Plant-B",
+    "units_produced": 91,
+    "sales_id": "S0721"
+  },
+  {
+    "production_id": "F0722",
+    "product_id": "P094",
+    "plant": "Plant-A",
+    "units_produced": 66,
+    "sales_id": "S0722"
+  },
+  {
+    "production_id": "F0723",
+    "product_id": "P075",
+    "plant": "Plant-C",
+    "units_produced": 91,
+    "sales_id": "S0723"
+  },
+  {
+    "production_id": "F0724",
+    "product_id": "P070",
+    "plant": "Plant-B",
+    "units_produced": 128,
+    "sales_id": "S0724"
+  },
+  {
+    "production_id": "F0725",
+    "product_id": "P076",
+    "plant": "Plant-A",
+    "units_produced": 90,
+    "sales_id": "S0725"
+  },
+  {
+    "production_id": "F0726",
+    "product_id": "P047",
+    "plant": "Plant-B",
+    "units_produced": 66,
+    "sales_id": "S0726"
+  },
+  {
+    "production_id": "F0727",
+    "product_id": "P066",
+    "plant": "Plant-B",
+    "units_produced": 324,
+    "sales_id": "S0727"
+  },
+  {
+    "production_id": "F0728",
+    "product_id": "P094",
+    "plant": "Plant-D",
+    "units_produced": 326,
+    "sales_id": "S0728"
+  },
+  {
+    "production_id": "F0729",
+    "product_id": "P009",
+    "plant": "Plant-B",
+    "units_produced": 240,
+    "sales_id": "S0729"
+  },
+  {
+    "production_id": "F0730",
+    "product_id": "P047",
+    "plant": "Plant-A",
+    "units_produced": 113,
+    "sales_id": "S0730"
+  },
+  {
+    "production_id": "F0731",
+    "product_id": "P084",
+    "plant": "Plant-C",
+    "units_produced": 88,
+    "sales_id": "S0731"
+  },
+  {
+    "production_id": "F0732",
+    "product_id": "P034",
+    "plant": "Plant-D",
+    "units_produced": 218,
+    "sales_id": "S0732"
+  },
+  {
+    "production_id": "F0733",
+    "product_id": "P049",
+    "plant": "Plant-D",
+    "units_produced": 56,
+    "sales_id": "S0733"
+  },
+  {
+    "production_id": "F0734",
+    "product_id": "P067",
+    "plant": "Plant-D",
+    "units_produced": 144,
+    "sales_id": "S0734"
+  },
+  {
+    "production_id": "F0735",
+    "product_id": "P062",
+    "plant": "Plant-D",
+    "units_produced": 31,
+    "sales_id": "S0735"
+  },
+  {
+    "production_id": "F0736",
+    "product_id": "P030",
+    "plant": "Plant-B",
+    "units_produced": 163,
+    "sales_id": "S0736"
+  },
+  {
+    "production_id": "F0737",
+    "product_id": "P024",
+    "plant": "Plant-B",
+    "units_produced": 145,
+    "sales_id": "S0737"
+  },
+  {
+    "production_id": "F0738",
+    "product_id": "P043",
+    "plant": "Plant-D",
+    "units_produced": 154,
+    "sales_id": "S0738"
+  },
+  {
+    "production_id": "F0739",
+    "product_id": "P076",
+    "plant": "Plant-A",
+    "units_produced": 376,
+    "sales_id": "S0739"
+  },
+  {
+    "production_id": "F0740",
+    "product_id": "P074",
+    "plant": "Plant-A",
+    "units_produced": 165,
+    "sales_id": "S0740"
+  },
+  {
+    "production_id": "F0741",
+    "product_id": "P019",
+    "plant": "Plant-D",
+    "units_produced": 141,
+    "sales_id": "S0741"
+  },
+  {
+    "production_id": "F0742",
+    "product_id": "P073",
+    "plant": "Plant-B",
+    "units_produced": 98,
+    "sales_id": "S0742"
+  },
+  {
+    "production_id": "F0743",
+    "product_id": "P078",
+    "plant": "Plant-D",
+    "units_produced": 334,
+    "sales_id": "S0743"
+  },
+  {
+    "production_id": "F0744",
+    "product_id": "P019",
+    "plant": "Plant-C",
+    "units_produced": 77,
+    "sales_id": "S0744"
+  },
+  {
+    "production_id": "F0745",
+    "product_id": "P093",
+    "plant": "Plant-A",
+    "units_produced": 159,
+    "sales_id": "S0745"
+  },
+  {
+    "production_id": "F0746",
+    "product_id": "P049",
+    "plant": "Plant-B",
+    "units_produced": 154,
+    "sales_id": "S0746"
+  },
+  {
+    "production_id": "F0747",
+    "product_id": "P065",
+    "plant": "Plant-B",
+    "units_produced": 89,
+    "sales_id": "S0747"
+  },
+  {
+    "production_id": "F0748",
+    "product_id": "P079",
+    "plant": "Plant-A",
+    "units_produced": 26,
+    "sales_id": "S0748"
+  },
+  {
+    "production_id": "F0749",
+    "product_id": "P062",
+    "plant": "Plant-D",
+    "units_produced": 169,
+    "sales_id": "S0749"
+  },
+  {
+    "production_id": "F0750",
+    "product_id": "P054",
+    "plant": "Plant-D",
+    "units_produced": 40,
+    "sales_id": "S0750"
+  },
+  {
+    "production_id": "F0751",
+    "product_id": "P062",
+    "plant": "Plant-A",
+    "units_produced": 145,
+    "sales_id": "S0751"
+  },
+  {
+    "production_id": "F0752",
+    "product_id": "P018",
+    "plant": "Plant-A",
+    "units_produced": 145,
+    "sales_id": "S0752"
+  },
+  {
+    "production_id": "F0753",
+    "product_id": "P077",
+    "plant": "Plant-A",
+    "units_produced": 258,
+    "sales_id": "S0753"
+  },
+  {
+    "production_id": "F0754",
+    "product_id": "P096",
+    "plant": "Plant-A",
+    "units_produced": 378,
+    "sales_id": "S0754"
+  },
+  {
+    "production_id": "F0755",
+    "product_id": "P084",
+    "plant": "Plant-A",
+    "units_produced": 143,
+    "sales_id": "S0755"
+  },
+  {
+    "production_id": "F0756",
+    "product_id": "P055",
+    "plant": "Plant-D",
+    "units_produced": 179,
+    "sales_id": "S0756"
+  },
+  {
+    "production_id": "F0757",
+    "product_id": "P047",
+    "plant": "Plant-B",
+    "units_produced": 113,
+    "sales_id": "S0757"
+  },
+  {
+    "production_id": "F0758",
+    "product_id": "P071",
+    "plant": "Plant-D",
+    "units_produced": 303,
+    "sales_id": "S0758"
+  },
+  {
+    "production_id": "F0759",
+    "product_id": "P040",
+    "plant": "Plant-B",
+    "units_produced": 138,
+    "sales_id": "S0759"
+  },
+  {
+    "production_id": "F0760",
+    "product_id": "P016",
+    "plant": "Plant-A",
+    "units_produced": 131,
+    "sales_id": "S0760"
+  },
+  {
+    "production_id": "F0761",
+    "product_id": "P066",
+    "plant": "Plant-A",
+    "units_produced": 102,
+    "sales_id": "S0761"
+  },
+  {
+    "production_id": "F0762",
+    "product_id": "P050",
+    "plant": "Plant-D",
+    "units_produced": 72,
+    "sales_id": "S0762"
+  },
+  {
+    "production_id": "F0763",
+    "product_id": "P056",
+    "plant": "Plant-C",
+    "units_produced": 61,
+    "sales_id": "S0763"
+  },
+  {
+    "production_id": "F0764",
+    "product_id": "P078",
+    "plant": "Plant-C",
+    "units_produced": 137,
+    "sales_id": "S0764"
+  },
+  {
+    "production_id": "F0765",
+    "product_id": "P077",
+    "plant": "Plant-D",
+    "units_produced": 64,
+    "sales_id": "S0765"
+  },
+  {
+    "production_id": "F0766",
+    "product_id": "P026",
+    "plant": "Plant-B",
+    "units_produced": 216,
+    "sales_id": "S0766"
+  },
+  {
+    "production_id": "F0767",
+    "product_id": "P022",
+    "plant": "Plant-B",
+    "units_produced": 201,
+    "sales_id": "S0767"
+  },
+  {
+    "production_id": "F0768",
+    "product_id": "P036",
+    "plant": "Plant-D",
+    "units_produced": 146,
+    "sales_id": "S0768"
+  },
+  {
+    "production_id": "F0769",
+    "product_id": "P026",
+    "plant": "Plant-A",
+    "units_produced": 53,
+    "sales_id": "S0769"
+  },
+  {
+    "production_id": "F0770",
+    "product_id": "P037",
+    "plant": "Plant-B",
+    "units_produced": 197,
+    "sales_id": "S0770"
+  },
+  {
+    "production_id": "F0771",
+    "product_id": "P025",
+    "plant": "Plant-C",
+    "units_produced": 147,
+    "sales_id": "S0771"
+  },
+  {
+    "production_id": "F0772",
+    "product_id": "P053",
+    "plant": "Plant-C",
+    "units_produced": 70,
+    "sales_id": "S0772"
+  },
+  {
+    "production_id": "F0773",
+    "product_id": "P015",
+    "plant": "Plant-C",
+    "units_produced": 112,
+    "sales_id": "S0773"
+  },
+  {
+    "production_id": "F0774",
+    "product_id": "P057",
+    "plant": "Plant-C",
+    "units_produced": 178,
+    "sales_id": "S0774"
+  },
+  {
+    "production_id": "F0775",
+    "product_id": "P059",
+    "plant": "Plant-C",
+    "units_produced": 32,
+    "sales_id": "S0775"
+  },
+  {
+    "production_id": "F0776",
+    "product_id": "P049",
+    "plant": "Plant-D",
+    "units_produced": 89,
+    "sales_id": "S0776"
+  },
+  {
+    "production_id": "F0777",
+    "product_id": "P067",
+    "plant": "Plant-B",
+    "units_produced": 36,
+    "sales_id": "S0777"
+  },
+  {
+    "production_id": "F0778",
+    "product_id": "P012",
+    "plant": "Plant-B",
+    "units_produced": 305,
+    "sales_id": "S0778"
+  },
+  {
+    "production_id": "F0779",
+    "product_id": "P041",
+    "plant": "Plant-C",
+    "units_produced": 70,
+    "sales_id": "S0779"
+  },
+  {
+    "production_id": "F0780",
+    "product_id": "P096",
+    "plant": "Plant-B",
+    "units_produced": 183,
+    "sales_id": "S0780"
+  },
+  {
+    "production_id": "F0781",
+    "product_id": "P031",
+    "plant": "Plant-B",
+    "units_produced": 168,
+    "sales_id": "S0781"
+  },
+  {
+    "production_id": "F0782",
+    "product_id": "P046",
+    "plant": "Plant-D",
+    "units_produced": 140,
+    "sales_id": "S0782"
+  },
+  {
+    "production_id": "F0783",
+    "product_id": "P001",
+    "plant": "Plant-C",
+    "units_produced": 61,
+    "sales_id": "S0783"
+  },
+  {
+    "production_id": "F0784",
+    "product_id": "P041",
+    "plant": "Plant-C",
+    "units_produced": 132,
+    "sales_id": "S0784"
+  },
+  {
+    "production_id": "F0785",
+    "product_id": "P029",
+    "plant": "Plant-D",
+    "units_produced": 164,
+    "sales_id": "S0785"
+  },
+  {
+    "production_id": "F0786",
+    "product_id": "P070",
+    "plant": "Plant-B",
+    "units_produced": 248,
+    "sales_id": "S0786"
+  },
+  {
+    "production_id": "F0787",
+    "product_id": "P016",
+    "plant": "Plant-A",
+    "units_produced": 256,
+    "sales_id": "S0787"
+  },
+  {
+    "production_id": "F0788",
+    "product_id": "P027",
+    "plant": "Plant-C",
+    "units_produced": 77,
+    "sales_id": "S0788"
+  },
+  {
+    "production_id": "F0789",
+    "product_id": "P071",
+    "plant": "Plant-C",
+    "units_produced": 155,
+    "sales_id": "S0789"
+  },
+  {
+    "production_id": "F0790",
+    "product_id": "P024",
+    "plant": "Plant-C",
+    "units_produced": 263,
+    "sales_id": "S0790"
+  },
+  {
+    "production_id": "F0791",
+    "product_id": "P052",
+    "plant": "Plant-B",
+    "units_produced": 306,
+    "sales_id": "S0791"
+  },
+  {
+    "production_id": "F0792",
+    "product_id": "P088",
+    "plant": "Plant-B",
+    "units_produced": 74,
+    "sales_id": "S0792"
+  },
+  {
+    "production_id": "F0793",
+    "product_id": "P056",
+    "plant": "Plant-D",
+    "units_produced": 145,
+    "sales_id": "S0793"
+  },
+  {
+    "production_id": "F0794",
+    "product_id": "P023",
+    "plant": "Plant-C",
+    "units_produced": 378,
+    "sales_id": "S0794"
+  },
+  {
+    "production_id": "F0795",
+    "product_id": "P063",
+    "plant": "Plant-A",
+    "units_produced": 117,
+    "sales_id": "S0795"
+  },
+  {
+    "production_id": "F0796",
+    "product_id": "P013",
+    "plant": "Plant-D",
+    "units_produced": 100,
+    "sales_id": "S0796"
+  },
+  {
+    "production_id": "F0797",
+    "product_id": "P013",
+    "plant": "Plant-C",
+    "units_produced": 215,
+    "sales_id": "S0797"
+  },
+  {
+    "production_id": "F0798",
+    "product_id": "P072",
+    "plant": "Plant-A",
+    "units_produced": 338,
+    "sales_id": "S0798"
+  },
+  {
+    "production_id": "F0799",
+    "product_id": "P087",
+    "plant": "Plant-B",
+    "units_produced": 125,
+    "sales_id": "S0799"
+  },
+  {
+    "production_id": "F0800",
+    "product_id": "P037",
+    "plant": "Plant-D",
+    "units_produced": 149,
+    "sales_id": "S0800"
+  },
+  {
+    "production_id": "F0801",
+    "product_id": "P095",
+    "plant": "Plant-C",
+    "units_produced": 80,
+    "sales_id": "S0801"
+  },
+  {
+    "production_id": "F0802",
+    "product_id": "P081",
+    "plant": "Plant-D",
+    "units_produced": 102,
+    "sales_id": "S0802"
+  },
+  {
+    "production_id": "F0803",
+    "product_id": "P079",
+    "plant": "Plant-A",
+    "units_produced": 113,
+    "sales_id": "S0803"
+  },
+  {
+    "production_id": "F0804",
+    "product_id": "P044",
+    "plant": "Plant-C",
+    "units_produced": 191,
+    "sales_id": "S0804"
+  },
+  {
+    "production_id": "F0805",
+    "product_id": "P083",
+    "plant": "Plant-C",
+    "units_produced": 118,
+    "sales_id": "S0805"
+  },
+  {
+    "production_id": "F0806",
+    "product_id": "P076",
+    "plant": "Plant-B",
+    "units_produced": 183,
+    "sales_id": "S0806"
+  },
+  {
+    "production_id": "F0807",
+    "product_id": "P017",
+    "plant": "Plant-B",
+    "units_produced": 74,
+    "sales_id": "S0807"
+  },
+  {
+    "production_id": "F0808",
+    "product_id": "P051",
+    "plant": "Plant-A",
+    "units_produced": 107,
+    "sales_id": "S0808"
+  },
+  {
+    "production_id": "F0809",
+    "product_id": "P099",
+    "plant": "Plant-A",
+    "units_produced": 156,
+    "sales_id": "S0809"
+  },
+  {
+    "production_id": "F0810",
+    "product_id": "P080",
+    "plant": "Plant-C",
+    "units_produced": 53,
+    "sales_id": "S0810"
+  },
+  {
+    "production_id": "F0811",
+    "product_id": "P032",
+    "plant": "Plant-B",
+    "units_produced": 170,
+    "sales_id": "S0811"
+  },
+  {
+    "production_id": "F0812",
+    "product_id": "P022",
+    "plant": "Plant-C",
+    "units_produced": 55,
+    "sales_id": "S0812"
+  },
+  {
+    "production_id": "F0813",
+    "product_id": "P060",
+    "plant": "Plant-B",
+    "units_produced": 143,
+    "sales_id": "S0813"
+  },
+  {
+    "production_id": "F0814",
+    "product_id": "P070",
+    "plant": "Plant-D",
+    "units_produced": 174,
+    "sales_id": "S0814"
+  },
+  {
+    "production_id": "F0815",
+    "product_id": "P082",
+    "plant": "Plant-D",
+    "units_produced": 111,
+    "sales_id": "S0815"
+  },
+  {
+    "production_id": "F0816",
+    "product_id": "P030",
+    "plant": "Plant-D",
+    "units_produced": 227,
+    "sales_id": "S0816"
+  },
+  {
+    "production_id": "F0817",
+    "product_id": "P020",
+    "plant": "Plant-B",
+    "units_produced": 80,
+    "sales_id": "S0817"
+  },
+  {
+    "production_id": "F0818",
+    "product_id": "P037",
+    "plant": "Plant-D",
+    "units_produced": 507,
+    "sales_id": "S0818"
+  },
+  {
+    "production_id": "F0819",
+    "product_id": "P002",
+    "plant": "Plant-A",
+    "units_produced": 134,
+    "sales_id": "S0819"
+  },
+  {
+    "production_id": "F0820",
+    "product_id": "P048",
+    "plant": "Plant-D",
+    "units_produced": 126,
+    "sales_id": "S0820"
+  },
+  {
+    "production_id": "F0821",
+    "product_id": "P032",
+    "plant": "Plant-B",
+    "units_produced": 117,
+    "sales_id": "S0821"
+  },
+  {
+    "production_id": "F0822",
+    "product_id": "P011",
+    "plant": "Plant-C",
+    "units_produced": 110,
+    "sales_id": "S0822"
+  },
+  {
+    "production_id": "F0823",
+    "product_id": "P084",
+    "plant": "Plant-A",
+    "units_produced": 128,
+    "sales_id": "S0823"
+  },
+  {
+    "production_id": "F0824",
+    "product_id": "P018",
+    "plant": "Plant-D",
+    "units_produced": 63,
+    "sales_id": "S0824"
+  },
+  {
+    "production_id": "F0825",
+    "product_id": "P090",
+    "plant": "Plant-A",
+    "units_produced": 292,
+    "sales_id": "S0825"
+  },
+  {
+    "production_id": "F0826",
+    "product_id": "P007",
+    "plant": "Plant-C",
+    "units_produced": 60,
+    "sales_id": "S0826"
+  },
+  {
+    "production_id": "F0827",
+    "product_id": "P017",
+    "plant": "Plant-B",
+    "units_produced": 33,
+    "sales_id": "S0827"
+  },
+  {
+    "production_id": "F0828",
+    "product_id": "P064",
+    "plant": "Plant-D",
+    "units_produced": 166,
+    "sales_id": "S0828"
+  },
+  {
+    "production_id": "F0829",
+    "product_id": "P060",
+    "plant": "Plant-A",
+    "units_produced": 273,
+    "sales_id": "S0829"
+  },
+  {
+    "production_id": "F0830",
+    "product_id": "P100",
+    "plant": "Plant-B",
+    "units_produced": 52,
+    "sales_id": "S0830"
+  },
+  {
+    "production_id": "F0831",
+    "product_id": "P033",
+    "plant": "Plant-D",
+    "units_produced": 93,
+    "sales_id": "S0831"
+  },
+  {
+    "production_id": "F0832",
+    "product_id": "P057",
+    "plant": "Plant-A",
+    "units_produced": 81,
+    "sales_id": "S0832"
+  },
+  {
+    "production_id": "F0833",
+    "product_id": "P086",
+    "plant": "Plant-C",
+    "units_produced": 208,
+    "sales_id": "S0833"
+  },
+  {
+    "production_id": "F0834",
+    "product_id": "P081",
+    "plant": "Plant-D",
+    "units_produced": 393,
+    "sales_id": "S0834"
+  },
+  {
+    "production_id": "F0835",
+    "product_id": "P039",
+    "plant": "Plant-B",
+    "units_produced": 97,
+    "sales_id": "S0835"
+  },
+  {
+    "production_id": "F0836",
+    "product_id": "P031",
+    "plant": "Plant-C",
+    "units_produced": 352,
+    "sales_id": "S0836"
+  },
+  {
+    "production_id": "F0837",
+    "product_id": "P016",
+    "plant": "Plant-D",
+    "units_produced": 293,
+    "sales_id": "S0837"
+  },
+  {
+    "production_id": "F0838",
+    "product_id": "P077",
+    "plant": "Plant-B",
+    "units_produced": 112,
+    "sales_id": "S0838"
+  },
+  {
+    "production_id": "F0839",
+    "product_id": "P064",
+    "plant": "Plant-A",
+    "units_produced": 85,
+    "sales_id": "S0839"
+  },
+  {
+    "production_id": "F0840",
+    "product_id": "P046",
+    "plant": "Plant-B",
+    "units_produced": 170,
+    "sales_id": "S0840"
+  },
+  {
+    "production_id": "F0841",
+    "product_id": "P030",
+    "plant": "Plant-B",
+    "units_produced": 95,
+    "sales_id": "S0841"
+  },
+  {
+    "production_id": "F0842",
+    "product_id": "P089",
+    "plant": "Plant-C",
+    "units_produced": 106,
+    "sales_id": "S0842"
+  },
+  {
+    "production_id": "F0843",
+    "product_id": "P063",
+    "plant": "Plant-B",
+    "units_produced": 143,
+    "sales_id": "S0843"
+  },
+  {
+    "production_id": "F0844",
+    "product_id": "P024",
+    "plant": "Plant-C",
+    "units_produced": 205,
+    "sales_id": "S0844"
+  },
+  {
+    "production_id": "F0845",
+    "product_id": "P071",
+    "plant": "Plant-D",
+    "units_produced": 58,
+    "sales_id": "S0845"
+  },
+  {
+    "production_id": "F0846",
+    "product_id": "P034",
+    "plant": "Plant-D",
+    "units_produced": 189,
+    "sales_id": "S0846"
+  },
+  {
+    "production_id": "F0847",
+    "product_id": "P024",
+    "plant": "Plant-B",
+    "units_produced": 120,
+    "sales_id": "S0847"
+  },
+  {
+    "production_id": "F0848",
+    "product_id": "P093",
+    "plant": "Plant-B",
+    "units_produced": 169,
+    "sales_id": "S0848"
+  },
+  {
+    "production_id": "F0849",
+    "product_id": "P088",
+    "plant": "Plant-C",
+    "units_produced": 85,
+    "sales_id": "S0849"
+  },
+  {
+    "production_id": "F0850",
+    "product_id": "P083",
+    "plant": "Plant-A",
+    "units_produced": 110,
+    "sales_id": "S0850"
+  },
+  {
+    "production_id": "F0851",
+    "product_id": "P017",
+    "plant": "Plant-D",
+    "units_produced": 59,
+    "sales_id": "S0851"
+  },
+  {
+    "production_id": "F0852",
+    "product_id": "P013",
+    "plant": "Plant-C",
+    "units_produced": 121,
+    "sales_id": "S0852"
+  },
+  {
+    "production_id": "F0853",
+    "product_id": "P047",
+    "plant": "Plant-D",
+    "units_produced": 113,
+    "sales_id": "S0853"
+  },
+  {
+    "production_id": "F0854",
+    "product_id": "P060",
+    "plant": "Plant-C",
+    "units_produced": 175,
+    "sales_id": "S0854"
+  },
+  {
+    "production_id": "F0855",
+    "product_id": "P091",
+    "plant": "Plant-A",
+    "units_produced": 120,
+    "sales_id": "S0855"
+  },
+  {
+    "production_id": "F0856",
+    "product_id": "P010",
+    "plant": "Plant-B",
+    "units_produced": 399,
+    "sales_id": "S0856"
+  },
+  {
+    "production_id": "F0857",
+    "product_id": "P050",
+    "plant": "Plant-B",
+    "units_produced": 113,
+    "sales_id": "S0857"
+  },
+  {
+    "production_id": "F0858",
+    "product_id": "P096",
+    "plant": "Plant-C",
+    "units_produced": 159,
+    "sales_id": "S0858"
+  },
+  {
+    "production_id": "F0859",
+    "product_id": "P059",
+    "plant": "Plant-D",
+    "units_produced": 122,
+    "sales_id": "S0859"
+  },
+  {
+    "production_id": "F0860",
+    "product_id": "P044",
+    "plant": "Plant-C",
+    "units_produced": 188,
+    "sales_id": "S0860"
+  },
+  {
+    "production_id": "F0861",
+    "product_id": "P071",
+    "plant": "Plant-C",
+    "units_produced": 192,
+    "sales_id": "S0861"
+  },
+  {
+    "production_id": "F0862",
+    "product_id": "P031",
+    "plant": "Plant-C",
+    "units_produced": 324,
+    "sales_id": "S0862"
+  },
+  {
+    "production_id": "F0863",
+    "product_id": "P058",
+    "plant": "Plant-C",
+    "units_produced": 413,
+    "sales_id": "S0863"
+  },
+  {
+    "production_id": "F0864",
+    "product_id": "P003",
+    "plant": "Plant-A",
+    "units_produced": 61,
+    "sales_id": "S0864"
+  },
+  {
+    "production_id": "F0865",
+    "product_id": "P029",
+    "plant": "Plant-B",
+    "units_produced": 299,
+    "sales_id": "S0865"
+  },
+  {
+    "production_id": "F0866",
+    "product_id": "P005",
+    "plant": "Plant-C",
+    "units_produced": 258,
+    "sales_id": "S0866"
+  },
+  {
+    "production_id": "F0867",
+    "product_id": "P075",
+    "plant": "Plant-A",
+    "units_produced": 169,
+    "sales_id": "S0867"
+  },
+  {
+    "production_id": "F0868",
+    "product_id": "P052",
+    "plant": "Plant-C",
+    "units_produced": 119,
+    "sales_id": "S0868"
+  },
+  {
+    "production_id": "F0869",
+    "product_id": "P062",
+    "plant": "Plant-A",
+    "units_produced": 162,
+    "sales_id": "S0869"
+  },
+  {
+    "production_id": "F0870",
+    "product_id": "P083",
+    "plant": "Plant-D",
+    "units_produced": 29,
+    "sales_id": "S0870"
+  },
+  {
+    "production_id": "F0871",
+    "product_id": "P100",
+    "plant": "Plant-D",
+    "units_produced": 161,
+    "sales_id": "S0871"
+  },
+  {
+    "production_id": "F0872",
+    "product_id": "P099",
+    "plant": "Plant-D",
+    "units_produced": 22,
+    "sales_id": "S0872"
+  },
+  {
+    "production_id": "F0873",
+    "product_id": "P040",
+    "plant": "Plant-B",
+    "units_produced": 61,
+    "sales_id": "S0873"
+  },
+  {
+    "production_id": "F0874",
+    "product_id": "P065",
+    "plant": "Plant-D",
+    "units_produced": 200,
+    "sales_id": "S0874"
+  },
+  {
+    "production_id": "F0875",
+    "product_id": "P077",
+    "plant": "Plant-D",
+    "units_produced": 388,
+    "sales_id": "S0875"
+  },
+  {
+    "production_id": "F0876",
+    "product_id": "P051",
+    "plant": "Plant-D",
+    "units_produced": 113,
+    "sales_id": "S0876"
+  },
+  {
+    "production_id": "F0877",
+    "product_id": "P096",
+    "plant": "Plant-A",
+    "units_produced": 246,
+    "sales_id": "S0877"
+  },
+  {
+    "production_id": "F0878",
+    "product_id": "P065",
+    "plant": "Plant-D",
+    "units_produced": 81,
+    "sales_id": "S0878"
+  },
+  {
+    "production_id": "F0879",
+    "product_id": "P026",
+    "plant": "Plant-B",
+    "units_produced": 157,
+    "sales_id": "S0879"
+  },
+  {
+    "production_id": "F0880",
+    "product_id": "P079",
+    "plant": "Plant-C",
+    "units_produced": 192,
+    "sales_id": "S0880"
+  },
+  {
+    "production_id": "F0881",
+    "product_id": "P056",
+    "plant": "Plant-D",
+    "units_produced": 114,
+    "sales_id": "S0881"
+  },
+  {
+    "production_id": "F0882",
+    "product_id": "P045",
+    "plant": "Plant-A",
+    "units_produced": 197,
+    "sales_id": "S0882"
+  },
+  {
+    "production_id": "F0883",
+    "product_id": "P040",
+    "plant": "Plant-B",
+    "units_produced": 142,
+    "sales_id": "S0883"
+  },
+  {
+    "production_id": "F0884",
+    "product_id": "P006",
+    "plant": "Plant-B",
+    "units_produced": 115,
+    "sales_id": "S0884"
+  },
+  {
+    "production_id": "F0885",
+    "product_id": "P094",
+    "plant": "Plant-B",
+    "units_produced": 81,
+    "sales_id": "S0885"
+  },
+  {
+    "production_id": "F0886",
+    "product_id": "P019",
+    "plant": "Plant-C",
+    "units_produced": 57,
+    "sales_id": "S0886"
+  },
+  {
+    "production_id": "F0887",
+    "product_id": "P061",
+    "plant": "Plant-B",
+    "units_produced": 208,
+    "sales_id": "S0887"
+  },
+  {
+    "production_id": "F0888",
+    "product_id": "P070",
+    "plant": "Plant-B",
+    "units_produced": 139,
+    "sales_id": "S0888"
+  },
+  {
+    "production_id": "F0889",
+    "product_id": "P090",
+    "plant": "Plant-A",
+    "units_produced": 141,
+    "sales_id": "S0889"
+  },
+  {
+    "production_id": "F0890",
+    "product_id": "P022",
+    "plant": "Plant-C",
+    "units_produced": 179,
+    "sales_id": "S0890"
+  },
+  {
+    "production_id": "F0891",
+    "product_id": "P060",
+    "plant": "Plant-C",
+    "units_produced": 53,
+    "sales_id": "S0891"
+  },
+  {
+    "production_id": "F0892",
+    "product_id": "P003",
+    "plant": "Plant-A",
+    "units_produced": 235,
+    "sales_id": "S0892"
+  },
+  {
+    "production_id": "F0893",
+    "product_id": "P063",
+    "plant": "Plant-B",
+    "units_produced": 420,
+    "sales_id": "S0893"
+  },
+  {
+    "production_id": "F0894",
+    "product_id": "P059",
+    "plant": "Plant-C",
+    "units_produced": 82,
+    "sales_id": "S0894"
+  },
+  {
+    "production_id": "F0895",
+    "product_id": "P063",
+    "plant": "Plant-C",
+    "units_produced": 192,
+    "sales_id": "S0895"
+  },
+  {
+    "production_id": "F0896",
+    "product_id": "P081",
+    "plant": "Plant-A",
+    "units_produced": 133,
+    "sales_id": "S0896"
+  },
+  {
+    "production_id": "F0897",
+    "product_id": "P033",
+    "plant": "Plant-C",
+    "units_produced": 32,
+    "sales_id": "S0897"
+  },
+  {
+    "production_id": "F0898",
+    "product_id": "P020",
+    "plant": "Plant-A",
+    "units_produced": 165,
+    "sales_id": "S0898"
+  },
+  {
+    "production_id": "F0899",
+    "product_id": "P049",
+    "plant": "Plant-B",
+    "units_produced": 129,
+    "sales_id": "S0899"
+  },
+  {
+    "production_id": "F0900",
+    "product_id": "P040",
+    "plant": "Plant-B",
+    "units_produced": 146,
+    "sales_id": "S0900"
+  },
+  {
+    "production_id": "F0901",
+    "product_id": "P084",
+    "plant": "Plant-B",
+    "units_produced": 175,
+    "sales_id": "S0901"
+  },
+  {
+    "production_id": "F0902",
+    "product_id": "P089",
+    "plant": "Plant-B",
+    "units_produced": 88,
+    "sales_id": "S0902"
+  },
+  {
+    "production_id": "F0903",
+    "product_id": "P009",
+    "plant": "Plant-B",
+    "units_produced": 141,
+    "sales_id": "S0903"
+  },
+  {
+    "production_id": "F0904",
+    "product_id": "P019",
+    "plant": "Plant-D",
+    "units_produced": 100,
+    "sales_id": "S0904"
+  },
+  {
+    "production_id": "F0905",
+    "product_id": "P057",
+    "plant": "Plant-A",
+    "units_produced": 58,
+    "sales_id": "S0905"
+  },
+  {
+    "production_id": "F0906",
+    "product_id": "P024",
+    "plant": "Plant-B",
+    "units_produced": 130,
+    "sales_id": "S0906"
+  },
+  {
+    "production_id": "F0907",
+    "product_id": "P030",
+    "plant": "Plant-D",
+    "units_produced": 41,
+    "sales_id": "S0907"
+  },
+  {
+    "production_id": "F0908",
+    "product_id": "P065",
+    "plant": "Plant-B",
+    "units_produced": 157,
+    "sales_id": "S0908"
+  },
+  {
+    "production_id": "F0909",
+    "product_id": "P063",
+    "plant": "Plant-B",
+    "units_produced": 110,
+    "sales_id": "S0909"
+  },
+  {
+    "production_id": "F0910",
+    "product_id": "P053",
+    "plant": "Plant-B",
+    "units_produced": 114,
+    "sales_id": "S0910"
+  },
+  {
+    "production_id": "F0911",
+    "product_id": "P086",
+    "plant": "Plant-D",
+    "units_produced": 220,
+    "sales_id": "S0911"
+  },
+  {
+    "production_id": "F0912",
+    "product_id": "P063",
+    "plant": "Plant-D",
+    "units_produced": 136,
+    "sales_id": "S0912"
+  },
+  {
+    "production_id": "F0913",
+    "product_id": "P100",
+    "plant": "Plant-D",
+    "units_produced": 148,
+    "sales_id": "S0913"
+  },
+  {
+    "production_id": "F0914",
+    "product_id": "P096",
+    "plant": "Plant-A",
+    "units_produced": 212,
+    "sales_id": "S0914"
+  },
+  {
+    "production_id": "F0915",
+    "product_id": "P059",
+    "plant": "Plant-D",
+    "units_produced": 141,
+    "sales_id": "S0915"
+  },
+  {
+    "production_id": "F0916",
+    "product_id": "P006",
+    "plant": "Plant-A",
+    "units_produced": 150,
+    "sales_id": "S0916"
+  },
+  {
+    "production_id": "F0917",
+    "product_id": "P038",
+    "plant": "Plant-C",
+    "units_produced": 127,
+    "sales_id": "S0917"
+  },
+  {
+    "production_id": "F0918",
+    "product_id": "P022",
+    "plant": "Plant-B",
+    "units_produced": 127,
+    "sales_id": "S0918"
+  },
+  {
+    "production_id": "F0919",
+    "product_id": "P083",
+    "plant": "Plant-A",
+    "units_produced": 48,
+    "sales_id": "S0919"
+  },
+  {
+    "production_id": "F0920",
+    "product_id": "P100",
+    "plant": "Plant-D",
+    "units_produced": 375,
+    "sales_id": "S0920"
+  },
+  {
+    "production_id": "F0921",
+    "product_id": "P058",
+    "plant": "Plant-B",
+    "units_produced": 109,
+    "sales_id": "S0921"
+  },
+  {
+    "production_id": "F0922",
+    "product_id": "P012",
+    "plant": "Plant-A",
+    "units_produced": 103,
+    "sales_id": "S0922"
+  },
+  {
+    "production_id": "F0923",
+    "product_id": "P015",
+    "plant": "Plant-D",
+    "units_produced": 323,
+    "sales_id": "S0923"
+  },
+  {
+    "production_id": "F0924",
+    "product_id": "P066",
+    "plant": "Plant-D",
+    "units_produced": 84,
+    "sales_id": "S0924"
+  },
+  {
+    "production_id": "F0925",
+    "product_id": "P099",
+    "plant": "Plant-B",
+    "units_produced": 124,
+    "sales_id": "S0925"
+  },
+  {
+    "production_id": "F0926",
+    "product_id": "P023",
+    "plant": "Plant-D",
+    "units_produced": 219,
+    "sales_id": "S0926"
+  },
+  {
+    "production_id": "F0927",
+    "product_id": "P081",
+    "plant": "Plant-B",
+    "units_produced": 38,
+    "sales_id": "S0927"
+  },
+  {
+    "production_id": "F0928",
+    "product_id": "P080",
+    "plant": "Plant-D",
+    "units_produced": 58,
+    "sales_id": "S0928"
+  },
+  {
+    "production_id": "F0929",
+    "product_id": "P001",
+    "plant": "Plant-D",
+    "units_produced": 288,
+    "sales_id": "S0929"
+  },
+  {
+    "production_id": "F0930",
+    "product_id": "P053",
+    "plant": "Plant-A",
+    "units_produced": 54,
+    "sales_id": "S0930"
+  },
+  {
+    "production_id": "F0931",
+    "product_id": "P071",
+    "plant": "Plant-B",
+    "units_produced": 194,
+    "sales_id": "S0931"
+  },
+  {
+    "production_id": "F0932",
+    "product_id": "P084",
+    "plant": "Plant-C",
+    "units_produced": 76,
+    "sales_id": "S0932"
+  },
+  {
+    "production_id": "F0933",
+    "product_id": "P012",
+    "plant": "Plant-B",
+    "units_produced": 103,
+    "sales_id": "S0933"
+  },
+  {
+    "production_id": "F0934",
+    "product_id": "P037",
+    "plant": "Plant-C",
+    "units_produced": 81,
+    "sales_id": "S0934"
+  },
+  {
+    "production_id": "F0935",
+    "product_id": "P012",
+    "plant": "Plant-A",
+    "units_produced": 194,
+    "sales_id": "S0935"
+  },
+  {
+    "production_id": "F0936",
+    "product_id": "P055",
+    "plant": "Plant-B",
+    "units_produced": 61,
+    "sales_id": "S0936"
+  },
+  {
+    "production_id": "F0937",
+    "product_id": "P089",
+    "plant": "Plant-B",
+    "units_produced": 164,
+    "sales_id": "S0937"
+  },
+  {
+    "production_id": "F0938",
+    "product_id": "P027",
+    "plant": "Plant-A",
+    "units_produced": 105,
+    "sales_id": "S0938"
+  },
+  {
+    "production_id": "F0939",
+    "product_id": "P093",
+    "plant": "Plant-C",
+    "units_produced": 137,
+    "sales_id": "S0939"
+  },
+  {
+    "production_id": "F0940",
+    "product_id": "P068",
+    "plant": "Plant-D",
+    "units_produced": 119,
+    "sales_id": "S0940"
+  },
+  {
+    "production_id": "F0941",
+    "product_id": "P094",
+    "plant": "Plant-B",
+    "units_produced": 172,
+    "sales_id": "S0941"
+  },
+  {
+    "production_id": "F0942",
+    "product_id": "P038",
+    "plant": "Plant-D",
+    "units_produced": 77,
+    "sales_id": "S0942"
+  },
+  {
+    "production_id": "F0943",
+    "product_id": "P016",
+    "plant": "Plant-C",
+    "units_produced": 191,
+    "sales_id": "S0943"
+  },
+  {
+    "production_id": "F0944",
+    "product_id": "P072",
+    "plant": "Plant-C",
+    "units_produced": 35,
+    "sales_id": "S0944"
+  },
+  {
+    "production_id": "F0945",
+    "product_id": "P009",
+    "plant": "Plant-C",
+    "units_produced": 162,
+    "sales_id": "S0945"
+  },
+  {
+    "production_id": "F0946",
+    "product_id": "P001",
+    "plant": "Plant-A",
+    "units_produced": 168,
+    "sales_id": "S0946"
+  },
+  {
+    "production_id": "F0947",
+    "product_id": "P025",
+    "plant": "Plant-D",
+    "units_produced": 84,
+    "sales_id": "S0947"
+  },
+  {
+    "production_id": "F0948",
+    "product_id": "P083",
+    "plant": "Plant-D",
+    "units_produced": 340,
+    "sales_id": "S0948"
+  },
+  {
+    "production_id": "F0949",
+    "product_id": "P043",
+    "plant": "Plant-C",
+    "units_produced": 134,
+    "sales_id": "S0949"
+  },
+  {
+    "production_id": "F0950",
+    "product_id": "P093",
+    "plant": "Plant-C",
+    "units_produced": 515,
+    "sales_id": "S0950"
+  },
+  {
+    "production_id": "F0951",
+    "product_id": "P046",
+    "plant": "Plant-C",
+    "units_produced": 117,
+    "sales_id": "S0951"
+  },
+  {
+    "production_id": "F0952",
+    "product_id": "P081",
+    "plant": "Plant-D",
+    "units_produced": 77,
+    "sales_id": "S0952"
+  },
+  {
+    "production_id": "F0953",
+    "product_id": "P077",
+    "plant": "Plant-A",
+    "units_produced": 110,
+    "sales_id": "S0953"
+  },
+  {
+    "production_id": "F0954",
+    "product_id": "P053",
+    "plant": "Plant-C",
+    "units_produced": 148,
+    "sales_id": "S0954"
+  },
+  {
+    "production_id": "F0955",
+    "product_id": "P039",
+    "plant": "Plant-A",
+    "units_produced": 269,
+    "sales_id": "S0955"
+  },
+  {
+    "production_id": "F0956",
+    "product_id": "P005",
+    "plant": "Plant-A",
+    "units_produced": 82,
+    "sales_id": "S0956"
+  },
+  {
+    "production_id": "F0957",
+    "product_id": "P065",
+    "plant": "Plant-C",
+    "units_produced": 149,
+    "sales_id": "S0957"
+  },
+  {
+    "production_id": "F0958",
+    "product_id": "P042",
+    "plant": "Plant-B",
+    "units_produced": 49,
+    "sales_id": "S0958"
+  },
+  {
+    "production_id": "F0959",
+    "product_id": "P093",
+    "plant": "Plant-A",
+    "units_produced": 193,
+    "sales_id": "S0959"
+  },
+  {
+    "production_id": "F0960",
+    "product_id": "P040",
+    "plant": "Plant-A",
+    "units_produced": 65,
+    "sales_id": "S0960"
+  },
+  {
+    "production_id": "F0961",
+    "product_id": "P067",
+    "plant": "Plant-B",
+    "units_produced": 44,
+    "sales_id": "S0961"
+  },
+  {
+    "production_id": "F0962",
+    "product_id": "P026",
+    "plant": "Plant-C",
+    "units_produced": 202,
+    "sales_id": "S0962"
+  },
+  {
+    "production_id": "F0963",
+    "product_id": "P057",
+    "plant": "Plant-C",
+    "units_produced": 195,
+    "sales_id": "S0963"
+  },
+  {
+    "production_id": "F0964",
+    "product_id": "P002",
+    "plant": "Plant-C",
+    "units_produced": 397,
+    "sales_id": "S0964"
+  },
+  {
+    "production_id": "F0965",
+    "product_id": "P041",
+    "plant": "Plant-B",
+    "units_produced": 51,
+    "sales_id": "S0965"
+  },
+  {
+    "production_id": "F0966",
+    "product_id": "P010",
+    "plant": "Plant-A",
+    "units_produced": 129,
+    "sales_id": "S0966"
+  },
+  {
+    "production_id": "F0967",
+    "product_id": "P004",
+    "plant": "Plant-A",
+    "units_produced": 75,
+    "sales_id": "S0967"
+  },
+  {
+    "production_id": "F0968",
+    "product_id": "P055",
+    "plant": "Plant-D",
+    "units_produced": 99,
+    "sales_id": "S0968"
+  },
+  {
+    "production_id": "F0969",
+    "product_id": "P046",
+    "plant": "Plant-A",
+    "units_produced": 137,
+    "sales_id": "S0969"
+  },
+  {
+    "production_id": "F0970",
+    "product_id": "P098",
+    "plant": "Plant-A",
+    "units_produced": 155,
+    "sales_id": "S0970"
+  },
+  {
+    "production_id": "F0971",
+    "product_id": "P040",
+    "plant": "Plant-B",
+    "units_produced": 295,
+    "sales_id": "S0971"
+  },
+  {
+    "production_id": "F0972",
+    "product_id": "P034",
+    "plant": "Plant-C",
+    "units_produced": 268,
+    "sales_id": "S0972"
+  },
+  {
+    "production_id": "F0973",
+    "product_id": "P063",
+    "plant": "Plant-C",
+    "units_produced": 71,
+    "sales_id": "S0973"
+  },
+  {
+    "production_id": "F0974",
+    "product_id": "P060",
+    "plant": "Plant-B",
+    "units_produced": 113,
+    "sales_id": "S0974"
+  },
+  {
+    "production_id": "F0975",
+    "product_id": "P014",
+    "plant": "Plant-A",
+    "units_produced": 118,
+    "sales_id": "S0975"
+  },
+  {
+    "production_id": "F0976",
+    "product_id": "P039",
+    "plant": "Plant-D",
+    "units_produced": 205,
+    "sales_id": "S0976"
+  },
+  {
+    "production_id": "F0977",
+    "product_id": "P080",
+    "plant": "Plant-D",
+    "units_produced": 336,
+    "sales_id": "S0977"
+  },
+  {
+    "production_id": "F0978",
+    "product_id": "P044",
+    "plant": "Plant-C",
+    "units_produced": 149,
+    "sales_id": "S0978"
+  },
+  {
+    "production_id": "F0979",
+    "product_id": "P089",
+    "plant": "Plant-D",
+    "units_produced": 68,
+    "sales_id": "S0979"
+  },
+  {
+    "production_id": "F0980",
+    "product_id": "P076",
+    "plant": "Plant-A",
+    "units_produced": 242,
+    "sales_id": "S0980"
+  },
+  {
+    "production_id": "F0981",
+    "product_id": "P023",
+    "plant": "Plant-A",
+    "units_produced": 361,
+    "sales_id": "S0981"
+  },
+  {
+    "production_id": "F0982",
+    "product_id": "P077",
+    "plant": "Plant-A",
+    "units_produced": 137,
+    "sales_id": "S0982"
+  },
+  {
+    "production_id": "F0983",
+    "product_id": "P018",
+    "plant": "Plant-B",
+    "units_produced": 42,
+    "sales_id": "S0983"
+  },
+  {
+    "production_id": "F0984",
+    "product_id": "P069",
+    "plant": "Plant-D",
+    "units_produced": 137,
+    "sales_id": "S0984"
+  },
+  {
+    "production_id": "F0985",
+    "product_id": "P027",
+    "plant": "Plant-D",
+    "units_produced": 150,
+    "sales_id": "S0985"
+  },
+  {
+    "production_id": "F0986",
+    "product_id": "P045",
+    "plant": "Plant-D",
+    "units_produced": 27,
+    "sales_id": "S0986"
+  },
+  {
+    "production_id": "F0987",
+    "product_id": "P038",
+    "plant": "Plant-A",
+    "units_produced": 91,
+    "sales_id": "S0987"
+  },
+  {
+    "production_id": "F0988",
+    "product_id": "P091",
+    "plant": "Plant-A",
+    "units_produced": 270,
+    "sales_id": "S0988"
+  },
+  {
+    "production_id": "F0989",
+    "product_id": "P056",
+    "plant": "Plant-D",
+    "units_produced": 149,
+    "sales_id": "S0989"
+  },
+  {
+    "production_id": "F0990",
+    "product_id": "P049",
+    "plant": "Plant-D",
+    "units_produced": 308,
+    "sales_id": "S0990"
+  },
+  {
+    "production_id": "F0991",
+    "product_id": "P025",
+    "plant": "Plant-D",
+    "units_produced": 109,
+    "sales_id": "S0991"
+  },
+  {
+    "production_id": "F0992",
+    "product_id": "P037",
+    "plant": "Plant-A",
+    "units_produced": 169,
+    "sales_id": "S0992"
+  },
+  {
+    "production_id": "F0993",
+    "product_id": "P093",
+    "plant": "Plant-B",
+    "units_produced": 332,
+    "sales_id": "S0993"
+  },
+  {
+    "production_id": "F0994",
+    "product_id": "P054",
+    "plant": "Plant-D",
+    "units_produced": 167,
+    "sales_id": "S0994"
+  },
+  {
+    "production_id": "F0995",
+    "product_id": "P055",
+    "plant": "Plant-B",
+    "units_produced": 201,
+    "sales_id": "S0995"
+  },
+  {
+    "production_id": "F0996",
+    "product_id": "P055",
+    "plant": "Plant-B",
+    "units_produced": 65,
+    "sales_id": "S0996"
+  },
+  {
+    "production_id": "F0997",
+    "product_id": "P065",
+    "plant": "Plant-C",
+    "units_produced": 99,
+    "sales_id": "S0997"
+  },
+  {
+    "production_id": "F0998",
+    "product_id": "P005",
+    "plant": "Plant-A",
+    "units_produced": 174,
+    "sales_id": "S0998"
+  },
+  {
+    "production_id": "F0999",
+    "product_id": "P062",
+    "plant": "Plant-C",
+    "units_produced": 79,
+    "sales_id": "S0999"
+  },
+  {
+    "production_id": "F1000",
+    "product_id": "P067",
+    "plant": "Plant-A",
+    "units_produced": 140,
+    "sales_id": "S1000"
+  }
+]

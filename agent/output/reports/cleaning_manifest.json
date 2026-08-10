@@ -1,0 +1,111 @@
+{
+  "manifest_version": "1.0",
+  "generated_at": "2026-08-10T11:32:08.994192Z",
+  "verdict": "UNKNOWN",
+  "overall_dq_score": 97.7,
+  "total_datasets": 1,
+  "summary": {
+    "high": 1,
+    "medium": 1,
+    "low": 0
+  },
+  "datasets": {
+    "factory.json": {
+      "source_file": "factory.json",
+      "row_count": 1000,
+      "column_count": 5,
+      "dq_score": 97.7,
+      "readiness": "UNKNOWN",
+      "total_issues": 2,
+      "issues_by_severity": {
+        "high": 1,
+        "medium": 1,
+        "low": 0
+      },
+      "issues": [
+        {
+          "column": "units_produced",
+          "issue_type": "numeric_outliers_zscore",
+          "severity": "high",
+          "rows_affected": 2,
+          "row_indexes": [
+            703,
+            949
+          ],
+          "sample_bad_values": [
+            "536",
+            "515"
+          ],
+          "message": "2 extreme outlier(s) beyond 4\u03c3 from mean (154.41 \u00b1 88.59)",
+          "recommended_action": "clip_or_flag",
+          "auto_fixable": true,
+          "manual_guidance": ""
+        },
+        {
+          "column": "units_produced",
+          "issue_type": "numeric_outliers_iqr",
+          "severity": "medium",
+          "rows_affected": 44,
+          "row_indexes": [
+            1,
+            39,
+            68,
+            81,
+            90,
+            98,
+            137,
+            141,
+            158,
+            162,
+            180,
+            201,
+            265,
+            290,
+            293,
+            320,
+            340,
+            364,
+            380,
+            393,
+            397,
+            432,
+            444,
+            445,
+            482,
+            596,
+            606,
+            667,
+            696,
+            703,
+            738,
+            753,
+            793,
+            817,
+            833,
+            835,
+            855,
+            862,
+            874,
+            892,
+            919,
+            949,
+            963,
+            980
+          ],
+          "sample_bad_values": [
+            "399",
+            "410",
+            "363",
+            "381",
+            "488"
+          ],
+          "message": "44 IQR outlier(s) outside [-66.38, 350.62]",
+          "recommended_action": "clip_or_flag",
+          "auto_fixable": true,
+          "manual_guidance": ""
+        }
+      ]
+    }
+  },
+  "global_issues": []
+}

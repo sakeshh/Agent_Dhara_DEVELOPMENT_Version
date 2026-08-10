@@ -1,0 +1,39 @@
+# Data sources for Intelligent Data Assessment.
+# Use environment variables or Azure Key Vault for secrets in production.
+ 
+# Multiple databases or Blob containers: add another - type: database / azure_blob block.
+# Optional per block: id: crm   or   label: warehouse   (used in dataset names when multiples exist).
+ 
+source:
+  name: enterprise_data
+  locations:
+    - type: database
+      id: SQL data
+      connector: azure_sql_pythonnet
+      connection:
+        server: agentdharadb.database.windows.net
+        database: AgentDharatables
+        username: user
+        password: Pass@123
+ 
+    - type: azure_blob
+      id: blob_data
+      connector: azure_blob_storage
+      connection:
+        account_name: datasogetiatrgacc
+        account_key: eqrqE2SStSyPEpjrl2g8AHwvk2Vo9Qb2AzEZp+PA1wd6Q7SKAfBQXDL9uE3sMDKi2SOlRrB36MX8+AStZc7dQw==
+        container: agentdhararawdata
+ 
+    # - type: filesystem
+    #   id: local_data
+    #   path: C:\Users\srevanku\Downloads\Agent Dhara Backend 4\Agent Dhara Backend\local_test_data
+ 
+ 
+    # - type: azure_blob_output
+    #   id: output
+    #   connector: azure_blob_storage
+    #   connection:
+    #     account_name: datasogetiatrgacc
+    #     account_key: eqrqE2SStSyPEpjrl2g8AHwvk2Vo9Qb2AzEZp+PA1wd6Q7SKAfBQXDL9uE3sMDKi2SOlRrB36MX8+AStZc7dQw==
+    #     container: output
+ 

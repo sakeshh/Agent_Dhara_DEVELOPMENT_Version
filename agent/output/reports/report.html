@@ -1,0 +1,1609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Data assessment report</title>
+<style>
+/* Agent Dhara — Theme 2: executive / enterprise report */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+:root {
+  --accent: #0f766e;
+  --accent-hover: #115e59;
+  --accent-muted: rgba(15, 118, 110, 0.1);
+  --hue-teal: #0d9488;
+  --hue-indigo: #4f46e5;
+  --hue-amber: #d97706;
+  --hue-rose: #e11d48;
+  --hue-sky: #0284c7;
+  --hue-violet: #7c3aed;
+  --ink: #0f172a;
+  --ink-secondary: #334155;
+  --ink-muted: #64748b;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --surface: #ffffff;
+  --surface-subtle: #f8fafc;
+  --surface-muted: #f1f5f9;
+  --table-head: #1e293b;
+  --table-row: #ffffff;
+  --table-row-alt: #f8fafc;
+  --danger: #b91c1c;
+  --warn: #b45309;
+  --ok: #047857;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.1), 0 4px 6px -4px rgba(15, 23, 42, 0.06);
+  --radius: 8px;
+  --radius-lg: 12px;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; width: 100%; }
+body {
+  margin: 0;
+  width: 100%;
+  min-height: 100vh;
+  color: var(--ink);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  background:
+    linear-gradient(165deg, #e8f4f2 0%, #eef2ff 28%, #fff7ed 55%, #fce7f3 78%, #f1f5f9 100%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 20px clamp(12px, 1.5vw, 28px) 64px;
+  box-sizing: border-box;
+}
+
+.nav-rail {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 18px 20px 14px;
+  margin: 0 0 32px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+.nav-rail::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--hue-teal), var(--hue-indigo), var(--hue-amber), var(--hue-rose));
+}
+.nav-rail span {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-right: 8px;
+  padding-right: 16px;
+  border-right: 1px solid var(--border);
+}
+/* Nav pills: same bordered look for section links + Collapse/Expand */
+.nav-rail a.nav-jump,
+.nav-rail .tool-btn {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  text-decoration: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: color 0.15s, background 0.15s, border-color 0.15s, transform 0.12s ease, box-shadow 0.12s ease;
+}
+.nav-rail a.nav-jump:hover,
+.nav-rail .tool-btn:hover {
+  color: var(--accent-hover);
+  border-color: var(--ink-muted);
+  background: var(--surface-subtle);
+  box-shadow: var(--shadow-md);
+}
+.nav-rail .tool-btn {
+  cursor: pointer;
+  font-family: inherit;
+}
+.nav-rail .tool-btn.secondary {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--ink-secondary);
+}
+.nav-rail .tool-btn.secondary:hover {
+  color: var(--accent-hover);
+  background: var(--surface-subtle);
+  border-color: var(--ink-muted);
+}
+
+/* Suggested fixes: last section, same collapsible pattern as Relations / Global DQ */
+#suggested-fixes {
+  margin-bottom: 32px;
+}
+#suggested-fixes .collapsible-panel {
+  border-left: 4px solid #7c3aed;
+  margin-bottom: 0;
+}
+#suggested-fixes .collapsible-head {
+  background: linear-gradient(135deg, #4c1d95 0%, #6d28d9 48%, #7c3aed 100%);
+  border-bottom: none;
+  box-shadow: 0 2px 8px rgba(109, 40, 217, 0.22);
+}
+#suggested-fixes .collapsible-head:hover {
+  background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 100%);
+}
+#suggested-fixes .collapsible-head h2 {
+  color: #ede9fe;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+}
+#suggested-fixes .coll-h {
+  border-color: #c4b5fd;
+}
+#suggested-fixes .collapsible-body {
+  background: linear-gradient(180deg, #faf5ff 0%, #f8fafc 100%);
+  border-top: 1px solid #e9d5ff;
+}
+.badge.sug-act {
+  background: #ede9fe;
+  color: #5b21b6;
+  font-weight: 600;
+  font-size: 0.6875rem;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 4px 8px;
+}
+.suggestions-table .msg-cell {
+  max-width: 28rem;
+}
+
+.scene-hero { margin-bottom: 32px; }
+.masthead {
+  background: linear-gradient(135deg, #f0fdfa 0%, #ecfeff 30%, #eff6ff 65%, #faf5ff 100%);
+  border: 1px solid #a5f3fc;
+  border-radius: var(--radius-lg);
+  padding: 40px 44px;
+  box-shadow: var(--shadow-md), 0 0 0 1px rgba(13, 148, 136, 0.06) inset;
+  border-left: 5px solid var(--hue-teal);
+  position: relative;
+}
+.masthead::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  background: linear-gradient(90deg, var(--hue-teal), var(--hue-sky), var(--hue-indigo));
+  opacity: 0.85;
+}
+.masthead .tagline {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #0f766e;
+  margin-bottom: 12px;
+}
+.masthead h1 {
+  margin: 0 0 8px;
+  font-size: 1.875rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.masthead .sub {
+  font-size: 0.875rem;
+  color: var(--ink-muted);
+  font-weight: 400;
+}
+
+section { margin-bottom: 48px; }
+section > h2 {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin: 0 0 16px;
+  padding: 14px 20px;
+  border-radius: var(--radius);
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  border: none;
+  box-shadow: var(--shadow-sm);
+}
+#overview h2 {
+  background: linear-gradient(135deg, #0f766e 0%, #0d9488 45%, #115e59 100%);
+}
+#sources h2 {
+  background: linear-gradient(135deg, #c2410c 0%, #ea580c 50%, #f59e0b 100%);
+}
+#datasets h2 {
+  background: linear-gradient(135deg, #3730a3 0%, #4f46e5 40%, #6366f1 100%);
+}
+#governance h2,
+#llm-recs h2 {
+  color: black !important;
+  background: none !important;
+  text-shadow: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  font-size: 1.25rem !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  margin: 20px 0 12px !important;
+}
+.section-lead {
+  color: var(--ink-secondary);
+  font-size: 0.9375rem;
+  max-width: 72ch;
+  margin: 0 0 24px;
+  line-height: 1.65;
+  text-shadow: none;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+.kpi {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  padding-top: 20px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s, transform 0.2s;
+  border-top: 4px solid var(--hue-teal);
+}
+.kpi:nth-child(2) { border-top-color: var(--hue-indigo); }
+.kpi:nth-child(3) { border-top-color: var(--hue-amber); }
+.kpi:nth-child(4) { border-top-color: var(--hue-rose); }
+.kpi:nth-child(n+5) { border-top-color: var(--hue-violet); }
+.kpi:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+.kpi .label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.kpi .val {
+  font-size: 1.875rem;
+  font-weight: 700;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+.kpi:nth-child(1) .val { color: #0f766e; }
+.kpi:nth-child(2) .val { color: #4338ca; }
+.kpi:nth-child(3) .val { color: #b45309; }
+.kpi:nth-child(4) .val { color: #be123c; }
+.kpi:nth-child(n+5) .val { color: #6d28d9; }
+
+.path-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+.path-card-3d { animation: none; }
+.path-card-inner {
+  height: 100%;
+  background: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+  border-left: 4px solid var(--hue-teal);
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+.path-cards-grid .path-card-3d:nth-child(4n + 2) .path-card-inner {
+  border-left-color: var(--hue-indigo);
+}
+.path-cards-grid .path-card-3d:nth-child(4n + 3) .path-card-inner {
+  border-left-color: var(--hue-amber);
+}
+.path-cards-grid .path-card-3d:nth-child(4n + 4) .path-card-inner {
+  border-left-color: var(--hue-rose);
+}
+.path-card-3d:hover .path-card-inner {
+  box-shadow: var(--shadow-md);
+  border-left-width: 5px;
+}
+.path-num {
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.path-title {
+  margin: 10px 0 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.path-full {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  color: var(--ink-secondary);
+  line-height: 1.5;
+  padding: 12px 14px;
+  background: var(--surface-subtle);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  word-break: break-all;
+  max-height: 4.5em;
+  overflow: hidden;
+}
+.path-meta {
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+  margin: 14px 0 16px;
+}
+.path-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.btn-3d {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 0.8125rem;
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  border: none;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, opacity 0.15s;
+}
+.btn-3d.primary {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: none;
+}
+.btn-3d.primary:hover {
+  background: var(--accent-hover);
+  transform: none;
+  filter: none;
+  box-shadow: var(--shadow-sm);
+}
+.btn-3d.ghost {
+  background: var(--surface);
+  color: var(--ink-secondary);
+  border: 1px solid var(--border-strong);
+  box-shadow: none;
+}
+.btn-3d.ghost:hover {
+  background: var(--surface-subtle);
+  transform: none;
+}
+.btn-3d.small { padding: 8px 12px; font-size: 0.75rem; }
+
+.path-group-3d.filtered-out { display: none; }
+.path-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 20px 22px;
+  background: var(--table-head);
+  color: #f1f5f9;
+  border-radius: var(--radius-lg);
+  margin-bottom: 8px;
+  border: none;
+  box-shadow: var(--shadow-md);
+}
+.path-strip:hover { box-shadow: var(--shadow-lg); }
+.path-strip-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius);
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.15);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%2394a3b8' viewBox='0 0 24 24'%3E%3Cpath d='M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 20px;
+}
+.path-strip-kicker {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  margin-bottom: 6px;
+}
+.path-strip-path {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8125rem;
+  color: #e2e8f0;
+  line-height: 1.5;
+  word-break: break-all;
+}
+.path-strip-count { font-size: 0.75rem; color: #94a3b8; margin-top: 8px; }
+.path-strip-hint { font-size: 0.8125rem; color: var(--ink-muted); margin: 0 0 16px; }
+
+.dataset-card.depth-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  margin-bottom: 12px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  transition: box-shadow 0.2s;
+}
+.dataset-card.depth-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: none;
+}
+
+.nest-toggle, .dataset-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+  background: var(--surface-subtle);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.nest-toggle:hover, .dataset-toggle:hover {
+  background: var(--surface-muted);
+  box-shadow: none;
+}
+.nest-toggle .chevron, .dataset-toggle .chevron {
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid var(--ink-muted);
+  border-bottom: 2px solid var(--ink-muted);
+  transform: rotate(45deg);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+.nest-toggle[aria-expanded="false"] .chevron,
+.dataset-toggle[aria-expanded="false"] .chevron {
+  transform: rotate(-135deg);
+}
+
+.nest-toggle.nest-level-0 {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 40%, #312e81 100%);
+  color: #f8fafc;
+  border-radius: var(--radius-lg);
+  border: 1px solid #334155;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow-md);
+}
+.nest-toggle.nest-level-0:hover {
+  background: linear-gradient(135deg, #1e293b 0%, #3730a3 100%);
+  box-shadow: var(--shadow-lg);
+}
+.nest-toggle.nest-level-0 .chevron { border-color: #94a3b8; }
+.nest-toggle.nest-level-0 .nest-toggle-main strong {
+  color: #fff;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.nest-toggle.nest-level-0 .nest-meta-inline { color: #94a3b8; }
+
+.nest-toggle.nest-level-1 {
+  border-radius: var(--radius) var(--radius) 0 0;
+  margin-top: 8px;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border: 1px solid #cbd5e1;
+  border-bottom: none;
+  border-left: 3px solid var(--hue-sky);
+}
+.nest-loc-heading-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.nest-loc-copy-path {
+  cursor: pointer;
+  user-select: none;
+  display: inline-block;
+}
+.nest-loc-copy-path:hover {
+  background: var(--surface-muted);
+  border-color: var(--hue-teal);
+  color: var(--hue-teal);
+}
+.nest-toggle.nest-level-2 {
+  margin: 8px 0 0 12px;
+  width: calc(100% - 12px);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, #fffbeb 0%, #fef3c7 100%);
+  border-left: 3px solid var(--hue-amber);
+  padding: 12px 16px;
+}
+.nest-toggle.nest-level-3 {
+  border-radius: 0;
+  margin-top: 0;
+  background: linear-gradient(180deg, #faf5ff 0%, #f3e8ff 100%);
+  border-left: 3px solid var(--hue-violet);
+}
+
+.nest-meta-inline {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+  margin-top: 4px;
+  font-family: "JetBrains Mono", monospace;
+}
+.nest-body {
+  margin-left: 8px;
+  padding: 8px 0 16px 16px;
+  border-left: 2px solid var(--border);
+}
+.nest-loc-toolbar { margin-bottom: 10px; }
+.nest-toggle[aria-expanded="false"] + .nest-body,
+.nest-file-card > .nest-toggle[aria-expanded="false"] + .dataset-body {
+  display: none !important;
+}
+
+.toggle-main h3 {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.toggle-sub { font-size: 0.75rem; color: var(--ink-muted); margin-top: 2px; }
+.dataset-stats-inline { display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
+.dataset-stats-inline span {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: var(--accent-muted);
+  color: var(--accent-hover);
+  box-shadow: none;
+}
+.dataset-stats-inline span:hover { transform: none; }
+
+.dataset-body {
+  padding: 20px 22px 24px;
+  background: var(--surface-subtle);
+  border-top: 1px solid var(--border);
+}
+
+.path-inset {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+}
+.path-inset.azure { border-left-color: #0369a1; }
+.path-inset.disk { border-left-color: var(--ok); }
+.path-inset-label {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+}
+.path-inset-value {
+  flex: 1;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8125rem;
+  word-break: break-all;
+  color: var(--ink-secondary);
+}
+
+.btn-mini {
+  font-family: inherit;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--ink-secondary);
+  box-shadow: none;
+  transition: background 0.15s;
+}
+.btn-mini:hover {
+  background: var(--surface-muted);
+  transform: none;
+}
+
+.collapsible-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
+}
+.collapsible-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px;
+  border: none;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-family: inherit;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+.collapsible-head:hover {
+  background: var(--surface-subtle);
+  filter: none;
+  border-bottom-color: var(--border);
+}
+.collapsible-head h2 {
+  margin: 0;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.coll-h {
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid var(--ink-muted);
+  border-bottom: 2px solid var(--ink-muted);
+  transform: rotate(45deg);
+  transition: transform 0.2s;
+}
+.collapsible-head[aria-expanded="false"] .coll-h { transform: rotate(-135deg); }
+.collapsible-body {
+  padding: 24px;
+  background: var(--surface-subtle);
+}
+.collapsible-head[aria-expanded="false"] + .collapsible-body { display: none; }
+
+#relations .collapsible-head {
+  background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 48%, #2563eb 100%);
+  border-bottom: none;
+  box-shadow: 0 2px 8px rgba(29, 78, 216, 0.25);
+}
+#relations .collapsible-head:hover {
+  background: linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%);
+}
+#relations .collapsible-head h2 {
+  color: #e0e7ff;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+}
+#relations .coll-h {
+  border-color: #a5b4fc;
+}
+
+#globalq .collapsible-head {
+  background: linear-gradient(135deg, #881337 0%, #be123c 45%, #e11d48 100%);
+  border-bottom: none;
+  box-shadow: 0 2px 8px rgba(190, 18, 60, 0.22);
+}
+#globalq .collapsible-head:hover {
+  background: linear-gradient(135deg, #9f1239 0%, #e11d48 100%);
+}
+#globalq .collapsible-head h2 {
+  color: #ffe4e6;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+}
+#globalq .coll-h {
+  border-color: #fda4af;
+}
+#relations .collapsible-body {
+  background: linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%);
+  border-top: 1px solid #bfdbfe;
+}
+#globalq .collapsible-body {
+  background: linear-gradient(180deg, #fff1f2 0%, #f8fafc 100%);
+  border-top: 1px solid #fecdd3;
+}
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 14px 18px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+.filter-bar span {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.filter-chip {
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.filter-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: none;
+  box-shadow: none;
+}
+.filter-chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  box-shadow: none;
+  transform: none;
+}
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 120;
+  padding: 12px 20px;
+  border-radius: var(--radius);
+  background: var(--ink);
+  color: #fff;
+  font-weight: 500;
+  font-size: 0.875rem;
+  border: none;
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s;
+  transform: translateY(8px);
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+
+.block-title {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+  margin: 24px 0 12px;
+  padding: 10px 14px;
+  background: linear-gradient(90deg, rgba(13, 148, 136, 0.12) 0%, rgba(79, 70, 229, 0.08) 100%);
+  border-radius: var(--radius);
+  border-left: 4px solid var(--hue-teal);
+}
+.dataset-body .block-title:nth-of-type(2) {
+  border-left-color: var(--hue-indigo);
+  background: linear-gradient(90deg, rgba(79, 70, 229, 0.12) 0%, transparent 100%);
+}
+.dataset-body .block-title:nth-of-type(n + 3) {
+  border-left-color: var(--hue-amber);
+  background: linear-gradient(90deg, rgba(217, 119, 6, 0.1) 0%, transparent 100%);
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+.data-table thead th {
+  background: linear-gradient(180deg, #334155 0%, #1e293b 100%);
+  color: #f8fafc;
+  font-weight: 600;
+  text-align: left;
+  padding: 12px 14px;
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-bottom: 2px solid var(--hue-teal);
+  border-right: 1px solid #475569;
+}
+.data-table thead th:last-child { border-right: none; }
+.data-table tbody td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  color: var(--ink-secondary);
+  background: var(--table-row);
+  border-right: 1px solid var(--border);
+}
+.data-table tbody td:last-child { border-right: none; }
+.data-table tbody tr:nth-child(even) td { background: var(--table-row-alt); }
+.data-table tbody tr:hover td {
+  background: #f0fdfa !important;
+  box-shadow: none;
+  color: var(--ink);
+}
+
+.muted { color: var(--ink-muted) !important; }
+.tiny { font-size: 0.75rem; }
+code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8125em;
+  background: var(--surface-muted);
+  color: var(--accent-hover);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.badge.sev-high { background: #fef2f2; color: var(--danger); border: 1px solid #fecaca; }
+.badge.sev-medium { background: #fffbeb; color: var(--warn); border: 1px solid #fde68a; }
+.badge.sev-low { background: #ecfdf5; color: var(--ok); border: 1px solid #a7f3d0; }
+
+.scrollcell {
+  max-height: 96px;
+  overflow: auto;
+  font-size: 0.8125rem;
+}
+.rel-list { margin: 0; padding-left: 1.25rem; color: var(--ink-secondary); }
+.rel-list li { margin: 8px 0; }
+.overlap { color: var(--ink-muted); font-size: 0.8125rem; }
+
+.llm-insights-section { margin: 32px 0; }
+.llm-panel {
+  background: linear-gradient(180deg, #ffffff 0%, #faf5ff 100%);
+  border: 1px solid #e9d5ff;
+  border-top: 4px solid #7c3aed;
+  border-radius: var(--radius-lg);
+  padding: 28px 32px;
+  box-shadow: var(--shadow-md);
+}
+.llm-panel-err {
+  border-left-color: var(--danger);
+  background: #fef2f2;
+}
+.llm-banner {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6366f1;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  background: #eef2ff;
+  border-radius: var(--radius);
+}
+.llm-insights-section h2 {
+  margin: 0 0 16px;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #5b21b6 0%, #6366f1 100%);
+  padding: 14px 18px;
+  border-radius: var(--radius);
+  box-shadow: 0 2px 8px rgba(91, 33, 182, 0.2);
+}
+.llm-subh {
+  margin: 20px 0 10px;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+}
+.llm-exec { color: var(--ink-secondary); font-size: 0.9375rem; line-height: 1.65; margin: 0; }
+.llm-ul, .llm-ol { margin: 0; padding-left: 1.25rem; color: var(--ink-secondary); line-height: 1.65; }
+.llm-ul li, .llm-ol li { margin: 8px 0; }
+.llm-lineage {
+  color: var(--ink-muted);
+  font-size: 0.875rem;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.report-watermark-footer {
+  display: flex;
+  justify-content: center;
+  padding: 40px 20px 48px;
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+}
+.report-watermark-oval {
+  display: inline-block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+  padding: 10px 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-family: inherit;
+  box-shadow: none;
+  user-select: none;
+}
+
+/* Click feedback: scale + shadow on press */
+.btn-3d,
+.btn-mini,
+.filter-chip,
+.nest-loc-copy-path,
+.collapsible-head {
+  transition: transform 0.14s ease, box-shadow 0.14s ease, filter 0.14s ease, background 0.15s;
+}
+.nest-toggle,
+.dataset-toggle {
+  transition: transform 0.14s ease, box-shadow 0.14s ease, filter 0.14s ease, background 0.15s;
+}
+.nav-rail a.nav-jump:active {
+  transform: scale(0.93);
+  box-shadow: 0 3px 12px rgba(13, 148, 136, 0.2);
+}
+.nav-rail .tool-btn:active {
+  transform: scale(0.93);
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.14);
+}
+.btn-3d:active {
+  transform: scale(0.94);
+  filter: brightness(0.92);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+}
+.btn-mini:active,
+.filter-chip:active {
+  transform: scale(0.93);
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.12);
+}
+.nest-loc-copy-path:active {
+  transform: scale(0.9);
+  filter: brightness(0.9);
+}
+button.nest-toggle:active,
+button.collapsible-head:active,
+button.dataset-toggle:active {
+  transform: scale(0.996);
+  box-shadow: inset 0 3px 14px rgba(0, 0, 0, 0.07);
+}
+.collapsible-head:active {
+  filter: brightness(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-rail a.nav-jump:active,
+  .nav-rail .tool-btn:active,
+  .btn-3d:active,
+  .btn-mini:active,
+  .filter-chip:active,
+  .nest-loc-copy-path:active,
+  button.nest-toggle:active,
+  button.collapsible-head:active,
+  button.dataset-toggle:active {
+    transform: none;
+  }
+}
+
+@media print {
+  .report-watermark-footer { padding: 20px; border: none; }
+  .nav-rail, .filter-bar, .btn-copy-path, .btn-mini, .toast { display: none !important; }
+  .dataset-body, .nest-body { display: block !important; }
+  .nest-toggle[aria-expanded="false"] + .nest-body,
+  .nest-file-card > .nest-toggle[aria-expanded="false"] + .dataset-body { display: block !important; }
+  body { background: #fff !important; }
+  .data-table thead th {
+    background: var(--table-head) !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .data-table tbody td { background: #fff !important; color: var(--ink) !important; }
+}
+
+
+.dq-scorecard-section { margin: 0 0 1.25rem 0; max-width: 1100px; margin-left: auto; margin-right: auto; padding: 0 1rem; }
+.scorecard-banner { border-radius: 12px; padding: 1rem 1.25rem 1.1rem; border: 2px solid #cbd5e1; }
+.scorecard-blocked { background: #fee2e2; border-color: #b91c1c; }
+.scorecard-needs { background: #fef3c7; border-color: #b45309; }
+.scorecard-ready { background: #dcfce7; border-color: #15803d; }
+.scorecard-verdict-row { font-size: 1.25rem; font-weight: 700; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.35rem; }
+.scorecard-metrics { font-size: 0.95rem; margin-bottom: 0.75rem; color: #1f2937; }
+.scorecard-bar-list { margin-top: 0.5rem; }
+.ds-score-row { display: flex; align-items: center; gap: 0.6rem; margin: 0.45rem 0; flex-wrap: wrap; }
+.ds-name { min-width: 140px; font-weight: 600; font-size: 0.88rem; }
+.score-bar { flex: 1; min-width: 120px; height: 10px; background: rgba(255,255,255,0.65); border-radius: 999px; overflow: hidden; border: 1px solid rgba(0,0,0,0.08); }
+.score-fill { height: 100%; border-radius: 999px; }
+.score-fill-low { background: linear-gradient(90deg, #ef4444, #f87171); }
+.score-fill-med { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+.score-fill-high { background: linear-gradient(90deg, #22c55e, #4ade80); }
+.score-value { font-size: 0.85rem; font-weight: 600; min-width: 52px; text-align: right; }
+.badge-blocked { background: #fecaca; color: #7f1d1d; }
+.badge-needs { background: #fde68a; color: #78350f; }
+.badge-ready { background: #bbf7d0; color: #14532d; }
+.manifest-callout { margin-top: 0.75rem; padding: 0.65rem 0.85rem; border-radius: 8px; border: 1px dashed #64748b; background: #f8fafc; font-size: 0.88rem; }
+.dq-issue-details { border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.25rem 0.5rem; margin-top: 0.35rem; background: rgba(248,250,252,0.9); }
+.dq-issue-summary { cursor: pointer; font-weight: 600; padding: 0.35rem 0.25rem; }
+.dq-issue-body { padding: 0.35rem 0.15rem 0.6rem; }
+.suggestions-manual .manual-guidance-cell { font-size: 0.82rem; }
+.suggestions-manual thead { background: #fef9c3; }
+.suggestions-auto thead { background: #ccfbf1; }
+.sug-subtitle { margin: 1rem 0 0.35rem; font-size: 1rem; }
+.sug-summary-inline { margin: 0 0 0.5rem 0; }
+.dataset-clean-summary {
+  margin: 0.6rem 0 1rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
+  border-left: 4px solid #0070ad;
+  background: rgba(0, 112, 173, 0.06);
+  font-size: 0.9rem;
+}
+.clean-summary-intro { margin: 0 0 0.55rem 0; font-size: 0.84rem; color: #334155; line-height: 1.4; }
+.clean-est-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.85rem;
+  row-gap: 0.25rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.07);
+}
+.clean-est-row:last-child { border-bottom: none; }
+.clean-est-label { flex: 1 1 50%; min-width: min(100%, 280px); line-height: 1.35; }
+.clean-est-value { font-weight: 700; font-size: 1.12rem; flex: 0 0 auto; }
+.clean-est-tail { flex: 1 1 100%; margin: 0; line-height: 1.35; }
+.llm-recs-section { margin: 2rem 0; padding: 0 1rem; max-width: 1100px; margin-left: auto; margin-right: auto; }
+.rec-cards-grid { display: grid; grid-template-columns: 1fr; gap: 1rem; margin-top: 1rem; }
+@media (min-width: 768px) {
+  .rec-cards-grid { grid-template-columns: repeat(auto-fill, minmax(48%, 1fr)); }
+}
+.rec-card { background: #ffffff; border: 1px solid #e2e8f0; border-left-width: 4px; border-radius: 8px; padding: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); text-align: left; }
+.border-sev-high { border-left-color: #ef4444; }
+.border-sev-medium { border-left-color: #f59e0b; }
+.border-sev-low { border-left-color: #3b82f6; }
+.rec-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+.pill-priority { background: #f1f5f9; color: #475569; font-size: 0.75rem; font-weight: 600; padding: 0.15rem 0.4rem; border-radius: 4px; }
+.pill-dataset { color: #1e293b; font-size: 0.85rem; font-weight: 700; }
+.pill-sev { font-size: 0.75rem; font-weight: 600; }
+.rec-issue-type { font-size: 0.95rem; font-weight: 700; margin: 0 0 0.5rem 0; color: #334155; }
+.rec-fix-text, .rec-why-text, .rec-risk-text { font-size: 0.88rem; margin: 0.35rem 0; color: #475569; }
+.code-wrap { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.5rem; margin: 0.50rem 0; }
+.code-title { display: block; font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 0.25rem; text-transform: uppercase; }
+.code-wrap pre { margin: 0; padding: 0; overflow-x: auto; }
+.code-wrap code { font-family: monospace; font-size: 0.8rem; color: #0f172a; }
+
+</style>
+</head>
+<body>
+<div id="toast" class="toast" role="status">Copied to clipboard</div>
+<div class="wrap">
+<nav class="nav-rail" aria-label="Quick navigation">
+  <span class="nav-brand">AGENT DHARA</span>
+  <a href="#dq-scorecard" class="nav-jump">DQ verdict</a>
+  <a href="#overview" class="nav-jump">Overview</a>
+  <a href="#datasets" class="nav-jump" data-expand-datasets="1">Datasets</a>
+  <a href="#relations" class="nav-jump" data-expand-relations="1">Relations</a>
+  <a href="#globalq" class="nav-jump" data-expand-global="1">Global DQ</a>
+  <a href="#governance" class="nav-jump">Governance</a>
+  <a href="#score-methodology" class="nav-jump">Methodology</a>
+  <a href="#technical-appendix" class="nav-jump">Appendix</a>
+  <a href="#llm-recs" class="nav-jump">LLM recommendations</a>
+  <button type="button" class="tool-btn secondary" id="btn-collapse-all">Collapse all</button>
+  <button type="button" class="tool-btn" id="btn-expand-all">Expand all</button>
+</nav>
+<div class="scene-hero">
+<header class="masthead">
+  <div class="tagline">Intelligent data assessment</div>
+  <h1>Assessment report</h1>
+  <div class="sub">Generated 2026-08-10 17:02:08</div>
+</header>
+</div>
+<section id="dq-scorecard" class="dq-scorecard-section"><div class="scorecard-banner scorecard-needs"><div class="scorecard-verdict-row"><span class="v-ico">⚠️</span> <span class="v-text">Data quality verdict: <strong>UNKNOWN</strong></span></div><div style="margin-top: 8px; margin-bottom: 8px; padding: 10px; background: rgba(255,255,255,0.7); border-radius: 6px; border: 1px solid rgba(0,0,0,0.05); font-size: 0.88rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px;"><div><strong>Assessment status:</strong> <span style="color: #1e3a8a; font-weight: bold;">COMPLETE</span></div><div><strong>Readiness:</strong> <span style="color: #64748b; font-weight: bold;">UNKNOWN</span></div><div><strong>Data release decision:</strong> <span style="color: #64748b; font-weight: bold;">HOLD</span></div><div><strong>Production consumption authorized:</strong> <span style="color: #64748b; font-weight: bold;">NO</span></div></div><div class="scorecard-metrics">Overall DQ score: <strong>97.7</strong> / 100 · High severity issues: <strong>1</strong> · Distinct rows affected by at least one HIGH finding: <strong>2</strong> · Total HIGH rule memberships: <strong>2</strong> · Approx. row share unaffected by HIGH: <strong>99.8%</strong></span></div><div class="scorecard-bar-list"><div class="ds-score-row"><span class="ds-name">factory.json</span><div class="score-bar"><div class="score-fill score-fill-high" style="width:97.7%"></div></div><span class="score-value">97.7/100</span><span class="badge badge-blocked">🔴 UNKNOWN</span></div></div></div><div class="manifest-callout"><strong>Machine-readable manifest</strong> — export run writes <code>cleaning_manifest.json</code> next to <code>report.html</code>. Use it when implementing ETL: issues, row indexes, samples, and recommended actions.</div></section>
+<section id="overview">
+<h2>Overview</h2>
+<p class="section-lead">Aggregate view of assessed datasets: volume, shape, and footprint.</p>
+<div class="kpi-grid">
+  <div class="kpi"><div class="label">Datasets</div><div class="val">1</div></div>
+  <div class="kpi"><div class="label">Approx. rows</div><div class="val">1,000</div></div>
+  <div class="kpi"><div class="label">Total columns</div><div class="val">5</div></div>
+  <div class="kpi"><div class="label">Memory (bytes)</div><div class="val">225,132</div></div>
+</div>
+
+</section>
+<section id="governance" class="datasets-section">
+<h2>Governance & drift</h2>
+<p class="section-lead">Semantic contract, drift rollup, reconciliation, and optional DuckDB preview.</p>
+<h3>Drift analysis</h3>
+<div style='background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; font-size: 0.88rem; color: #475569;'><strong>Drift status:</strong> NOT EVALUATED<br/><strong>Reason:</strong> No compatible previous assessment baseline was provided.<br/><strong>Baseline run ID:</strong> None</div>
+</section>
+
+
+        <section id="llm-recs" class="llm-recs-section">
+          <h2>Data Cleaning & Remediation Recommendations</h2>
+          <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+            <h3 style="margin: 0 0 8px 0; font-size: 1rem; color: #0f172a;">Remediation Engine Configuration Context</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; font-size: 0.88rem; color: #334155;">
+              <div><strong>Primary Remediation Engine:</strong> PySpark DataFrame API</div>
+              <div><strong>Source Storage:</strong> Blob files (OneLake/Blob Store)</div>
+              <div><strong>Downstream SQL Target:</strong> <code>Not configured (Downstream SQL recommendations omitted)</code></div>
+              <div><strong>Recommendation Mode:</strong> Deterministic Fallback (LLM Config Unavailable)</div>
+              <div><strong>Action Policy:</strong> DRY_RUN, validation required for all transformations.</div>
+            </div>
+          </div>
+          <div class="rec-cards-grid">
+            
+            <div class="rec-card border-sev-high">
+              <div class="rec-header">
+                <span class="pill-priority">Priority P1</span>
+                <span class="pill-dataset">factory.json.units_produced</span>
+                <span class="pill-sev badge sev-high">HIGH</span>
+              </div>
+              <div class="rec-body">
+                <h4 class="rec-issue-type">Issue: <code>numeric_outliers_zscore</code></h4>
+                <p class="rec-fix-text"><strong>Suggested Fix:</strong> Investigate and potentially quarantine the extreme outlier values.</p>
+                <p class="rec-why-text"><strong>Why it matters:</strong> Extreme outliers may indicate data entry errors or fraud, impacting data integrity.</p>
+                <div class="code-wrap">
+                    <span class="code-title">PySpark DataFrame Remediation</span>
+                    <pre data-raw="import pyspark.sql.functions as F
+raw = F.col(&#x27;units_produced&#x27;)
+df = (
+    df
+    .withColumn(&#x27;units_produced_raw&#x27;, raw)
+    .withColumn(&#x27;units_produced_clean&#x27;, raw.cast(&#x27;double&#x27;))
+    .withColumn(
+        &#x27;units_produced_validation_status&#x27;,
+        F.when(raw.isNull(), &#x27;source_null&#x27;)
+         .when(F.trim(raw.cast(&#x27;string&#x27;)) == &#x27;&#x27;, &#x27;empty&#x27;)
+         .when(raw.cast(&#x27;double&#x27;).isNull(), &#x27;invalid_numeric&#x27;)
+         .otherwise(&#x27;valid&#x27;)
+    )
+)"><code class="language-python">import pyspark.sql.functions as F
+raw = F.col(&#x27;units_produced&#x27;)
+df = (
+    df
+    .withColumn(&#x27;units_produced_raw&#x27;, raw)
+    .withColumn(&#x27;units_produced_clean&#x27;, raw.cast(&#x27;double&#x27;))
+    .withColumn(
+        &#x27;units_produced_validation_status&#x27;,
+        F.when(raw.isNull(), &#x27;source_null&#x27;)
+         .when(F.trim(raw.cast(&#x27;string&#x27;)) == &#x27;&#x27;, &#x27;empty&#x27;)
+         .when(raw.cast(&#x27;double&#x27;).isNull(), &#x27;invalid_numeric&#x27;)
+         .otherwise(&#x27;valid&#x27;)
+    )
+)</code></pre>
+                </div>
+                
+                <div class="code-wrap" style="background-color: #f0fdf4; border-color: #bbf7d0;">
+                <span class="code-title" style="color: #166534;">Quarantine & Clean-Output Paths (Blob Native)</span>
+                <ul style="font-size: 0.82rem; margin: 4px 0; padding-left: 16px; color: #1e3a1e; line-height: 1.4;">
+                    <li><strong>Source Format:</strong> JSON</li>
+                    <li><strong>Clean Dataset Path:</strong> <code>Files/clean/factory/</code> (format: delta)</li>
+                    <li><strong>Quarantine Path:</strong> <code>Files/quarantine/factory/</code> (format: delta)</li>
+                    <li><strong>Validation Column:</strong> <code>units_produced_validation_status</code></li>
+                    <li><strong>Reason Column:</strong> <code>units_produced_validation_reason</code></li>
+                    
+                </ul>
+            </div>
+                
+                <p class="rec-risk-text"><strong>Risk:</strong> ⚠️ High risk of incorrect data affecting analysis and decision-making.</p>
+              </div>
+            </div>
+            
+            <div class="rec-card border-sev-medium">
+              <div class="rec-header">
+                <span class="pill-priority">Priority P2</span>
+                <span class="pill-dataset">factory.json.units_produced</span>
+                <span class="pill-sev badge sev-medium">MEDIUM</span>
+              </div>
+              <div class="rec-body">
+                <h4 class="rec-issue-type">Issue: <code>numeric_outliers_iqr</code></h4>
+                <p class="rec-fix-text"><strong>Suggested Fix:</strong> Investigate values beyond 1.5x IQR; check if they represent extreme cases, fraud, or data entry errors.</p>
+                <p class="rec-why-text"><strong>Why it matters:</strong> Outliers can skew analysis and lead to incorrect conclusions.</p>
+                <div class="code-wrap">
+                    <span class="code-title">PySpark DataFrame Remediation</span>
+                    <pre data-raw="import pyspark.sql.functions as F
+raw = F.col(&#x27;units_produced&#x27;)
+df = (
+    df
+    .withColumn(&#x27;units_produced_raw&#x27;, raw)
+    .withColumn(&#x27;units_produced_clean&#x27;, raw.cast(&#x27;double&#x27;))
+    .withColumn(
+        &#x27;units_produced_validation_status&#x27;,
+        F.when(raw.isNull(), &#x27;source_null&#x27;)
+         .when(F.trim(raw.cast(&#x27;string&#x27;)) == &#x27;&#x27;, &#x27;empty&#x27;)
+         .when(raw.cast(&#x27;double&#x27;).isNull(), &#x27;invalid_numeric&#x27;)
+         .otherwise(&#x27;valid&#x27;)
+    )
+)"><code class="language-python">import pyspark.sql.functions as F
+raw = F.col(&#x27;units_produced&#x27;)
+df = (
+    df
+    .withColumn(&#x27;units_produced_raw&#x27;, raw)
+    .withColumn(&#x27;units_produced_clean&#x27;, raw.cast(&#x27;double&#x27;))
+    .withColumn(
+        &#x27;units_produced_validation_status&#x27;,
+        F.when(raw.isNull(), &#x27;source_null&#x27;)
+         .when(F.trim(raw.cast(&#x27;string&#x27;)) == &#x27;&#x27;, &#x27;empty&#x27;)
+         .when(raw.cast(&#x27;double&#x27;).isNull(), &#x27;invalid_numeric&#x27;)
+         .otherwise(&#x27;valid&#x27;)
+    )
+)</code></pre>
+                </div>
+                
+                <div class="code-wrap" style="background-color: #f0fdf4; border-color: #bbf7d0;">
+                <span class="code-title" style="color: #166534;">Quarantine & Clean-Output Paths (Blob Native)</span>
+                <ul style="font-size: 0.82rem; margin: 4px 0; padding-left: 16px; color: #1e3a1e; line-height: 1.4;">
+                    <li><strong>Source Format:</strong> JSON</li>
+                    <li><strong>Clean Dataset Path:</strong> <code>Files/clean/factory/</code> (format: delta)</li>
+                    <li><strong>Quarantine Path:</strong> <code>Files/quarantine/factory/</code> (format: delta)</li>
+                    <li><strong>Validation Column:</strong> <code>units_produced_validation_status</code></li>
+                    <li><strong>Reason Column:</strong> <code>units_produced_validation_reason</code></li>
+                    
+                </ul>
+            </div>
+                
+                <p class="rec-risk-text"><strong>Risk:</strong> ⚠️ Medium risk of misleading data affecting operational decisions.</p>
+              </div>
+            </div>
+            
+          </div>
+        </section>
+        
+<section id="datasets" class="datasets-section">
+<div class="datasets-nest-root">
+<button type="button" class="nest-toggle nest-level-0" aria-expanded="true" aria-controls="nest-root-body" id="nest-root-toggle">
+  <span class="chevron" aria-hidden="true"></span>
+  <span class="nest-toggle-main"><strong>All locations</strong>
+  <span class="nest-meta-inline">1 location(s) · 1 file(s)</span></span>
+</button>
+<div class="nest-body" id="nest-root-body"><div class="nest-loc-wrap" id="src-0" data-path-filter="0">
+<button type="button" class="nest-toggle nest-level-1" aria-expanded="true" aria-controls="nest-loc-body-0">
+  <span class="chevron" aria-hidden="true"></span>
+  <span class="nest-toggle-main"><span class="nest-loc-heading-row"><strong>File system</strong><span class="btn-mini btn-copy-path nest-loc-copy-path" role="button" tabindex="0" data-path="abfss://04a585ce-f0ec-4a3a-9db2-e237711fd9e7@onelake.dfs.fabric.microsoft.com/abd8c72d-b5aa-4b58-83bd-fb97587de47e/Files/raw/factory_json.json">Copy path</span></span>
+  <span class="nest-meta-inline">abfss://04a585ce-f0ec-4a3a-9db2-e237711fd9e7@onelake.dfs.fabric.microsoft.com/abd8c72d-b5aa-4b58-83bd-fb97587de47e/Fi…</span></span>
+</button>
+<div class="nest-body nest-loc-inner" id="nest-loc-body-0">
+<button type="button" class="nest-toggle nest-level-2" aria-expanded="true" aria-controls="nest-fmt-0-json">
+  <span class="chevron" aria-hidden="true"></span>
+  <span class="nest-toggle-main"><strong>.json</strong>
+  <span class="nest-meta-inline">1 file(s)</span></span>
+</button>
+<div class="nest-body nest-fmt-inner" id="nest-fmt-0-json">
+        <div class="nest-file-card dataset-card depth-card" id="ds-0" data-path-group="0">
+          <button type="button" class="nest-toggle nest-level-3" aria-expanded="true" aria-controls="dbc-0">
+            <span class="chevron" aria-hidden="true"></span>
+            <div class="toggle-main">
+              <h3>factory.json</h3>
+              <div class="toggle-sub">Profile &amp; data quality</div>
+            </div>
+            <div class="dataset-stats-inline"><span>1,000 rows</span><span>5 cols</span><span class='badge sev-low'>DQ 97.7/100</span></div>
+          </button>
+          <div class="dataset-body" id="dbc-0">
+            <div class='path-inset disk'><span class='path-inset-label'>Filesystem path</span><span class='path-inset-value'>abfss://04a585ce-f0ec-4a3a-9db2-e237711fd9e7@onelake.dfs.fabric.microsoft.com/abd8c72d-b5aa-4b58-83bd-fb97587de47e/Files/raw/factory_json.json</span><button type='button' class='btn-mini btn-copy-path' data-path="abfss://04a585ce-f0ec-4a3a-9db2-e237711fd9e7@onelake.dfs.fabric.microsoft.com/abd8c72d-b5aa-4b58-83bd-fb97587de47e/Files/raw/factory_json.json">Copy</button></div>
+            <aside class="dataset-clean-summary" aria-label="Remediation row estimates"><p class="clean-summary-intro">These counts are computed from overlapping HIGH/MEDIUM rows in this scan (see <a href="#dq-scorecard">DQ verdict</a> for context).</p><div class="clean-est-row"><span class="clean-est-label">Rows with <strong>no HIGH</strong>-severity finding</span><span class="clean-est-value">998</span><span class="clean-est-tail"> <span class="muted">(of 1,000 sampled rows)</span> <span class="muted">≈ 99.8% unaffected by HIGH severity</span></span></div><div class="clean-est-row"><span class="clean-est-label">Rows with <strong>no HIGH nor MEDIUM</strong> finding</span><span class="clean-est-value">956</span><span class="clean-est-tail"> <span class="muted">(of 1,000 sampled rows)</span> <span class="muted">≈ 95.6% unaffected after HIGH+MEDIUM remediation</span></span></div></aside>
+            <h4 class="block-title">Profile</h4>
+            <div class='table-wrap'><table class='data-table'><thead><tr><th>Column</th><th>Type</th><th>Null %</th><th>Unique</th><th>Semantic</th><th>PK candidate</th></tr></thead><tbody><tr><td><strong>production_id</strong></td><td>object (string)</td><td>0.0%</td><td>1000</td><td>categorical</td><td>true</td></tr><tr><td><strong>product_id</strong></td><td>object (string)</td><td>0.0%</td><td>100</td><td>categorical</td><td>false</td></tr><tr><td><strong>sales_id</strong></td><td>object (string)</td><td>0.0%</td><td>1000</td><td>categorical</td><td>true</td></tr><tr><td><strong>plant</strong></td><td>object (string)</td><td>0.0%</td><td>4</td><td>categorical</td><td>false</td></tr><tr><td><strong>units_produced</strong></td><td>int64</td><td>0.0%</td><td>310</td><td>numeric_id</td><td>false</td></tr></tbody></table></div>
+            <h4 class="block-title">Data quality</h4>
+            <details class="dq-issue-details" open>
+              <summary class="dq-issue-summary">factory.json — 2 issues (1 HIGH · 1 MEDIUM · 0 LOW)</summary>
+              <div class="dq-issue-body">
+                
+            <div class="root-cause-summary-wrap" style="margin-bottom: 20px;">
+                <h5 style="margin-top: 10px; margin-bottom: 8px;">Root-Cause Groups (Non-Additive)</h5>
+                <p class="muted" style="margin-bottom: 8px; font-size: 0.9em;">
+                    Total Rule Hits: <strong>2</strong> · 
+                    Distinct Cells Affected: <strong>44</strong> · 
+                    Distinct Rows Affected: <strong>44</strong>
+                </p>
+                <table class="profile-tbl" style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
+                    <thead>
+                        <tr style="background-color: #f9f9f9; border-bottom: 2px solid #ddd;">
+                            <th style="padding: 8px; text-align: left;">Root-Cause Family</th>
+                            <th style="padding: 8px; text-align: left;">Issue Types Triggered</th>
+                            <th style="padding: 8px; text-align: right;">Cells Affected</th>
+                            <th style="padding: 8px; text-align: right;">Rows Affected</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            
+                        <tr style="border-bottom: 1px solid #eee;">
+                            <td style="padding: 8px; font-weight: bold;">other</td>
+                            <td style="padding: 8px;"><code>numeric_outliers_iqr</code>, <code>numeric_outliers_zscore</code></td>
+                            <td style="padding: 8px; text-align: right;">44</td>
+                            <td style="padding: 8px; text-align: right;">44</td>
+                        </tr>
+                
+                    </tbody>
+                </table>
+            </div>
+            
+                <h4 class='block-title'>High severity</h4><div class='table-wrap'><table class='data-table'><thead><tr><th>Column</th><th>Issue</th><th>Sev</th><th>Fixability</th><th>Count</th><th>Rows</th><th>Samples</th><th>Problem</th><th>Recommendation</th></tr></thead><tbody><tr><td>units_produced</td><td><code>numeric_outliers_zscore</code></td><td><span class='badge sev-high'>HIGH</span></td><td><span class='badge fx-complex'>COMPLEX</span></td><td>2</td><td>703, 949</td><td><code>536</code>, <code>515</code></td><td class='msg-cell'>2 extreme outlier(s) beyond 4σ from mean (154.41 ± 88.59)</td><td class='rec-cell'>Investigate extreme z-score outliers (&gt;4 std devs); likely data entry errors, test records, or fraud signals.</td></tr></tbody></table></div>
+                <h4 class='block-title'>Medium severity</h4><div class='table-wrap'><table class='data-table'><thead><tr><th>Column</th><th>Issue</th><th>Sev</th><th>Fixability</th><th>Count</th><th>Rows</th><th>Samples</th><th>Problem</th><th>Recommendation</th></tr></thead><tbody><tr><td>units_produced</td><td><code>numeric_outliers_iqr</code></td><td><span class='badge sev-medium'>MEDIUM</span></td><td><span class='badge fx-complex'>COMPLEX</span></td><td>44</td><td><div class='scrollcell'>1, 39, 68, 81, 90, 98, 137, 141, 158, 162, 180, 201, 265, 290, 293, 320, 340, 364, 380, 393, 397, 432, 444, 445, 482, 596, 606, 667, 696, 703, 738, 753, 793, 817, 833, 835, 855, 862, 874, 892, 919, 949, 963, 980</div></td><td><code>399</code>, <code>410</code>, <code>363</code>, <code>381</code>, <code>488</code></td><td class='msg-cell'>44 IQR outlier(s) outside [-66.38, 350.62]</td><td class='rec-cell'>Investigate values beyond 1.5x IQR; check if they represent extreme cases, fraud, or data entry errors.</td></tr></tbody></table></div>
+                
+              </div>
+            </details>
+          </div>
+        </div></div></div></div></div></div>
+</section>
+<section id="relations">
+<div class="collapsible-panel">
+<button type="button" class="collapsible-head" aria-expanded="true" aria-controls="rel-body"><h2>Relationships</h2><span class="coll-h" aria-hidden="true"></span></button>
+<div class="collapsible-body" id="rel-body"><p class='muted'>No cross-dataset column overlaps detected (same column name, case-insensitive).</p></div>
+</div>
+</section>
+<section id="globalq">
+<div class="collapsible-panel">
+<button type="button" class="collapsible-head" aria-expanded="true" aria-controls="glob-body"><h2>Global quality</h2><span class="coll-h" aria-hidden="true"></span></button>
+<div class="collapsible-body" id="glob-body"><h4 class="block-title">Orphan key rows (which dataset / column / rows)</h4><p class='muted'>(none)</p>
+            <h4 class='block-title'>Relationship model warnings</h4><p class='muted'>(none)</p>
+            <h4 class="block-title">Orphan values (set difference, no row index)</h4><p class='muted'>(none)</p>
+            <h4 class="block-title">Cross-dataset inconsistencies</h4><p class='muted'>(none)</p>
+            <h4 class="block-title">Cross-dataset consistency insights</h4><p class='muted'>(none)</p></div>
+</div>
+</section>
+
+
+    <section id="score-methodology" class="datasets-section" style="margin-top: 30px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #ddd;">
+      <h2>DQ Score Methodology</h2>
+      <p class="section-lead">Authoritative metrics, dimension weights, and score coverage standards.</p>
+      
+      <div style="margin-bottom: 20px;">
+        <h3>DQ Score Formula: Dimension Scorer v3</h3>
+        <p>The overall DQ score is the weighted average of evaluated quality dimensions. Dimensions without applicable or successfully evaluated rules are excluded from the effective denominator and reported separately through score coverage.</p>
+        <code style="display: block; padding: 12px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; margin: 10px 0; font-size: 1.0em; font-family: monospace; color: #0f172a;">
+          Overall DQ Score = Sum(Dimension_Score &times; Configured_Weight) / Total_Evaluated_Weight
+        </code>
+
+        
+        <h4 style="margin-top: 20px;">Readiness Gating Thresholds</h4>
+        <p>Datasets and overall pipelines are gated against the following configured score thresholds:</p>
+        <ul style="margin-top: 8px; padding-left: 20px; line-height: 1.6;">
+          <li><strong>Score &ge; 70.0:</strong> READY (unless gating HIGH issues are present, which escalates status to NEEDS_WORK)</li>
+          <li><strong>Score &ge; 35.0:</strong> NEEDS_WORK (requires remediation)</li>
+          <li><strong>Score &lt; 35.0:</strong> BLOCKED (gated, score below blocked threshold takes precedence over high issues check)</li>
+        </ul>
+      </div>
+      
+      <h3>Multidimensional Quality Breakdown</h3>
+    
+            <div style="margin-top: 15px; padding: 15px; border: 1px solid #eee; border-radius: 6px; background-color: #fafafa;">
+              <h4>Dataset: <code>factory.json</code></h4>
+              <table class="profile-tbl" style="width: 100%; margin-top: 10px; border-collapse: collapse;">
+                <thead>
+                  <tr style="background-color: #f2f2f2; border-bottom: 1px solid #ccc;">
+                    <th style="padding: 6px; text-align: left;">Dimension</th>
+                    <th style="padding: 6px; text-align: left;">Score</th>
+                    <th style="padding: 6px; text-align: left;">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+            
+                  <tr style="border-bottom: 1px solid #e0e0e0;">
+                    <td style="padding: 6px;"><strong>Completeness</strong></td>
+                    <td style="padding: 6px;">N/A</td>
+                    <td style="padding: 6px;">status: NOT_EVALUATED, configured weight: 0.15, effective weight: 0.0, evaluated rules count: 0, passed rules count: 0, failed rules count: 0</td>
+                  </tr>
+                
+                  <tr style="border-bottom: 1px solid #e0e0e0;">
+                    <td style="padding: 6px;"><strong>Validity</strong></td>
+                    <td style="padding: 6px;"><strong>97.7%</strong></td>
+                    <td style="padding: 6px;">status: EVALUATED, configured weight: 0.2, effective weight: 0.2, evaluated rules count: 3, passed rules count: 1, failed rules count: 2</td>
+                  </tr>
+                
+                  <tr style="border-bottom: 1px solid #e0e0e0;">
+                    <td style="padding: 6px;"><strong>Declared-Key Uniqueness</strong></td>
+                    <td style="padding: 6px;">N/A</td>
+                    <td style="padding: 6px;">status: NOT_EVALUATED, configured weight: 0.15, effective weight: 0.0, evaluated rules count: 0, passed rules count: 0, failed rules count: 0</td>
+                  </tr>
+                
+                  <tr style="border-bottom: 1px solid #e0e0e0;">
+                    <td style="padding: 6px;"><strong>Consistency</strong></td>
+                    <td style="padding: 6px;">N/A</td>
+                    <td style="padding: 6px;">Passed evaluations: 0, Failed evaluations: 0, Evaluated rules/cells: 0, Calculation method: row-level rule pass rate</td>
+                  </tr>
+                
+                  <tr style="border-bottom: 1px solid #e0e0e0;">
+                    <td style="padding: 6px;"><strong>Conformity</strong></td>
+                    <td style="padding: 6px;">N/A</td>
+                    <td style="padding: 6px;">status: NOT_EVALUATED, configured weight: 0.1, effective weight: 0.0, evaluated rules count: 0, passed rules count: 0, failed rules count: 0</td>
+                  </tr>
+                
+                  <tr style="border-bottom: 1px solid #e0e0e0;">
+                    <td style="padding: 6px;"><strong>Referential_integrity</strong></td>
+                    <td style="padding: 6px;">N/A</td>
+                    <td style="padding: 6px;">status: NOT_EVALUATED, configured weight: 0.15, effective weight: 0.0, evaluated rules count: 0, passed rules count: 0, failed rules count: 0</td>
+                  </tr>
+                
+                  <tr style="border-bottom: 1px solid #e0e0e0;">
+                    <td style="padding: 6px;"><strong>Accuracy</strong></td>
+                    <td style="padding: 6px;">N/A</td>
+                    <td style="padding: 6px;">status: NOT_EVALUATED, configured weight: 0.1, effective weight: 0.0, evaluated rules count: 0, passed rules count: 0, failed rules count: 0</td>
+                  </tr>
+                
+                  <tr style="border-bottom: 1px solid #e0e0e0;">
+                    <td style="padding: 6px;"><strong>Timeliness</strong></td>
+                    <td style="padding: 6px;">N/A</td>
+                    <td style="padding: 6px;">status: NOT_EVALUATED, configured weight: 0.05, effective weight: 0.0, evaluated rules count: 0, passed rules count: 0, failed rules count: 0</td>
+                  </tr>
+                
+                </tbody>
+              </table>
+            </div>
+            </section>
+
+    <section id="technical-appendix" class="datasets-section" style="margin-top: 30px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #ddd;">
+      <h2>Technical Appendix</h2>
+      <p class="section-lead">Reproducibility metadata, scan limitations, and full diagnostic details.</p>
+      
+    <div style="background-color: #fff; border-radius: 8px; padding: 20px; border: 1px solid #ddd; margin-top: 20px;">
+      <h4>Reproducibility Metadata</h4>
+      <ul style="padding-left: 20px; line-height: 1.6;">
+        <li><strong>Run ID:</strong> <code>N/A</code></li>
+        <li><strong>Agent Version:</strong> <code>3.4.0</code></li>
+        <li><strong>Manifest Schema Version:</strong> <code>2.0.0</code></li>
+        <li><strong>Schema Hash:</strong> <code>N/A</code></li>
+        <li><strong>Rules Hash:</strong> <code>N/A</code></li>
+        <li><strong>Assessment Timestamp:</strong> <code>2026-08-10 17:02:08</code></li>
+        <li><strong>Sampling Strategy:</strong> <code>Full dataset profiling (no truncation/sampling applied)</code></li>
+      </ul>
+    </div>
+    
+      
+    <div style="background-color: #fff; border-radius: 8px; padding: 20px; border: 1px solid #ddd; margin-top: 20px;">
+      <h4>Assessment Limitations</h4>
+      <ul style="padding-left: 20px; line-height: 1.6;">
+        <li><strong>Inferred Relationships:</strong> Discoveries are advisory and require promotion in <code>dq_thresholds.yaml</code> for enforcement.</li>
+        <li><strong>Parsing Failures:</strong> Handled gracefully via execution warnings.</li>
+        <li><strong>Cell Truncation:</strong> Diagnostic row indexes are sampled up to 10 rows per issue type.</li>
+      </ul>
+    </div>
+    
+    </section>
+    
+</div>
+<footer class="report-watermark-footer" aria-label="Attribution">
+  <span class="report-watermark-oval">Agent Dhara</span>
+</footer>
+<script>
+(function() {
+  function showToast() {
+    var t = document.getElementById('toast');
+    t.classList.add('show');
+    setTimeout(function() { t.classList.remove('show'); }, 2000);
+  }
+  function runCopy(btn) {
+    var p = btn.getAttribute('data-path') || '';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(p).then(showToast);
+    } else {
+      var ta = document.createElement('textarea'); ta.value = p; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); showToast(); } catch(e) {}
+      document.body.removeChild(ta);
+    }
+  }
+  document.querySelectorAll('.btn-copy-path').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      runCopy(btn);
+    });
+    btn.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); runCopy(btn); }
+    });
+  });
+  document.querySelectorAll('.nest-toggle').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var ex = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', ex ? 'false' : 'true');
+    });
+  });
+  function expandCollapseAll(expanded) {
+    document.querySelectorAll('.collapsible-head').forEach(function(b) {
+      b.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    });
+    document.querySelectorAll('.nest-toggle').forEach(function(b) {
+      b.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    });
+    document.querySelectorAll('details.dq-issue-details').forEach(function(d) {
+      if (expanded) {
+        d.setAttribute('open', '');
+      } else {
+        d.removeAttribute('open');
+      }
+    });
+  }
+  document.getElementById('btn-expand-all').addEventListener('click', function() { expandCollapseAll(true); });
+  document.getElementById('btn-collapse-all').addEventListener('click', function() { expandCollapseAll(false); });
+  document.querySelectorAll('a.nav-jump').forEach(function(a) {
+    a.addEventListener('click', function(e) {
+      var href = a.getAttribute('href') || '';
+      if (href.charAt(0) !== '#') return;
+      var id = href.slice(1);
+      var section = document.getElementById(id);
+      e.preventDefault();
+      if (a.getAttribute('data-expand-datasets') && section) {
+        var t = section.querySelectorAll('.nest-toggle');
+        var allOpen = t.length > 0;
+        for (var i = 0; i < t.length; i++) {
+          if (t[i].getAttribute('aria-expanded') !== 'true') { allOpen = false; break; }
+        }
+        for (var j = 0; j < t.length; j++) {
+          t[j].setAttribute('aria-expanded', allOpen ? 'false' : 'true');
+        }
+      }
+      if (a.getAttribute('data-expand-relations') && section) {
+        var rh = section.querySelector('.collapsible-head');
+        if (rh) {
+          var rex = rh.getAttribute('aria-expanded') === 'true';
+          rh.setAttribute('aria-expanded', rex ? 'false' : 'true');
+        }
+      }
+      if (a.getAttribute('data-expand-global') && section) {
+        var gh = section.querySelector('.collapsible-head');
+        if (gh) {
+          var gex = gh.getAttribute('aria-expanded') === 'true';
+          gh.setAttribute('aria-expanded', gex ? 'false' : 'true');
+        }
+      }
+      if (a.getAttribute('data-expand-suggestions') && section) {
+        var sh = section.querySelector('.collapsible-head');
+        if (sh) {
+          var sx = sh.getAttribute('aria-expanded') === 'true';
+          sh.setAttribute('aria-expanded', sx ? 'false' : 'true');
+        }
+      }
+      if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+  document.querySelectorAll('.collapsible-head').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var ex = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', ex ? 'false' : 'true');
+    });
+  });
+})();
+</script>
+</body>
+</html>

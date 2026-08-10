@@ -1,0 +1,1001 @@
+customer_id,full_name,email,phone,country
+,  Kabir Singh  ,@domain.com,123,India
+,ISHA GUPTA,ISHA.GUPTA@EXAMPLE.COM,6405939203,in
+,N/A, isha.mehta@example.com , +917033240445 ,XX
+C00003,,duplicate@example.com,+1-907-ABC-DEFG, DE 
+C00004,  Rohan Patel  ,,+919999999999,N/A
+C00005,RIYA SINGH,@domain.com,,IND
+7,@#%,ARJUN.REDDY@EXAMPLE.COM,abcdefghij,
+8,, aarav.singh@example.com ,9240000324,India
+ C00009 ,  Aarav Sharma  ,duplicate@example.com, +919774406928 ,au
+c00010,MEERA PATEL,,+1-310-ABC-DEFG,XX
+UNKNOWN,N/A,@domain.com,+919999999999, GB 
+C00001,,ARJUN.GUPTA@EXAMPLE.COM,,N/A
+C00013,  Isha Kumar  , isha.kumar@example.com ,+91 99999,IND
+C00014,AARAV SINGH,duplicate@example.com,7362885770,
+C00015,@#%,, +917759932098 ,USA
+C00016,,a@,+1-601-ABC-DEFG,us
+C00017,  Neha Mehta  ,NEHA.MEHTA@EXAMPLE.COM,+919999999999,XX
+C00018,ROHAN MEHTA, rohan.mehta@example.com ,, US 
+C00019,José  李,duplicate@example.com,0000000000,N/A
+,,,,
+,  Vikram Reddy  ,@domain.com,123,India
+,RIYA NAIR,RIYA.NAIR@EXAMPLE.COM,6529641298,gb
+,@#%, ananya.patel@example.com , +917419309719 ,XX
+C00023,,duplicate@example.com,+1-938-ABC-DEFG, IN 
+C00024,  Rohan Gupta  ,,+919999999999,N/A
+C00025,ISHA SINGH,x y@example.com,,IND
+27,A,ISHA.REDDY@EXAMPLE.COM,0000000000,
+28,, arjun.mehta@example.com ,9984247143,United Kingdom
+ C00029 ,  Kabir Singh  ,duplicate@example.com, +917293119496 ,au
+c00030,RIYA REDDY,,+1-353-ABC-DEFG,ZZ
+UNKNOWN,@#%,x y@example.com,+919999999999, US 
+C00001,,ARJUN.GUPTA@EXAMPLE.COM,,N/A
+C00033,  Kabir Kumar  , kabir.kumar@example.com ,0000000000,IND
+C00034,AARAV SINGH,duplicate@example.com,6115492170,
+C00035,@#%,, +916552236099 ,United Kingdom
+C00036,,not-an-email,+1-941-ABC-DEFG,ca
+C00037,  Neha Gupta  ,NEHA.GUPTA@EXAMPLE.COM,+919999999999,XX
+C00038,ROHAN MEHTA, rohan.mehta@example.com ,, US 
+C00039,José  李,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Neha Nair  ,not-an-email,+91 99999,United Kingdom
+,ISHA SINGH,ISHA.SINGH@EXAMPLE.COM,8991924428,us
+,12345, aarav.singh@example.com , +918414447101 ,ZZ
+C00043,,duplicate@example.com,+1-816-ABC-DEFG, AU 
+C00044,  Neha Nair  ,,+919999999999,N/A
+C00045,ARJUN NAIR,not-an-email,,IND
+47,12345,ROHAN.PATEL@EXAMPLE.COM,abcdefghij,
+48,, isha.patel@example.com ,6073507339,USA
+ C00049 ,  Arjun Gupta  ,duplicate@example.com, +918066032046 ,au
+c00050,ANANYA KUMAR,,+1-643-ABC-DEFG,XX
+UNKNOWN,12345,@domain.com,+919999999999, CA 
+C00001,,RIYA.REDDY@EXAMPLE.COM,,N/A
+C00053,  Aarav Singh  , aarav.singh@example.com ,123,IND
+C00054,ISHA PATEL,duplicate@example.com,9568366663,
+C00055,@#%,, +917918528181 ,India
+C00056,,a@,+1-656-ABC-DEFG,gb
+C00057,  Neha Patel  ,NEHA.PATEL@EXAMPLE.COM,+919999999999,ZZ
+C00058,AARAV NAIR, aarav.nair@example.com ,, IN 
+C00059,A,duplicate@example.com,123,N/A
+,,,,
+,  Kabir Kumar  ,x y@example.com,abcdefghij,United Kingdom
+,VIKRAM PATEL,VIKRAM.PATEL@EXAMPLE.COM,7900842119,ca
+,José  李, arjun.sharma@example.com , +918640337631 ,123
+C00063,,duplicate@example.com,+1-152-ABC-DEFG, CA 
+C00064,  Neha Kumar  ,,+919999999999,N/A
+C00065,ROHAN NAIR,@domain.com,,IND
+67,@#%,MEERA.SHARMA@EXAMPLE.COM,abcdefghij,
+68,, vikram.nair@example.com ,7099895968,United Kingdom
+ C00069 ,  Neha Kumar  ,duplicate@example.com, +919887724658 ,au
+c00070,ISHA SINGH,,+1-243-ABC-DEFG,ZZ
+UNKNOWN,@#%,not-an-email,+919999999999, GB 
+C00001,,ARJUN.SHARMA@EXAMPLE.COM,,N/A
+C00073,  Meera Reddy  , meera.reddy@example.com ,0000000000,IND
+C00074,VIKRAM SHARMA,duplicate@example.com,9561498088,
+C00075,José  李,, +916191323983 ,USA
+C00076,,a@,+1-122-ABC-DEFG,gb
+C00077,  Riya Kumar  ,RIYA.KUMAR@EXAMPLE.COM,+919999999999,XX
+C00078,ISHA KUMAR, isha.kumar@example.com ,, DE 
+C00079,@#%,duplicate@example.com,0000000000,N/A
+,,,,
+,  Arjun Gupta  ,not-an-email,123,India
+,ANANYA REDDY,ANANYA.REDDY@EXAMPLE.COM,7219752799,au
+,A, vikram.sharma@example.com , +917758563507 ,ZZ
+C00083,,duplicate@example.com,+1-726-ABC-DEFG, CA 
+C00084,  Rohan Sharma  ,,+919999999999,N/A
+C00085,AARAV GUPTA,a@,,IND
+87,José  李,KABIR.REDDY@EXAMPLE.COM,+91 99999,
+88,, arjun.patel@example.com ,8879405718,USA
+ C00089 ,  Riya Singh  ,duplicate@example.com, +918824975770 ,us
+c00090,RIYA NAIR,,+1-310-ABC-DEFG,XX
+UNKNOWN,N/A,x y@example.com,+919999999999, DE 
+C00001,,ROHAN.SHARMA@EXAMPLE.COM,,N/A
+C00093,  Ananya Nair  , ananya.nair@example.com ,+91 99999,IND
+C00094,ROHAN KUMAR,duplicate@example.com,7272436850,
+C00095,A,, +916949093904 ,India
+C00096,,not-an-email,+1-803-ABC-DEFG,au
+C00097,  Arjun Singh  ,ARJUN.SINGH@EXAMPLE.COM,+919999999999,ZZ
+C00098,MEERA GUPTA, meera.gupta@example.com ,, AU 
+C00099,José  李,duplicate@example.com,0000000000,N/A
+,,,,
+,  Vikram Kumar  ,not-an-email,0000000000,USA
+,ISHA SHARMA,ISHA.SHARMA@EXAMPLE.COM,6199106038,gb
+,@#%, rohan.kumar@example.com , +916324792941 ,123
+C00103,,duplicate@example.com,+1-479-ABC-DEFG, CA 
+C00104,  Vikram Nair  ,,+919999999999,N/A
+C00105,ANANYA MEHTA,@domain.com,,IND
+107,N/A,RIYA.PATEL@EXAMPLE.COM,123,
+108,, meera.patel@example.com ,8038063757,United Kingdom
+ C00109 ,  Meera Nair  ,duplicate@example.com, +919743057994 ,in
+c00110,ANANYA NAIR,,+1-229-ABC-DEFG,XX
+UNKNOWN,José  李,x y@example.com,+919999999999, CA 
+C00001,,VIKRAM.SINGH@EXAMPLE.COM,,N/A
+C00113,  Vikram Sharma  , vikram.sharma@example.com ,0000000000,IND
+C00114,ARJUN GUPTA,duplicate@example.com,6861591085,
+C00115,@#%,, +919885632391 ,United Kingdom
+C00116,,@domain.com,+1-569-ABC-DEFG,in
+C00117,  Riya Patel  ,RIYA.PATEL@EXAMPLE.COM,+919999999999,123
+C00118,ARJUN REDDY, arjun.reddy@example.com ,, CA 
+C00119,N/A,duplicate@example.com,0000000000,N/A
+,,,,
+,  Arjun Singh  ,a@,+91 99999,USA
+,RIYA REDDY,RIYA.REDDY@EXAMPLE.COM,6898477476,de
+,@#%, aarav.gupta@example.com , +918566230097 ,123
+C00123,,duplicate@example.com,+1-308-ABC-DEFG, GB 
+C00124,  Isha Kumar  ,,+919999999999,N/A
+C00125,RIYA KUMAR,@domain.com,,IND
+127,N/A,ANANYA.SINGH@EXAMPLE.COM,abcdefghij,
+128,, meera.mehta@example.com ,6603430803,India
+ C00129 ,  Vikram Reddy  ,duplicate@example.com, +917784935202 ,gb
+c00130,VIKRAM NAIR,,+1-607-ABC-DEFG,ZZ
+UNKNOWN,@#%,@domain.com,+919999999999, DE 
+C00001,,NEHA.SINGH@EXAMPLE.COM,,N/A
+C00133,  Rohan Singh  , rohan.singh@example.com ,abcdefghij,IND
+C00134,ISHA SINGH,duplicate@example.com,8804211696,
+C00135,N/A,, +919162608793 ,USA
+C00136,,x y@example.com,+1-747-ABC-DEFG,de
+C00137,  Aarav Sharma  ,AARAV.SHARMA@EXAMPLE.COM,+919999999999,123
+C00138,RIYA PATEL, riya.patel@example.com ,, DE 
+C00139,12345,duplicate@example.com,abcdefghij,N/A
+,,,,
+,  Rohan Nair  ,a@,abcdefghij,United Kingdom
+,NEHA GUPTA,NEHA.GUPTA@EXAMPLE.COM,9226184570,us
+,N/A, kabir.gupta@example.com , +916191478418 ,ZZ
+C00143,,duplicate@example.com,+1-927-ABC-DEFG, DE 
+C00144,  Vikram Nair  ,,+919999999999,N/A
+C00145,ISHA KUMAR,a@,,IND
+147,@#%,ARJUN.SINGH@EXAMPLE.COM,123,
+148,, vikram.singh@example.com ,8059210518,USA
+ C00149 ,  Vikram Kumar  ,duplicate@example.com, +918643551051 ,au
+c00150,ISHA SINGH,,+1-184-ABC-DEFG,123
+UNKNOWN,@#%,@domain.com,+919999999999, AU 
+C00001,,ANANYA.SHARMA@EXAMPLE.COM,,N/A
+C00153,  Meera Kumar  , meera.kumar@example.com ,123,IND
+C00154,RIYA SINGH,duplicate@example.com,6256731561,
+C00155,A,, +916598273340 ,India
+C00156,,@domain.com,+1-929-ABC-DEFG,in
+C00157,  Rohan Patel  ,ROHAN.PATEL@EXAMPLE.COM,+919999999999,ZZ
+C00158,RIYA SINGH, riya.singh@example.com ,, DE 
+C00159,@#%,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Kabir Gupta  ,a@,abcdefghij,United Kingdom
+,ROHAN PATEL,ROHAN.PATEL@EXAMPLE.COM,6635820558,us
+,12345, riya.singh@example.com , +916420929034 ,123
+C00163,,duplicate@example.com,+1-572-ABC-DEFG, US 
+C00164,  Isha Reddy  ,,+919999999999,N/A
+C00165,VIKRAM SHARMA,@domain.com,,IND
+167,A,KABIR.REDDY@EXAMPLE.COM,+91 99999,
+168,, kabir.patel@example.com ,8085166574,India
+ C00169 ,  Isha Patel  ,duplicate@example.com, +917269718960 ,de
+c00170,KABIR SHARMA,,+1-173-ABC-DEFG,123
+UNKNOWN,N/A,a@,+919999999999, IN 
+C00001,,RIYA.REDDY@EXAMPLE.COM,,N/A
+C00173,  Aarav Gupta  , aarav.gupta@example.com ,123,IND
+C00174,NEHA NAIR,duplicate@example.com,7785392520,
+C00175,A,, +916715704389 ,United Kingdom
+C00176,,x y@example.com,+1-236-ABC-DEFG,ca
+C00177,  Vikram Gupta  ,VIKRAM.GUPTA@EXAMPLE.COM,+919999999999,XX
+C00178,NEHA PATEL, neha.patel@example.com ,, AU 
+C00179,A,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Rohan Reddy  ,a@,123,USA
+,ROHAN REDDY,ROHAN.REDDY@EXAMPLE.COM,8577022502,ca
+,José  李, riya.singh@example.com , +916585745923 ,123
+C00183,,duplicate@example.com,+1-726-ABC-DEFG, GB 
+C00184,  Vikram Nair  ,,+919999999999,N/A
+C00185,ARJUN MEHTA,x y@example.com,,IND
+187,@#%,AARAV.SINGH@EXAMPLE.COM,123,
+188,, neha.mehta@example.com ,9105311544,United Kingdom
+ C00189 ,  Vikram Gupta  ,duplicate@example.com, +918459277708 ,au
+c00190,MEERA MEHTA,,+1-877-ABC-DEFG,123
+UNKNOWN,@#%,a@,+919999999999, GB 
+C00001,,AARAV.KUMAR@EXAMPLE.COM,,N/A
+C00193,  Rohan Gupta  , rohan.gupta@example.com ,+91 99999,IND
+C00194,AARAV MEHTA,duplicate@example.com,8493773101,
+C00195,N/A,, +917477528986 ,United Kingdom
+C00196,,x y@example.com,+1-199-ABC-DEFG,au
+C00197,  Meera Nair  ,MEERA.NAIR@EXAMPLE.COM,+919999999999,123
+C00198,RIYA NAIR, riya.nair@example.com ,, IN 
+C00199,A,duplicate@example.com,123,N/A
+,,,,
+,  Neha Mehta  ,not-an-email,abcdefghij,USA
+,AARAV SINGH,AARAV.SINGH@EXAMPLE.COM,9414957085,in
+,12345, riya.sharma@example.com , +919657330442 ,ZZ
+C00203,,duplicate@example.com,+1-143-ABC-DEFG, CA 
+C00204,  Riya Reddy  ,,+919999999999,N/A
+C00205,KABIR KUMAR,a@,,IND
+207,José  李,MEERA.NAIR@EXAMPLE.COM,0000000000,
+208,, ananya.mehta@example.com ,9044985109,United Kingdom
+ C00209 ,  Neha Kumar  ,duplicate@example.com, +917981630891 ,us
+c00210,MEERA GUPTA,,+1-997-ABC-DEFG,123
+UNKNOWN,12345,x y@example.com,+919999999999, US 
+C00001,,ARJUN.PATEL@EXAMPLE.COM,,N/A
+C00213,  Ananya Nair  , ananya.nair@example.com ,0000000000,IND
+C00214,AARAV PATEL,duplicate@example.com,8503307254,
+C00215,@#%,, +919413693847 ,India
+C00216,,not-an-email,+1-191-ABC-DEFG,us
+C00217,  Isha Nair  ,ISHA.NAIR@EXAMPLE.COM,+919999999999,123
+C00218,ROHAN SINGH, rohan.singh@example.com ,, IN 
+C00219,12345,duplicate@example.com,0000000000,N/A
+,,,,
+,  Neha Singh  ,x y@example.com,123,India
+,RIYA KUMAR,RIYA.KUMAR@EXAMPLE.COM,7486189250,de
+,12345, meera.patel@example.com , +917398319397 ,XX
+C00223,,duplicate@example.com,+1-782-ABC-DEFG, GB 
+C00224,  Arjun Reddy  ,,+919999999999,N/A
+C00225,ROHAN KUMAR,not-an-email,,IND
+227,N/A,ROHAN.KUMAR@EXAMPLE.COM,+91 99999,
+228,, isha.nair@example.com ,6451165403,USA
+ C00229 ,  Riya Mehta  ,duplicate@example.com, +918463078276 ,gb
+c00230,AARAV SHARMA,,+1-494-ABC-DEFG,123
+UNKNOWN,12345,not-an-email,+919999999999, IN 
+C00001,,KABIR.SINGH@EXAMPLE.COM,,N/A
+C00233,  Vikram Singh  , vikram.singh@example.com ,abcdefghij,IND
+C00234,AARAV GUPTA,duplicate@example.com,9492896176,
+C00235,@#%,, +919809212878 ,USA
+C00236,,@domain.com,+1-135-ABC-DEFG,de
+C00237,  Isha Mehta  ,ISHA.MEHTA@EXAMPLE.COM,+919999999999,ZZ
+C00238,VIKRAM REDDY, vikram.reddy@example.com ,, CA 
+C00239,12345,duplicate@example.com,123,N/A
+,,,,
+,  Kabir Reddy  ,not-an-email,0000000000,United Kingdom
+,ROHAN PATEL,ROHAN.PATEL@EXAMPLE.COM,8312179950,in
+,N/A, ananya.patel@example.com , +919464525712 ,ZZ
+C00243,,duplicate@example.com,+1-662-ABC-DEFG, GB 
+C00244,  Arjun Sharma  ,,+919999999999,N/A
+C00245,KABIR NAIR,a@,,IND
+247,N/A,ROHAN.NAIR@EXAMPLE.COM,abcdefghij,
+248,, riya.patel@example.com ,8812983902,USA
+ C00249 ,  Isha Sharma  ,duplicate@example.com, +918887947953 ,ca
+c00250,AARAV SINGH,,+1-342-ABC-DEFG,XX
+UNKNOWN,A,x y@example.com,+919999999999, US 
+C00001,,ARJUN.KUMAR@EXAMPLE.COM,,N/A
+C00253,  Meera Kumar  , meera.kumar@example.com ,abcdefghij,IND
+C00254,NEHA MEHTA,duplicate@example.com,8196080824,
+C00255,José  李,, +919526486930 ,United Kingdom
+C00256,,x y@example.com,+1-166-ABC-DEFG,in
+C00257,  Vikram Singh  ,VIKRAM.SINGH@EXAMPLE.COM,+919999999999,123
+C00258,NEHA SHARMA, neha.sharma@example.com ,, DE 
+C00259,José  李,duplicate@example.com,0000000000,N/A
+,,,,
+,  Aarav Kumar  ,a@,abcdefghij,United Kingdom
+,KABIR SINGH,KABIR.SINGH@EXAMPLE.COM,6708792262,us
+,12345, neha.singh@example.com , +919857273914 ,ZZ
+C00263,,duplicate@example.com,+1-773-ABC-DEFG, AU 
+C00264,  Arjun Mehta  ,,+919999999999,N/A
+C00265,RIYA SINGH,a@,,IND
+267,A,NEHA.KUMAR@EXAMPLE.COM,abcdefghij,
+268,, isha.nair@example.com ,9189939897,India
+ C00269 ,  Aarav Patel  ,duplicate@example.com, +917412735201 ,au
+c00270,RIYA KUMAR,,+1-916-ABC-DEFG,ZZ
+UNKNOWN,12345,not-an-email,+919999999999, AU 
+C00001,,RIYA.MEHTA@EXAMPLE.COM,,N/A
+C00273,  Riya Mehta  , riya.mehta@example.com ,abcdefghij,IND
+C00274,ISHA SINGH,duplicate@example.com,7228113265,
+C00275,12345,, +917841631954 ,United Kingdom
+C00276,,not-an-email,+1-836-ABC-DEFG,gb
+C00277,  Rohan Singh  ,ROHAN.SINGH@EXAMPLE.COM,+919999999999,123
+C00278,VIKRAM PATEL, vikram.patel@example.com ,, CA 
+C00279,N/A,duplicate@example.com,0000000000,N/A
+,,,,
+,  Rohan Nair  ,not-an-email,+91 99999,India
+,ROHAN SINGH,ROHAN.SINGH@EXAMPLE.COM,8985243104,de
+,12345, riya.reddy@example.com , +918098367740 ,123
+C00283,,duplicate@example.com,+1-961-ABC-DEFG, CA 
+C00284,  Rohan Singh  ,,+919999999999,N/A
+C00285,RIYA SINGH,a@,,IND
+287,@#%,ANANYA.NAIR@EXAMPLE.COM,0000000000,
+288,, rohan.reddy@example.com ,8150138542,United Kingdom
+ C00289 ,  Neha Singh  ,duplicate@example.com, +916981604421 ,au
+c00290,AARAV KUMAR,,+1-648-ABC-DEFG,123
+UNKNOWN,@#%,not-an-email,+919999999999, CA 
+C00001,,AARAV.MEHTA@EXAMPLE.COM,,N/A
+C00293,  Aarav Reddy  , aarav.reddy@example.com ,+91 99999,IND
+C00294,ANANYA KUMAR,duplicate@example.com,9702048364,
+C00295,@#%,, +917639667727 ,India
+C00296,,x y@example.com,+1-696-ABC-DEFG,ca
+C00297,  Riya Sharma  ,RIYA.SHARMA@EXAMPLE.COM,+919999999999,123
+C00298,VIKRAM SHARMA, vikram.sharma@example.com ,, IN 
+C00299,A,duplicate@example.com,123,N/A
+,,,,
+,  Kabir Nair  ,x y@example.com,0000000000,India
+,NEHA MEHTA,NEHA.MEHTA@EXAMPLE.COM,8416160506,au
+,A, rohan.patel@example.com , +916714349073 ,ZZ
+C00303,,duplicate@example.com,+1-805-ABC-DEFG, IN 
+C00304,  Arjun Singh  ,,+919999999999,N/A
+C00305,MEERA SHARMA,a@,,IND
+307,12345,RIYA.MEHTA@EXAMPLE.COM,abcdefghij,
+308,, ananya.patel@example.com ,8072977488,USA
+ C00309 ,  Isha Sharma  ,duplicate@example.com, +916461597183 ,in
+c00310,KABIR MEHTA,,+1-551-ABC-DEFG,ZZ
+UNKNOWN,A,a@,+919999999999, DE 
+C00001,,ANANYA.GUPTA@EXAMPLE.COM,,N/A
+C00313,  Riya Nair  , riya.nair@example.com ,0000000000,IND
+C00314,MEERA SINGH,duplicate@example.com,9565991858,
+C00315,N/A,, +919119049607 ,USA
+C00316,,a@,+1-665-ABC-DEFG,gb
+C00317,  Meera Mehta  ,MEERA.MEHTA@EXAMPLE.COM,+919999999999,123
+C00318,ARJUN SHARMA, arjun.sharma@example.com ,, GB 
+C00319,José  李,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Arjun Patel  ,not-an-email,123,USA
+,ROHAN NAIR,ROHAN.NAIR@EXAMPLE.COM,9930117637,gb
+,A, vikram.kumar@example.com , +918906437552 ,ZZ
+C00323,,duplicate@example.com,+1-537-ABC-DEFG, CA 
+C00324,  Arjun Patel  ,,+919999999999,N/A
+C00325,AARAV NAIR,x y@example.com,,IND
+327,@#%,ARJUN.GUPTA@EXAMPLE.COM,abcdefghij,
+328,, isha.reddy@example.com ,7855430786,USA
+ C00329 ,  Isha Sharma  ,duplicate@example.com, +917746989033 ,ca
+c00330,MEERA KUMAR,,+1-175-ABC-DEFG,ZZ
+UNKNOWN,12345,x y@example.com,+919999999999, AU 
+C00001,,NEHA.NAIR@EXAMPLE.COM,,N/A
+C00333,  Kabir Patel  , kabir.patel@example.com ,+91 99999,IND
+C00334,RIYA GUPTA,duplicate@example.com,6860134514,
+C00335,12345,, +919843206143 ,USA
+C00336,,a@,+1-116-ABC-DEFG,in
+C00337,  Ananya Gupta  ,ANANYA.GUPTA@EXAMPLE.COM,+919999999999,ZZ
+C00338,ROHAN SHARMA, rohan.sharma@example.com ,, GB 
+C00339,N/A,duplicate@example.com,abcdefghij,N/A
+,,,,
+,  Neha Mehta  ,not-an-email,+91 99999,United Kingdom
+,KABIR GUPTA,KABIR.GUPTA@EXAMPLE.COM,9240173863,ca
+,José  李, meera.nair@example.com , +918170090283 ,ZZ
+C00343,,duplicate@example.com,+1-725-ABC-DEFG, CA 
+C00344,  Ananya Mehta  ,,+919999999999,N/A
+C00345,ARJUN SHARMA,x y@example.com,,IND
+347,12345,RIYA.KUMAR@EXAMPLE.COM,+91 99999,
+348,, meera.singh@example.com ,7270352359,India
+ C00349 ,  Arjun Kumar  ,duplicate@example.com, +918895573784 ,in
+c00350,ISHA NAIR,,+1-122-ABC-DEFG,XX
+UNKNOWN,@#%,x y@example.com,+919999999999, DE 
+C00001,,NEHA.NAIR@EXAMPLE.COM,,N/A
+C00353,  Meera Nair  , meera.nair@example.com ,123,IND
+C00354,ANANYA NAIR,duplicate@example.com,8408188894,
+C00355,12345,, +916012053016 ,United Kingdom
+C00356,,not-an-email,+1-280-ABC-DEFG,gb
+C00357,  Riya Nair  ,RIYA.NAIR@EXAMPLE.COM,+919999999999,XX
+C00358,VIKRAM PATEL, vikram.patel@example.com ,, US 
+C00359,A,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Kabir Mehta  ,@domain.com,123,USA
+,ROHAN MEHTA,ROHAN.MEHTA@EXAMPLE.COM,7393514787,gb
+,N/A, rohan.gupta@example.com , +919169386221 ,ZZ
+C00363,,duplicate@example.com,+1-943-ABC-DEFG, US 
+C00364,  Neha Singh  ,,+919999999999,N/A
+C00365,MEERA SINGH,not-an-email,,IND
+367,José  李,KABIR.PATEL@EXAMPLE.COM,123,
+368,, meera.mehta@example.com ,7220025275,India
+ C00369 ,  Rohan Sharma  ,duplicate@example.com, +916033460954 ,de
+c00370,ROHAN MEHTA,,+1-262-ABC-DEFG,123
+UNKNOWN,12345,not-an-email,+919999999999, DE 
+C00001,,KABIR.SHARMA@EXAMPLE.COM,,N/A
+C00373,  Aarav Gupta  , aarav.gupta@example.com ,+91 99999,IND
+C00374,ARJUN KUMAR,duplicate@example.com,6161139270,
+C00375,12345,, +917835648625 ,United Kingdom
+C00376,,x y@example.com,+1-526-ABC-DEFG,de
+C00377,  Isha Patel  ,ISHA.PATEL@EXAMPLE.COM,+919999999999,XX
+C00378,RIYA PATEL, riya.patel@example.com ,, IN 
+C00379,12345,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Isha Sharma  ,a@,0000000000,United Kingdom
+,NEHA NAIR,NEHA.NAIR@EXAMPLE.COM,8959983538,gb
+,N/A, isha.sharma@example.com , +917814781416 ,ZZ
+C00383,,duplicate@example.com,+1-149-ABC-DEFG, IN 
+C00384,  Meera Gupta  ,,+919999999999,N/A
+C00385,ANANYA NAIR,@domain.com,,IND
+387,12345,ROHAN.KUMAR@EXAMPLE.COM,+91 99999,
+388,, neha.nair@example.com ,8551035057,United Kingdom
+ C00389 ,  Meera Sharma  ,duplicate@example.com, +919239128249 ,de
+c00390,RIYA SHARMA,,+1-436-ABC-DEFG,XX
+UNKNOWN,@#%,x y@example.com,+919999999999, GB 
+C00001,,AARAV.GUPTA@EXAMPLE.COM,,N/A
+C00393,  Ananya Kumar  , ananya.kumar@example.com ,123,IND
+C00394,KABIR NAIR,duplicate@example.com,9970755820,
+C00395,12345,, +916752745488 ,India
+C00396,,x y@example.com,+1-579-ABC-DEFG,au
+C00397,  Meera Reddy  ,MEERA.REDDY@EXAMPLE.COM,+919999999999,XX
+C00398,KABIR REDDY, kabir.reddy@example.com ,, US 
+C00399,12345,duplicate@example.com,123,N/A
+,,,,
+,  Aarav Gupta  ,not-an-email,+91 99999,India
+,ANANYA SINGH,ANANYA.SINGH@EXAMPLE.COM,6681427350,in
+,José  李, aarav.nair@example.com , +916595626819 ,123
+C00403,,duplicate@example.com,+1-987-ABC-DEFG, AU 
+C00404,  Aarav Sharma  ,,+919999999999,N/A
+C00405,ROHAN REDDY,@domain.com,,IND
+407,N/A,AARAV.MEHTA@EXAMPLE.COM,+91 99999,
+408,, ananya.patel@example.com ,9353908114,India
+ C00409 ,  Kabir Singh  ,duplicate@example.com, +916520657472 ,au
+c00410,AARAV SINGH,,+1-861-ABC-DEFG,123
+UNKNOWN,12345,@domain.com,+919999999999, CA 
+C00001,,AARAV.NAIR@EXAMPLE.COM,,N/A
+C00413,  Riya Singh  , riya.singh@example.com ,+91 99999,IND
+C00414,NEHA NAIR,duplicate@example.com,7907447585,
+C00415,@#%,, +917388034194 ,United Kingdom
+C00416,,not-an-email,+1-593-ABC-DEFG,de
+C00417,  Kabir Reddy  ,KABIR.REDDY@EXAMPLE.COM,+919999999999,ZZ
+C00418,KABIR SINGH, kabir.singh@example.com ,, AU 
+C00419,A,duplicate@example.com,123,N/A
+,,,,
+,  Ananya Kumar  ,a@,0000000000,India
+,AARAV KUMAR,AARAV.KUMAR@EXAMPLE.COM,6086884978,gb
+,José  李, arjun.kumar@example.com , +919671988764 ,ZZ
+C00423,,duplicate@example.com,+1-903-ABC-DEFG, US 
+C00424,  Arjun Gupta  ,,+919999999999,N/A
+C00425,ANANYA REDDY,@domain.com,,IND
+427,A,ISHA.MEHTA@EXAMPLE.COM,0000000000,
+428,, aarav.mehta@example.com ,9444172308,United Kingdom
+ C00429 ,  Meera Nair  ,duplicate@example.com, +917316753132 ,us
+c00430,ISHA MEHTA,,+1-601-ABC-DEFG,XX
+UNKNOWN,José  李,a@,+919999999999, CA 
+C00001,,NEHA.REDDY@EXAMPLE.COM,,N/A
+C00433,  Ananya Mehta  , ananya.mehta@example.com ,0000000000,IND
+C00434,ARJUN REDDY,duplicate@example.com,6503771066,
+C00435,A,, +919344456395 ,United Kingdom
+C00436,,x y@example.com,+1-420-ABC-DEFG,de
+C00437,  Arjun Sharma  ,ARJUN.SHARMA@EXAMPLE.COM,+919999999999,XX
+C00438,ROHAN SHARMA, rohan.sharma@example.com ,, IN 
+C00439,N/A,duplicate@example.com,abcdefghij,N/A
+,,,,
+,  Arjun Kumar  ,x y@example.com,123,India
+,VIKRAM REDDY,VIKRAM.REDDY@EXAMPLE.COM,8747480260,de
+,@#%, meera.gupta@example.com , +916586591636 ,123
+C00443,,duplicate@example.com,+1-547-ABC-DEFG, IN 
+C00444,  Aarav Singh  ,,+919999999999,N/A
+C00445,VIKRAM REDDY,a@,,IND
+447,José  李,ISHA.MEHTA@EXAMPLE.COM,0000000000,
+448,, isha.kumar@example.com ,7242403035,India
+ C00449 ,  Neha Kumar  ,duplicate@example.com, +917410837981 ,ca
+c00450,KABIR SINGH,,+1-319-ABC-DEFG,123
+UNKNOWN,@#%,@domain.com,+919999999999, GB 
+C00001,,AARAV.MEHTA@EXAMPLE.COM,,N/A
+C00453,  Ananya Singh  , ananya.singh@example.com ,abcdefghij,IND
+C00454,KABIR PATEL,duplicate@example.com,9939187369,
+C00455,N/A,, +919012878432 ,United Kingdom
+C00456,,@domain.com,+1-274-ABC-DEFG,us
+C00457,  Rohan Nair  ,ROHAN.NAIR@EXAMPLE.COM,+919999999999,ZZ
+C00458,ROHAN SHARMA, rohan.sharma@example.com ,, IN 
+C00459,N/A,duplicate@example.com,0000000000,N/A
+,,,,
+,  Riya Reddy  ,@domain.com,+91 99999,India
+,RIYA GUPTA,RIYA.GUPTA@EXAMPLE.COM,7406590756,in
+,A, aarav.patel@example.com , +916446573173 ,XX
+C00463,,duplicate@example.com,+1-381-ABC-DEFG, GB 
+C00464,  Aarav Gupta  ,,+919999999999,N/A
+C00465,ROHAN NAIR,not-an-email,,IND
+467,12345,NEHA.KUMAR@EXAMPLE.COM,+91 99999,
+468,, arjun.patel@example.com ,6881042427,United Kingdom
+ C00469 ,  Riya Nair  ,duplicate@example.com, +917678648485 ,us
+c00470,AARAV GUPTA,,+1-319-ABC-DEFG,XX
+UNKNOWN,A,@domain.com,+919999999999, AU 
+C00001,,ISHA.NAIR@EXAMPLE.COM,,N/A
+C00473,  Aarav Kumar  , aarav.kumar@example.com ,abcdefghij,IND
+C00474,RIYA NAIR,duplicate@example.com,7167217898,
+C00475,José  李,, +917990807150 ,India
+C00476,,x y@example.com,+1-144-ABC-DEFG,in
+C00477,  Meera Mehta  ,MEERA.MEHTA@EXAMPLE.COM,+919999999999,ZZ
+C00478,ARJUN MEHTA, arjun.mehta@example.com ,, AU 
+C00479,12345,duplicate@example.com,abcdefghij,N/A
+,,,,
+,  Meera Reddy  ,x y@example.com,abcdefghij,United Kingdom
+,ISHA SINGH,ISHA.SINGH@EXAMPLE.COM,6036687006,au
+,A, riya.kumar@example.com , +919997007171 ,XX
+C00483,,duplicate@example.com,+1-422-ABC-DEFG, IN 
+C00484,  Aarav Singh  ,,+919999999999,N/A
+C00485,ROHAN GUPTA,not-an-email,,IND
+487,12345,RIYA.SHARMA@EXAMPLE.COM,abcdefghij,
+488,, vikram.singh@example.com ,8390947307,India
+ C00489 ,  Arjun Reddy  ,duplicate@example.com, +916445608126 ,in
+c00490,ANANYA GUPTA,,+1-358-ABC-DEFG,XX
+UNKNOWN,N/A,@domain.com,+919999999999, AU 
+C00001,,RIYA.NAIR@EXAMPLE.COM,,N/A
+C00493,  Meera Mehta  , meera.mehta@example.com ,+91 99999,IND
+C00494,ARJUN GUPTA,duplicate@example.com,8994721870,
+C00495,A,, +919255683699 ,USA
+C00496,,not-an-email,+1-399-ABC-DEFG,ca
+C00497,  Vikram Reddy  ,VIKRAM.REDDY@EXAMPLE.COM,+919999999999,123
+C00498,VIKRAM SHARMA, vikram.sharma@example.com ,, IN 
+C00499,@#%,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Vikram Kumar  ,x y@example.com,+91 99999,USA
+,ROHAN SHARMA,ROHAN.SHARMA@EXAMPLE.COM,7983222600,us
+,12345, aarav.singh@example.com , +919758878442 ,123
+C00503,,duplicate@example.com,+1-631-ABC-DEFG, IN 
+C00504,  Ananya Reddy  ,,+919999999999,N/A
+C00505,ARJUN SINGH,not-an-email,,IND
+507,12345,ROHAN.PATEL@EXAMPLE.COM,0000000000,
+508,, kabir.gupta@example.com ,8459916081,United Kingdom
+ C00509 ,  Arjun Patel  ,duplicate@example.com, +917820873767 ,in
+c00510,RIYA SINGH,,+1-758-ABC-DEFG,XX
+UNKNOWN,12345,x y@example.com,+919999999999, DE 
+C00001,,KABIR.PATEL@EXAMPLE.COM,,N/A
+C00513,  Aarav Sharma  , aarav.sharma@example.com ,+91 99999,IND
+C00514,AARAV REDDY,duplicate@example.com,8374574005,
+C00515,N/A,, +919426649964 ,United Kingdom
+C00516,,a@,+1-468-ABC-DEFG,au
+C00517,  Isha Mehta  ,ISHA.MEHTA@EXAMPLE.COM,+919999999999,ZZ
+C00518,KABIR PATEL, kabir.patel@example.com ,, GB 
+C00519,A,duplicate@example.com,abcdefghij,N/A
+,,,,
+,  Aarav Mehta  ,x y@example.com,123,India
+,VIKRAM REDDY,VIKRAM.REDDY@EXAMPLE.COM,7664403271,gb
+,A, kabir.mehta@example.com , +917111751119 ,ZZ
+C00523,,duplicate@example.com,+1-248-ABC-DEFG, GB 
+C00524,  Isha Patel  ,,+919999999999,N/A
+C00525,VIKRAM NAIR,x y@example.com,,IND
+527,@#%,ROHAN.MEHTA@EXAMPLE.COM,0000000000,
+528,, meera.gupta@example.com ,7932259834,India
+ C00529 ,  Arjun Gupta  ,duplicate@example.com, +916171477449 ,ca
+c00530,ROHAN REDDY,,+1-224-ABC-DEFG,ZZ
+UNKNOWN,N/A,not-an-email,+919999999999, GB 
+C00001,,ISHA.GUPTA@EXAMPLE.COM,,N/A
+C00533,  Riya Gupta  , riya.gupta@example.com ,abcdefghij,IND
+C00534,ANANYA GUPTA,duplicate@example.com,8782199006,
+C00535,12345,, +916654322201 ,India
+C00536,,a@,+1-268-ABC-DEFG,ca
+C00537,  Neha Patel  ,NEHA.PATEL@EXAMPLE.COM,+919999999999,ZZ
+C00538,ISHA KUMAR, isha.kumar@example.com ,, US 
+C00539,12345,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Ananya Patel  ,not-an-email,0000000000,USA
+,NEHA GUPTA,NEHA.GUPTA@EXAMPLE.COM,9860060435,us
+,A, rohan.nair@example.com , +916855352537 ,123
+C00543,,duplicate@example.com,+1-279-ABC-DEFG, US 
+C00544,  Kabir Gupta  ,,+919999999999,N/A
+C00545,NEHA SINGH,@domain.com,,IND
+547,N/A,KABIR.MEHTA@EXAMPLE.COM,123,
+548,, meera.gupta@example.com ,8540528568,USA
+ C00549 ,  Arjun Nair  ,duplicate@example.com, +918092089670 ,de
+c00550,ANANYA KUMAR,,+1-582-ABC-DEFG,ZZ
+UNKNOWN,@#%,not-an-email,+919999999999, IN 
+C00001,,MEERA.GUPTA@EXAMPLE.COM,,N/A
+C00553,  Kabir Sharma  , kabir.sharma@example.com ,0000000000,IND
+C00554,ISHA KUMAR,duplicate@example.com,7817842919,
+C00555,12345,, +917388787600 ,India
+C00556,,@domain.com,+1-629-ABC-DEFG,us
+C00557,  Isha Nair  ,ISHA.NAIR@EXAMPLE.COM,+919999999999,ZZ
+C00558,AARAV KUMAR, aarav.kumar@example.com ,, CA 
+C00559,@#%,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Aarav Nair  ,a@,0000000000,India
+,KABIR SHARMA,KABIR.SHARMA@EXAMPLE.COM,7712698671,in
+,N/A, rohan.gupta@example.com , +916921033850 ,123
+C00563,,duplicate@example.com,+1-581-ABC-DEFG, US 
+C00564,  Rohan Patel  ,,+919999999999,N/A
+C00565,RIYA SINGH,a@,,IND
+567,A,MEERA.PATEL@EXAMPLE.COM,+91 99999,
+568,, meera.kumar@example.com ,7808832716,USA
+ C00569 ,  Kabir Gupta  ,duplicate@example.com, +917464893809 ,de
+c00570,ARJUN PATEL,,+1-770-ABC-DEFG,ZZ
+UNKNOWN,A,not-an-email,+919999999999, DE 
+C00001,,RIYA.PATEL@EXAMPLE.COM,,N/A
+C00573,  Kabir Gupta  , kabir.gupta@example.com ,+91 99999,IND
+C00574,ROHAN PATEL,duplicate@example.com,6090228373,
+C00575,@#%,, +917301056232 ,India
+C00576,,a@,+1-812-ABC-DEFG,ca
+C00577,  Arjun Gupta  ,ARJUN.GUPTA@EXAMPLE.COM,+919999999999,123
+C00578,AARAV PATEL, aarav.patel@example.com ,, CA 
+C00579,N/A,duplicate@example.com,123,N/A
+,,,,
+,  Ananya Gupta  ,not-an-email,0000000000,USA
+,ISHA PATEL,ISHA.PATEL@EXAMPLE.COM,6294595694,us
+,N/A, kabir.reddy@example.com , +917942307622 ,XX
+C00583,,duplicate@example.com,+1-755-ABC-DEFG, IN 
+C00584,  Rohan Gupta  ,,+919999999999,N/A
+C00585,ROHAN PATEL,not-an-email,,IND
+587,N/A,ANANYA.SHARMA@EXAMPLE.COM,0000000000,
+588,, meera.kumar@example.com ,9723724433,India
+ C00589 ,  Neha Reddy  ,duplicate@example.com, +917418560883 ,us
+c00590,KABIR GUPTA,,+1-257-ABC-DEFG,ZZ
+UNKNOWN,@#%,a@,+919999999999, CA 
+C00001,,MEERA.SINGH@EXAMPLE.COM,,N/A
+C00593,  Rohan Mehta  , rohan.mehta@example.com ,abcdefghij,IND
+C00594,RIYA SINGH,duplicate@example.com,8727363409,
+C00595,N/A,, +919091810093 ,India
+C00596,,x y@example.com,+1-116-ABC-DEFG,in
+C00597,  Ananya Singh  ,ANANYA.SINGH@EXAMPLE.COM,+919999999999,123
+C00598,MEERA SHARMA, meera.sharma@example.com ,, IN 
+C00599,N/A,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Vikram Sharma  ,@domain.com,0000000000,United Kingdom
+,AARAV SINGH,AARAV.SINGH@EXAMPLE.COM,6472816046,in
+,José  李, ananya.gupta@example.com , +918564577929 ,ZZ
+C00603,,duplicate@example.com,+1-966-ABC-DEFG, DE 
+C00604,  Arjun Reddy  ,,+919999999999,N/A
+C00605,VIKRAM SHARMA,@domain.com,,IND
+607,José  李,ROHAN.NAIR@EXAMPLE.COM,+91 99999,
+608,, rohan.gupta@example.com ,6468508937,United Kingdom
+ C00609 ,  Neha Kumar  ,duplicate@example.com, +919962432051 ,de
+c00610,VIKRAM KUMAR,,+1-369-ABC-DEFG,XX
+UNKNOWN,José  李,a@,+919999999999, GB 
+C00001,,VIKRAM.REDDY@EXAMPLE.COM,,N/A
+C00613,  Meera Nair  , meera.nair@example.com ,123,IND
+C00614,VIKRAM REDDY,duplicate@example.com,8323422403,
+C00615,N/A,, +918662462585 ,United Kingdom
+C00616,,not-an-email,+1-663-ABC-DEFG,ca
+C00617,  Rohan Kumar  ,ROHAN.KUMAR@EXAMPLE.COM,+919999999999,ZZ
+C00618,VIKRAM SHARMA, vikram.sharma@example.com ,, CA 
+C00619,N/A,duplicate@example.com,0000000000,N/A
+,,,,
+,  Aarav Reddy  ,not-an-email,abcdefghij,USA
+,ANANYA NAIR,ANANYA.NAIR@EXAMPLE.COM,7970710337,us
+,12345, isha.singh@example.com , +916690265859 ,XX
+C00623,,duplicate@example.com,+1-893-ABC-DEFG, GB 
+C00624,  Kabir Patel  ,,+919999999999,N/A
+C00625,ARJUN SHARMA,x y@example.com,,IND
+627,José  李,KABIR.KUMAR@EXAMPLE.COM,+91 99999,
+628,, ananya.mehta@example.com ,8865657193,India
+ C00629 ,  Meera Singh  ,duplicate@example.com, +916279111146 ,gb
+c00630,VIKRAM NAIR,,+1-715-ABC-DEFG,123
+UNKNOWN,José  李,x y@example.com,+919999999999, GB 
+C00001,,VIKRAM.SINGH@EXAMPLE.COM,,N/A
+C00633,  Riya Singh  , riya.singh@example.com ,123,IND
+C00634,ROHAN PATEL,duplicate@example.com,8875795008,
+C00635,12345,, +918460981914 ,USA
+C00636,,a@,+1-727-ABC-DEFG,gb
+C00637,  Kabir Reddy  ,KABIR.REDDY@EXAMPLE.COM,+919999999999,123
+C00638,ROHAN SINGH, rohan.singh@example.com ,, CA 
+C00639,A,duplicate@example.com,abcdefghij,N/A
+,,,,
+,  Isha Reddy  ,not-an-email,123,USA
+,KABIR GUPTA,KABIR.GUPTA@EXAMPLE.COM,8675524523,gb
+,N/A, arjun.kumar@example.com , +919518381201 ,ZZ
+C00643,,duplicate@example.com,+1-780-ABC-DEFG, US 
+C00644,  Kabir Reddy  ,,+919999999999,N/A
+C00645,AARAV PATEL,a@,,IND
+647,N/A,NEHA.NAIR@EXAMPLE.COM,0000000000,
+648,, isha.nair@example.com ,7428543280,India
+ C00649 ,  Riya Nair  ,duplicate@example.com, +916137435341 ,au
+c00650,NEHA KUMAR,,+1-778-ABC-DEFG,XX
+UNKNOWN,José  李,@domain.com,+919999999999, IN 
+C00001,,ARJUN.SINGH@EXAMPLE.COM,,N/A
+C00653,  Riya Kumar  , riya.kumar@example.com ,abcdefghij,IND
+C00654,ANANYA GUPTA,duplicate@example.com,8776062780,
+C00655,José  李,, +918421945047 ,India
+C00656,,a@,+1-789-ABC-DEFG,au
+C00657,  Riya Singh  ,RIYA.SINGH@EXAMPLE.COM,+919999999999,ZZ
+C00658,RIYA REDDY, riya.reddy@example.com ,, IN 
+C00659,A,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Aarav Sharma  ,@domain.com,0000000000,United Kingdom
+,AARAV KUMAR,AARAV.KUMAR@EXAMPLE.COM,7753044116,in
+,José  李, riya.gupta@example.com , +917164623582 ,123
+C00663,,duplicate@example.com,+1-700-ABC-DEFG, AU 
+C00664,  Meera Reddy  ,,+919999999999,N/A
+C00665,NEHA REDDY,not-an-email,,IND
+667,12345,ANANYA.MEHTA@EXAMPLE.COM,abcdefghij,
+668,, aarav.reddy@example.com ,7193925115,United Kingdom
+ C00669 ,  Isha Reddy  ,duplicate@example.com, +919173603097 ,us
+c00670,VIKRAM NAIR,,+1-478-ABC-DEFG,XX
+UNKNOWN,José  李,not-an-email,+919999999999, DE 
+C00001,,KABIR.REDDY@EXAMPLE.COM,,N/A
+C00673,  Isha Patel  , isha.patel@example.com ,+91 99999,IND
+C00674,VIKRAM PATEL,duplicate@example.com,8441569780,
+C00675,A,, +916986066148 ,USA
+C00676,,a@,+1-742-ABC-DEFG,de
+C00677,  Neha Sharma  ,NEHA.SHARMA@EXAMPLE.COM,+919999999999,123
+C00678,NEHA MEHTA, neha.mehta@example.com ,, US 
+C00679,12345,duplicate@example.com,123,N/A
+,,,,
+,  Isha Reddy  ,not-an-email,+91 99999,India
+,ISHA SINGH,ISHA.SINGH@EXAMPLE.COM,9597921794,gb
+,José  李, isha.kumar@example.com , +918010593192 ,ZZ
+C00683,,duplicate@example.com,+1-462-ABC-DEFG, AU 
+C00684,  Kabir Patel  ,,+919999999999,N/A
+C00685,MEERA PATEL,not-an-email,,IND
+687,12345,MEERA.MEHTA@EXAMPLE.COM,abcdefghij,
+688,, riya.kumar@example.com ,7419399154,India
+ C00689 ,  Rohan Gupta  ,duplicate@example.com, +916394649362 ,au
+c00690,ISHA GUPTA,,+1-622-ABC-DEFG,XX
+UNKNOWN,12345,not-an-email,+919999999999, US 
+C00001,,ROHAN.SINGH@EXAMPLE.COM,,N/A
+C00693,  Vikram Reddy  , vikram.reddy@example.com ,123,IND
+C00694,ISHA GUPTA,duplicate@example.com,7189999508,
+C00695,A,, +919225255365 ,India
+C00696,,a@,+1-408-ABC-DEFG,au
+C00697,  Meera Sharma  ,MEERA.SHARMA@EXAMPLE.COM,+919999999999,123
+C00698,VIKRAM GUPTA, vikram.gupta@example.com ,, AU 
+C00699,N/A,duplicate@example.com,123,N/A
+,,,,
+,  Meera Sharma  ,@domain.com,123,USA
+,MEERA PATEL,MEERA.PATEL@EXAMPLE.COM,8902297674,us
+,@#%, aarav.nair@example.com , +917822059125 ,XX
+C00703,,duplicate@example.com,+1-210-ABC-DEFG, US 
+C00704,  Isha Mehta  ,,+919999999999,N/A
+C00705,MEERA NAIR,@domain.com,,IND
+707,12345,ROHAN.PATEL@EXAMPLE.COM,0000000000,
+708,, arjun.nair@example.com ,7449786909,India
+ C00709 ,  Isha Mehta  ,duplicate@example.com, +919835058729 ,gb
+c00710,NEHA PATEL,,+1-827-ABC-DEFG,XX
+UNKNOWN,@#%,@domain.com,+919999999999, IN 
+C00001,,ANANYA.SHARMA@EXAMPLE.COM,,N/A
+C00713,  Isha Reddy  , isha.reddy@example.com ,abcdefghij,IND
+C00714,VIKRAM KUMAR,duplicate@example.com,9459897352,
+C00715,A,, +916342512771 ,United Kingdom
+C00716,,@domain.com,+1-321-ABC-DEFG,in
+C00717,  Kabir Gupta  ,KABIR.GUPTA@EXAMPLE.COM,+919999999999,ZZ
+C00718,VIKRAM PATEL, vikram.patel@example.com ,, IN 
+C00719,N/A,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Aarav Reddy  ,x y@example.com,123,India
+,NEHA PATEL,NEHA.PATEL@EXAMPLE.COM,6241419066,de
+,12345, arjun.mehta@example.com , +918141720110 ,ZZ
+C00723,,duplicate@example.com,+1-708-ABC-DEFG, IN 
+C00724,  Vikram Nair  ,,+919999999999,N/A
+C00725,AARAV NAIR,@domain.com,,IND
+727,N/A,RIYA.REDDY@EXAMPLE.COM,0000000000,
+728,, meera.singh@example.com ,8756381793,India
+ C00729 ,  Isha Gupta  ,duplicate@example.com, +916804224111 ,au
+c00730,ARJUN GUPTA,,+1-250-ABC-DEFG,123
+UNKNOWN,12345,x y@example.com,+919999999999, AU 
+C00001,,RIYA.REDDY@EXAMPLE.COM,,N/A
+C00733,  Rohan Reddy  , rohan.reddy@example.com ,0000000000,IND
+C00734,MEERA MEHTA,duplicate@example.com,6899292115,
+C00735,N/A,, +917322731180 ,USA
+C00736,,@domain.com,+1-585-ABC-DEFG,de
+C00737,  Vikram Nair  ,VIKRAM.NAIR@EXAMPLE.COM,+919999999999,123
+C00738,AARAV SINGH, aarav.singh@example.com ,, IN 
+C00739,@#%,duplicate@example.com,123,N/A
+,,,,
+,  Aarav Patel  ,@domain.com,abcdefghij,United Kingdom
+,VIKRAM REDDY,VIKRAM.REDDY@EXAMPLE.COM,6521526654,de
+,A, riya.kumar@example.com , +918547327599 ,ZZ
+C00743,,duplicate@example.com,+1-103-ABC-DEFG, IN 
+C00744,  Neha Gupta  ,,+919999999999,N/A
+C00745,NEHA NAIR,a@,,IND
+747,N/A,MEERA.REDDY@EXAMPLE.COM,0000000000,
+748,, aarav.mehta@example.com ,6740020099,India
+ C00749 ,  Rohan Gupta  ,duplicate@example.com, +918304819967 ,au
+c00750,ISHA NAIR,,+1-151-ABC-DEFG,XX
+UNKNOWN,@#%,a@,+919999999999, CA 
+C00001,,NEHA.SHARMA@EXAMPLE.COM,,N/A
+C00753,  Arjun Mehta  , arjun.mehta@example.com ,+91 99999,IND
+C00754,NEHA MEHTA,duplicate@example.com,8440243968,
+C00755,N/A,, +917944145526 ,USA
+C00756,,not-an-email,+1-407-ABC-DEFG,gb
+C00757,  Neha Sharma  ,NEHA.SHARMA@EXAMPLE.COM,+919999999999,XX
+C00758,VIKRAM REDDY, vikram.reddy@example.com ,, US 
+C00759,José  李,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Rohan Kumar  ,@domain.com,123,USA
+,ARJUN GUPTA,ARJUN.GUPTA@EXAMPLE.COM,6927099014,au
+,12345, vikram.mehta@example.com , +919173005672 ,XX
+C00763,,duplicate@example.com,+1-389-ABC-DEFG, DE 
+C00764,  Kabir Kumar  ,,+919999999999,N/A
+C00765,ISHA PATEL,@domain.com,,IND
+767,12345,ROHAN.PATEL@EXAMPLE.COM,abcdefghij,
+768,, ananya.reddy@example.com ,6676957100,United Kingdom
+ C00769 ,  Ananya Mehta  ,duplicate@example.com, +916287028166 ,in
+c00770,ISHA SHARMA,,+1-435-ABC-DEFG,XX
+UNKNOWN,José  李,@domain.com,+919999999999, GB 
+C00001,,MEERA.PATEL@EXAMPLE.COM,,N/A
+C00773,  Riya Singh  , riya.singh@example.com ,abcdefghij,IND
+C00774,ANANYA SINGH,duplicate@example.com,8892185973,
+C00775,12345,, +917345931529 ,India
+C00776,,a@,+1-688-ABC-DEFG,au
+C00777,  Aarav Reddy  ,AARAV.REDDY@EXAMPLE.COM,+919999999999,XX
+C00778,MEERA REDDY, meera.reddy@example.com ,, DE 
+C00779,12345,duplicate@example.com,abcdefghij,N/A
+,,,,
+,  Arjun Singh  ,x y@example.com,+91 99999,United Kingdom
+,RIYA REDDY,RIYA.REDDY@EXAMPLE.COM,9364947394,de
+,12345, isha.mehta@example.com , +919893656086 ,XX
+C00783,,duplicate@example.com,+1-293-ABC-DEFG, CA 
+C00784,  Aarav Nair  ,,+919999999999,N/A
+C00785,AARAV KUMAR,x y@example.com,,IND
+787,José  李,ANANYA.REDDY@EXAMPLE.COM,123,
+788,, rohan.sharma@example.com ,9723812427,India
+ C00789 ,  Kabir Gupta  ,duplicate@example.com, +918263065426 ,au
+c00790,KABIR KUMAR,,+1-353-ABC-DEFG,123
+UNKNOWN,N/A,x y@example.com,+919999999999, AU 
+C00001,,ARJUN.GUPTA@EXAMPLE.COM,,N/A
+C00793,  Vikram Kumar  , vikram.kumar@example.com ,123,IND
+C00794,ISHA GUPTA,duplicate@example.com,6192522608,
+C00795,@#%,, +917991437755 ,USA
+C00796,,x y@example.com,+1-705-ABC-DEFG,gb
+C00797,  Meera Patel  ,MEERA.PATEL@EXAMPLE.COM,+919999999999,123
+C00798,MEERA KUMAR, meera.kumar@example.com ,, CA 
+C00799,12345,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Rohan Nair  ,x y@example.com,123,United Kingdom
+,ARJUN NAIR,ARJUN.NAIR@EXAMPLE.COM,8561477781,us
+,@#%, neha.sharma@example.com , +919163327890 ,123
+C00803,,duplicate@example.com,+1-965-ABC-DEFG, GB 
+C00804,  Vikram Reddy  ,,+919999999999,N/A
+C00805,NEHA MEHTA,not-an-email,,IND
+807,N/A,KABIR.MEHTA@EXAMPLE.COM,+91 99999,
+808,, rohan.kumar@example.com ,9899002247,USA
+ C00809 ,  Arjun Singh  ,duplicate@example.com, +916771757489 ,de
+c00810,ROHAN MEHTA,,+1-927-ABC-DEFG,123
+UNKNOWN,José  李,x y@example.com,+919999999999, GB 
+C00001,,VIKRAM.SHARMA@EXAMPLE.COM,,N/A
+C00813,  Meera Mehta  , meera.mehta@example.com ,0000000000,IND
+C00814,MEERA GUPTA,duplicate@example.com,9682567030,
+C00815,@#%,, +917292829043 ,USA
+C00816,,a@,+1-991-ABC-DEFG,in
+C00817,  Aarav Gupta  ,AARAV.GUPTA@EXAMPLE.COM,+919999999999,XX
+C00818,MEERA SHARMA, meera.sharma@example.com ,, AU 
+C00819,12345,duplicate@example.com,0000000000,N/A
+,,,,
+,  Aarav Singh  ,not-an-email,+91 99999,India
+,ANANYA GUPTA,ANANYA.GUPTA@EXAMPLE.COM,9316476305,us
+,12345, isha.nair@example.com , +917653308713 ,123
+C00823,,duplicate@example.com,+1-671-ABC-DEFG, GB 
+C00824,  Aarav Mehta  ,,+919999999999,N/A
+C00825,RIYA SHARMA,not-an-email,,IND
+827,N/A,ARJUN.SHARMA@EXAMPLE.COM,abcdefghij,
+828,, riya.mehta@example.com ,6327951484,United Kingdom
+ C00829 ,  Rohan Singh  ,duplicate@example.com, +918649050871 ,au
+c00830,ARJUN SHARMA,,+1-213-ABC-DEFG,XX
+UNKNOWN,@#%,not-an-email,+919999999999, CA 
+C00001,,ANANYA.PATEL@EXAMPLE.COM,,N/A
+C00833,  Ananya Mehta  , ananya.mehta@example.com ,+91 99999,IND
+C00834,ISHA PATEL,duplicate@example.com,6681482503,
+C00835,N/A,, +916328046305 ,India
+C00836,,x y@example.com,+1-295-ABC-DEFG,gb
+C00837,  Arjun Reddy  ,ARJUN.REDDY@EXAMPLE.COM,+919999999999,XX
+C00838,KABIR PATEL, kabir.patel@example.com ,, DE 
+C00839,José  李,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Neha Sharma  ,x y@example.com,0000000000,India
+,ROHAN MEHTA,ROHAN.MEHTA@EXAMPLE.COM,8281942089,us
+,A, rohan.singh@example.com , +916836481258 ,ZZ
+C00843,,duplicate@example.com,+1-310-ABC-DEFG, GB 
+C00844,  Rohan Nair  ,,+919999999999,N/A
+C00845,KABIR SINGH,@domain.com,,IND
+847,@#%,RIYA.KUMAR@EXAMPLE.COM,abcdefghij,
+848,, ananya.kumar@example.com ,6531823059,India
+ C00849 ,  Meera Sharma  ,duplicate@example.com, +916005487373 ,us
+c00850,NEHA KUMAR,,+1-708-ABC-DEFG,123
+UNKNOWN,12345,@domain.com,+919999999999, US 
+C00001,,RIYA.NAIR@EXAMPLE.COM,,N/A
+C00853,  Neha Gupta  , neha.gupta@example.com ,0000000000,IND
+C00854,ANANYA NAIR,duplicate@example.com,7213113105,
+C00855,12345,, +918041140222 ,USA
+C00856,,not-an-email,+1-134-ABC-DEFG,au
+C00857,  Isha Patel  ,ISHA.PATEL@EXAMPLE.COM,+919999999999,123
+C00858,RIYA KUMAR, riya.kumar@example.com ,, CA 
+C00859,N/A,duplicate@example.com,abcdefghij,N/A
+,,,,
+,  Riya Mehta  ,x y@example.com,abcdefghij,USA
+,RIYA REDDY,RIYA.REDDY@EXAMPLE.COM,6895760520,au
+,José  李, neha.reddy@example.com , +919331907517 ,XX
+C00863,,duplicate@example.com,+1-336-ABC-DEFG, IN 
+C00864,  Neha Gupta  ,,+919999999999,N/A
+C00865,AARAV PATEL,@domain.com,,IND
+867,A,MEERA.NAIR@EXAMPLE.COM,abcdefghij,
+868,, neha.nair@example.com ,8944621467,India
+ C00869 ,  Aarav Nair  ,duplicate@example.com, +919032751971 ,us
+c00870,VIKRAM KUMAR,,+1-159-ABC-DEFG,123
+UNKNOWN,N/A,x y@example.com,+919999999999, GB 
+C00001,,MEERA.GUPTA@EXAMPLE.COM,,N/A
+C00873,  Neha Patel  , neha.patel@example.com ,abcdefghij,IND
+C00874,ISHA GUPTA,duplicate@example.com,6821248033,
+C00875,@#%,, +917747529227 ,United Kingdom
+C00876,,x y@example.com,+1-287-ABC-DEFG,de
+C00877,  Ananya Kumar  ,ANANYA.KUMAR@EXAMPLE.COM,+919999999999,XX
+C00878,ROHAN SHARMA, rohan.sharma@example.com ,, IN 
+C00879,12345,duplicate@example.com,abcdefghij,N/A
+,,,,
+,  Isha Gupta  ,a@,+91 99999,USA
+,AARAV SHARMA,AARAV.SHARMA@EXAMPLE.COM,8907013003,de
+,A, arjun.nair@example.com , +917031179885 ,ZZ
+C00883,,duplicate@example.com,+1-952-ABC-DEFG, CA 
+C00884,  Isha Kumar  ,,+919999999999,N/A
+C00885,MEERA KUMAR,a@,,IND
+887,José  李,AARAV.KUMAR@EXAMPLE.COM,0000000000,
+888,, arjun.gupta@example.com ,7728232796,USA
+ C00889 ,  Neha Gupta  ,duplicate@example.com, +918916434618 ,ca
+c00890,ROHAN REDDY,,+1-803-ABC-DEFG,XX
+UNKNOWN,José  李,not-an-email,+919999999999, DE 
+C00001,,AARAV.SHARMA@EXAMPLE.COM,,N/A
+C00893,  Aarav Reddy  , aarav.reddy@example.com ,abcdefghij,IND
+C00894,NEHA REDDY,duplicate@example.com,9452695259,
+C00895,12345,, +918112093138 ,India
+C00896,,@domain.com,+1-112-ABC-DEFG,de
+C00897,  Isha Kumar  ,ISHA.KUMAR@EXAMPLE.COM,+919999999999,123
+C00898,VIKRAM PATEL, vikram.patel@example.com ,, GB 
+C00899,José  李,duplicate@example.com,123,N/A
+,,,,
+,  Isha Sharma  ,@domain.com,0000000000,USA
+,NEHA NAIR,NEHA.NAIR@EXAMPLE.COM,6550268384,ca
+,José  李, aarav.patel@example.com , +917578079530 ,123
+C00903,,duplicate@example.com,+1-575-ABC-DEFG, IN 
+C00904,  Vikram Patel  ,,+919999999999,N/A
+C00905,VIKRAM MEHTA,not-an-email,,IND
+907,12345,ANANYA.REDDY@EXAMPLE.COM,abcdefghij,
+908,, isha.kumar@example.com ,9656937926,USA
+ C00909 ,  Neha Gupta  ,duplicate@example.com, +916954072506 ,us
+c00910,RIYA KUMAR,,+1-205-ABC-DEFG,ZZ
+UNKNOWN,José  李,x y@example.com,+919999999999, US 
+C00001,,ROHAN.SHARMA@EXAMPLE.COM,,N/A
+C00913,  Riya Sharma  , riya.sharma@example.com ,abcdefghij,IND
+C00914,NEHA NAIR,duplicate@example.com,8569259126,
+C00915,A,, +919915268506 ,USA
+C00916,,not-an-email,+1-263-ABC-DEFG,au
+C00917,  Aarav Reddy  ,AARAV.REDDY@EXAMPLE.COM,+919999999999,ZZ
+C00918,ISHA PATEL, isha.patel@example.com ,, IN 
+C00919,José  李,duplicate@example.com,123,N/A
+,,,,
+,  Isha Mehta  ,@domain.com,123,United Kingdom
+,AARAV PATEL,AARAV.PATEL@EXAMPLE.COM,7473770551,ca
+,N/A, ananya.mehta@example.com , +917655952379 ,123
+C00923,,duplicate@example.com,+1-188-ABC-DEFG, IN 
+C00924,  Vikram Sharma  ,,+919999999999,N/A
+C00925,KABIR NAIR,a@,,IND
+927,José  李,ARJUN.PATEL@EXAMPLE.COM,abcdefghij,
+928,, rohan.mehta@example.com ,6361043547,India
+ C00929 ,  Ananya Patel  ,duplicate@example.com, +919944343442 ,de
+c00930,RIYA PATEL,,+1-334-ABC-DEFG,ZZ
+UNKNOWN,N/A,a@,+919999999999, GB 
+C00001,,VIKRAM.PATEL@EXAMPLE.COM,,N/A
+C00933,  Rohan Gupta  , rohan.gupta@example.com ,+91 99999,IND
+C00934,ARJUN GUPTA,duplicate@example.com,9534175900,
+C00935,@#%,, +919761874166 ,United Kingdom
+C00936,,a@,+1-240-ABC-DEFG,in
+C00937,  Aarav Mehta  ,AARAV.MEHTA@EXAMPLE.COM,+919999999999,XX
+C00938,VIKRAM SHARMA, vikram.sharma@example.com ,, AU 
+C00939,N/A,duplicate@example.com,+91 99999,N/A
+,,,,
+,  Meera Kumar  ,not-an-email,0000000000,India
+,VIKRAM SHARMA,VIKRAM.SHARMA@EXAMPLE.COM,9997550964,gb
+,12345, vikram.patel@example.com , +917647313478 ,ZZ
+C00943,,duplicate@example.com,+1-557-ABC-DEFG, IN 
+C00944,  Isha Singh  ,,+919999999999,N/A
+C00945,KABIR NAIR,x y@example.com,,IND
+947,@#%,ROHAN.REDDY@EXAMPLE.COM,abcdefghij,
+948,, aarav.reddy@example.com ,7000236049,USA
+ C00949 ,  Arjun Singh  ,duplicate@example.com, +916009608100 ,us
+c00950,ARJUN GUPTA,,+1-403-ABC-DEFG,XX
+UNKNOWN,N/A,a@,+919999999999, US 
+C00001,,MEERA.GUPTA@EXAMPLE.COM,,N/A
+C00953,  Vikram Singh  , vikram.singh@example.com ,123,IND
+C00954,VIKRAM SINGH,duplicate@example.com,7160142920,
+C00955,N/A,, +919081394647 ,India
+C00956,,@domain.com,+1-526-ABC-DEFG,gb
+C00957,  Riya Nair  ,RIYA.NAIR@EXAMPLE.COM,+919999999999,XX
+C00958,KABIR SINGH, kabir.singh@example.com ,, DE 
+C00959,A,duplicate@example.com,123,N/A
+,,,,
+,  Rohan Mehta  ,not-an-email,abcdefghij,India
+,ARJUN PATEL,ARJUN.PATEL@EXAMPLE.COM,8721830271,gb
+,José  李, isha.kumar@example.com , +918899207000 ,XX
+C00963,,duplicate@example.com,+1-377-ABC-DEFG, AU 
+C00964,  Ananya Singh  ,,+919999999999,N/A
+C00965,ARJUN SINGH,x y@example.com,,IND
+967,@#%,AARAV.PATEL@EXAMPLE.COM,0000000000,
+968,, isha.gupta@example.com ,6373056730,United Kingdom
+ C00969 ,  Aarav Reddy  ,duplicate@example.com, +918595832983 ,in
+c00970,NEHA NAIR,,+1-949-ABC-DEFG,XX
+UNKNOWN,N/A,x y@example.com,+919999999999, AU 
+C00001,,ARJUN.SHARMA@EXAMPLE.COM,,N/A
+C00973,  Isha Nair  , isha.nair@example.com ,123,IND
+C00974,AARAV SINGH,duplicate@example.com,6996205645,
+C00975,@#%,, +919119989799 ,India
+C00976,,not-an-email,+1-649-ABC-DEFG,us
+C00977,  Arjun Gupta  ,ARJUN.GUPTA@EXAMPLE.COM,+919999999999,123
+C00978,KABIR GUPTA, kabir.gupta@example.com ,, DE 
+C00979,@#%,duplicate@example.com,0000000000,N/A
+,,,,
+,  Aarav Gupta  ,a@,0000000000,USA
+,NEHA KUMAR,NEHA.KUMAR@EXAMPLE.COM,9285917160,gb
+,A, neha.nair@example.com , +919223440865 ,123
+C00983,,duplicate@example.com,+1-942-ABC-DEFG, IN 
+C00984,  Kabir Patel  ,,+919999999999,N/A
+C00985,ARJUN REDDY,not-an-email,,IND
+987,A,KABIR.GUPTA@EXAMPLE.COM,+91 99999,
+988,, kabir.gupta@example.com ,8826357997,USA
+ C00989 ,  Ananya Gupta  ,duplicate@example.com, +919852776643 ,ca
+c00990,VIKRAM PATEL,,+1-763-ABC-DEFG,XX
+UNKNOWN,N/A,not-an-email,+919999999999, DE 
+C00001,,NEHA.SHARMA@EXAMPLE.COM,,N/A
+C00993,  Riya Patel  , riya.patel@example.com ,+91 99999,IND
+C00994,ANANYA PATEL,duplicate@example.com,9724384787,
+C00995,José  李,, +917362328620 ,India
+C00996,,@domain.com,+1-940-ABC-DEFG,gb
+C00997,  Vikram Patel  ,VIKRAM.PATEL@EXAMPLE.COM,+919999999999,XX
+C00998,KABIR PATEL, kabir.patel@example.com ,, GB 
+C00999,@#%,duplicate@example.com,abcdefghij,N/A
+,,,,

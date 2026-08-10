@@ -1,0 +1,1408 @@
+{
+  "datasets": {
+    "factory.json": {
+      "row_count": 1000,
+      "column_count": 5,
+      "data_volume_bytes": 225132,
+      "sampling_info": "Analysis performed on 100% of rows.",
+      "columns": {
+        "production_id": {
+          "dtype": "object",
+          "dtype_inference": "string",
+          "type_distribution": {
+            "counts": {
+              "str": 1000,
+              "int": 0,
+              "float": 0,
+              "bool": 0,
+              "dict": 0,
+              "list": 0,
+              "other": 0
+            },
+            "pct": {
+              "str": 1.0,
+              "int": 0.0,
+              "float": 0.0,
+              "bool": 0.0,
+              "dict": 0.0,
+              "list": 0.0,
+              "other": 0.0
+            },
+            "sample_size": 1000
+          },
+          "null_percentage": 0.0,
+          "null_count": 0,
+          "type_confidence": 0.92,
+          "unique_count": 1000,
+          "semantic_type": "categorical",
+          "candidate_primary_key": true,
+          "raw_samples": [
+            "F0001",
+            "F0002",
+            "F0003",
+            "F0004",
+            "F0005",
+            "F0006",
+            "F0007",
+            "F0008",
+            "F0009",
+            "F0010",
+            "F0011",
+            "F0012",
+            "F0013",
+            "F0014",
+            "F0015",
+            "F0016",
+            "F0017",
+            "F0018",
+            "F0019",
+            "F0020"
+          ],
+          "semantic_confidence": 1.0,
+          "semantic_source": "contract",
+          "primary_physical_type": "string",
+          "key_engine_v3": {
+            "key_columns": [
+              "production_id"
+            ],
+            "total_rows": 1000,
+            "null_rows": 0,
+            "raw_unique_count": 1000,
+            "normalized_unique_count": 1000,
+            "raw_uniqueness_ratio": 1.0,
+            "normalized_uniqueness_ratio": 1.0,
+            "has_raw_duplicates": false,
+            "has_normalized_collisions": false,
+            "duplicate_samples": [],
+            "collision_samples": []
+          },
+          "llm_hints": {
+            "semantic_type": "id",
+            "mixed_formats_suspected": false,
+            "business_importance": "high",
+            "cleaning_priority": "critical",
+            "outlier_action_hint": null
+          }
+        },
+        "product_id": {
+          "dtype": "object",
+          "dtype_inference": "string",
+          "type_distribution": {
+            "counts": {
+              "str": 1000,
+              "int": 0,
+              "float": 0,
+              "bool": 0,
+              "dict": 0,
+              "list": 0,
+              "other": 0
+            },
+            "pct": {
+              "str": 1.0,
+              "int": 0.0,
+              "float": 0.0,
+              "bool": 0.0,
+              "dict": 0.0,
+              "list": 0.0,
+              "other": 0.0
+            },
+            "sample_size": 1000
+          },
+          "null_percentage": 0.0,
+          "null_count": 0,
+          "type_confidence": 0.92,
+          "unique_count": 100,
+          "semantic_type": "categorical",
+          "candidate_primary_key": false,
+          "raw_samples": [
+            "P082",
+            "P018",
+            "P004",
+            "P026",
+            "P098",
+            "P098",
+            "P045",
+            "P016",
+            "P025",
+            "P030",
+            "P048",
+            "P082",
+            "P049",
+            "P005",
+            "P092",
+            "P059",
+            "P075",
+            "P064",
+            "P021",
+            "P033"
+          ],
+          "duplicate_value_count": 1000,
+          "semantic_confidence": 1.0,
+          "semantic_source": "contract",
+          "primary_physical_type": "string",
+          "llm_hints": {
+            "semantic_type": "id",
+            "mixed_formats_suspected": false,
+            "business_importance": "high",
+            "cleaning_priority": "critical",
+            "outlier_action_hint": null
+          }
+        },
+        "sales_id": {
+          "dtype": "object",
+          "dtype_inference": "string",
+          "type_distribution": {
+            "counts": {
+              "str": 1000,
+              "int": 0,
+              "float": 0,
+              "bool": 0,
+              "dict": 0,
+              "list": 0,
+              "other": 0
+            },
+            "pct": {
+              "str": 1.0,
+              "int": 0.0,
+              "float": 0.0,
+              "bool": 0.0,
+              "dict": 0.0,
+              "list": 0.0,
+              "other": 0.0
+            },
+            "sample_size": 1000
+          },
+          "null_percentage": 0.0,
+          "null_count": 0,
+          "type_confidence": 0.92,
+          "unique_count": 1000,
+          "semantic_type": "categorical",
+          "candidate_primary_key": true,
+          "raw_samples": [
+            "S0001",
+            "S0002",
+            "S0003",
+            "S0004",
+            "S0005",
+            "S0006",
+            "S0007",
+            "S0008",
+            "S0009",
+            "S0010",
+            "S0011",
+            "S0012",
+            "S0013",
+            "S0014",
+            "S0015",
+            "S0016",
+            "S0017",
+            "S0018",
+            "S0019",
+            "S0020"
+          ],
+          "semantic_confidence": 1.0,
+          "semantic_source": "contract",
+          "primary_physical_type": "string",
+          "key_engine_v3": {
+            "key_columns": [
+              "sales_id"
+            ],
+            "total_rows": 1000,
+            "null_rows": 0,
+            "raw_unique_count": 1000,
+            "normalized_unique_count": 1000,
+            "raw_uniqueness_ratio": 1.0,
+            "normalized_uniqueness_ratio": 1.0,
+            "has_raw_duplicates": false,
+            "has_normalized_collisions": false,
+            "duplicate_samples": [],
+            "collision_samples": []
+          },
+          "llm_hints": {
+            "semantic_type": "id",
+            "mixed_formats_suspected": false,
+            "business_importance": "high",
+            "cleaning_priority": "critical",
+            "outlier_action_hint": null
+          }
+        },
+        "plant": {
+          "dtype": "object",
+          "dtype_inference": "string",
+          "type_distribution": {
+            "counts": {
+              "str": 1000,
+              "int": 0,
+              "float": 0,
+              "bool": 0,
+              "dict": 0,
+              "list": 0,
+              "other": 0
+            },
+            "pct": {
+              "str": 1.0,
+              "int": 0.0,
+              "float": 0.0,
+              "bool": 0.0,
+              "dict": 0.0,
+              "list": 0.0,
+              "other": 0.0
+            },
+            "sample_size": 1000
+          },
+          "null_percentage": 0.0,
+          "null_count": 0,
+          "type_confidence": 0.92,
+          "unique_count": 4,
+          "semantic_type": "categorical",
+          "candidate_primary_key": false,
+          "raw_samples": [
+            "Plant-B",
+            "Plant-D",
+            "Plant-A",
+            "Plant-C",
+            "Plant-B",
+            "Plant-A",
+            "Plant-D",
+            "Plant-C",
+            "Plant-C",
+            "Plant-C",
+            "Plant-A",
+            "Plant-B",
+            "Plant-A",
+            "Plant-B",
+            "Plant-D",
+            "Plant-C",
+            "Plant-B",
+            "Plant-B",
+            "Plant-D",
+            "Plant-C"
+          ],
+          "duplicate_value_count": 1000,
+          "semantic_confidence": 1.0,
+          "semantic_source": "contract",
+          "primary_physical_type": "string",
+          "llm_hints": {
+            "semantic_type": "string",
+            "mixed_formats_suspected": false,
+            "business_importance": "medium",
+            "cleaning_priority": "medium",
+            "outlier_action_hint": null
+          }
+        },
+        "units_produced": {
+          "dtype": "int64",
+          "dtype_inference": null,
+          "type_distribution": null,
+          "null_percentage": 0.0,
+          "null_count": 0,
+          "type_confidence": 0.95,
+          "unique_count": 310,
+          "semantic_type": "numeric_id",
+          "candidate_primary_key": false,
+          "raw_samples": [
+            "35",
+            "399",
+            "169",
+            "231",
+            "206",
+            "128",
+            "109",
+            "77",
+            "33",
+            "205",
+            "109",
+            "176",
+            "86",
+            "240",
+            "114",
+            "237",
+            "207",
+            "63",
+            "79",
+            "67"
+          ],
+          "duplicate_value_count": 904,
+          "mean": 154.41,
+          "median": 137.0,
+          "std": 88.58766095610423,
+          "skew": 1.2641,
+          "p5": 49.95,
+          "p95": 336.04999999999995,
+          "semantic_confidence": 1.0,
+          "semantic_source": "contract",
+          "primary_physical_type": "integer",
+          "llm_hints": {
+            "semantic_type": "integer",
+            "mixed_formats_suspected": true,
+            "business_importance": "high",
+            "cleaning_priority": "critical",
+            "outlier_action_hint": "check for non-integer values",
+            "format_variants": []
+          }
+        }
+      },
+      "priority_columns": [
+        "plant",
+        "units_produced",
+        "production_id",
+        "sales_id",
+        "product_id"
+      ],
+      "ydata_profile": {
+        "row_count": 1000,
+        "column_count": 5,
+        "duplicate_rows": 0,
+        "missing_cells": 0,
+        "missing_pct": 0.0,
+        "total_size_memory": 225132,
+        "alerts": [
+          "[production_id] has unique values",
+          "[sales_id] has unique values"
+        ],
+        "column_profiles": {
+          "production_id": {
+            "type": "Text",
+            "missing_count": 0,
+            "missing_pct": 0.0,
+            "unique_count": 1000,
+            "is_constant": false,
+            "high_cardinality": true,
+            "zeros": 0,
+            "infinite": 0,
+            "mean": null,
+            "std": null,
+            "min": null,
+            "max": null,
+            "skewness": null,
+            "kurtosis": null
+          },
+          "product_id": {
+            "type": "Text",
+            "missing_count": 0,
+            "missing_pct": 0.0,
+            "unique_count": 0,
+            "is_constant": false,
+            "high_cardinality": false,
+            "zeros": 0,
+            "infinite": 0,
+            "mean": null,
+            "std": null,
+            "min": null,
+            "max": null,
+            "skewness": null,
+            "kurtosis": null
+          },
+          "plant": {
+            "type": "Categorical",
+            "missing_count": 0,
+            "missing_pct": 0.0,
+            "unique_count": 0,
+            "is_constant": false,
+            "high_cardinality": false,
+            "zeros": 0,
+            "infinite": 0,
+            "mean": null,
+            "std": null,
+            "min": null,
+            "max": null,
+            "skewness": null,
+            "kurtosis": null
+          },
+          "units_produced": {
+            "type": "Numeric",
+            "missing_count": 0,
+            "missing_pct": 0.0,
+            "unique_count": 96,
+            "is_constant": false,
+            "high_cardinality": true,
+            "zeros": 0,
+            "infinite": 0,
+            "mean": 154.41,
+            "std": 88.58766095610423,
+            "min": 18,
+            "max": 536,
+            "skewness": 1.264116380259454,
+            "kurtosis": 1.7364708872198222
+          },
+          "sales_id": {
+            "type": "Text",
+            "missing_count": 0,
+            "missing_pct": 0.0,
+            "unique_count": 1000,
+            "is_constant": false,
+            "high_cardinality": true,
+            "zeros": 0,
+            "infinite": 0,
+            "mean": null,
+            "std": null,
+            "min": null,
+            "max": null,
+            "skewness": null,
+            "kurtosis": null
+          }
+        }
+      },
+      "source_root": "abfss://04a585ce-f0ec-4a3a-9db2-e237711fd9e7@onelake.dfs.fabric.microsoft.com/abd8c72d-b5aa-4b58-83bd-fb97587de47e/Files/raw/factory_json.json",
+      "candidate_keys_v3": [
+        [
+          "production_id"
+        ],
+        [
+          "sales_id"
+        ]
+      ],
+      "quality": {
+        "issues": [
+          {
+            "severity": "medium",
+            "type": "numeric_outliers_iqr",
+            "column": "units_produced",
+            "count": 44,
+            "row_indexes": [
+              1,
+              39,
+              68,
+              81,
+              90,
+              98,
+              137,
+              141,
+              158,
+              162,
+              180,
+              201,
+              265,
+              290,
+              293,
+              320,
+              340,
+              364,
+              380,
+              393,
+              397,
+              432,
+              444,
+              445,
+              482,
+              596,
+              606,
+              667,
+              696,
+              703,
+              738,
+              753,
+              793,
+              817,
+              833,
+              835,
+              855,
+              862,
+              874,
+              892,
+              919,
+              949,
+              963,
+              980
+            ],
+            "sample_values": [
+              399,
+              410,
+              363,
+              381,
+              488
+            ],
+            "message": "44 IQR outlier(s) outside [-66.38, 350.62]",
+            "fixability": "COMPLEX",
+            "gating": true,
+            "duplicate_group_metrics": null,
+            "dataset": "factory.json",
+            "issue_type": "numeric_outliers_iqr",
+            "source": "profiler",
+            "rule_source": "built_in",
+            "fixability_details": {
+              "fixability": "COMPLEX",
+              "automation_allowed": false,
+              "requires_policy": false,
+              "recommended_disposition": "QUARANTINE"
+            },
+            "finding_id": "f12ea087615f5f47",
+            "canonical_rule_id": "dhara_native.numeric_outliers_iqr",
+            "recommendation": "Investigate values beyond 1.5x IQR; check if they represent extreme cases, fraud, or data entry errors."
+          },
+          {
+            "severity": "high",
+            "type": "numeric_outliers_zscore",
+            "column": "units_produced",
+            "count": 2,
+            "row_indexes": [
+              703,
+              949
+            ],
+            "sample_values": [
+              536,
+              515
+            ],
+            "message": "2 extreme outlier(s) beyond 4σ from mean (154.41 ± 88.59)",
+            "fixability": "COMPLEX",
+            "gating": true,
+            "duplicate_group_metrics": null,
+            "dataset": "factory.json",
+            "issue_type": "numeric_outliers_zscore",
+            "source": "profiler",
+            "rule_source": "built_in",
+            "fixability_details": {
+              "fixability": "COMPLEX",
+              "automation_allowed": false,
+              "requires_policy": false,
+              "recommended_disposition": "QUARANTINE"
+            },
+            "finding_id": "cd79160dd36ed79a",
+            "canonical_rule_id": "dhara_native.numeric_outliers_zscore",
+            "recommendation": "Investigate extreme z-score outliers (>4 std devs); likely data entry errors, test records, or fraud signals."
+          }
+        ],
+        "summary": {
+          "issue_count": 2,
+          "high_severity": 1,
+          "medium_severity": 1,
+          "low_severity": 0,
+          "dq_score_0_100": 97.7,
+          "score_methodology_version": "dimension_scorer_v3",
+          "score_is_comparable_to_prior_version": false,
+          "score_formula": "dimension_scorer_v3 (weighted sum of evaluated quality dimensions)",
+          "score_components": {
+            "flat_penalty": 3.0,
+            "row_penalty": 0.69,
+            "total_penalty": 3.69,
+            "weights": {
+              "high_flat_per_type": 2.5,
+              "medium_flat_per_type": 0.5,
+              "low_flat_per_type": 0.1,
+              "high_row_fraction": 30.0,
+              "medium_row_fraction": 15.0,
+              "low_row_fraction": 5.0,
+              "flat_penalty_cap": 15.0
+            },
+            "high_issue_type_count": 1,
+            "medium_issue_type_count": 1,
+            "distinct_high_rows": 2,
+            "distinct_medium_rows": 42,
+            "distinct_low_rows": 0,
+            "row_severity_buckets_are_mutually_exclusive": true,
+            "advisory_issues_included_in_score": false,
+            "row_count": 1000
+          },
+          "dimension_breakdown": {
+            "completeness": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.15,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            },
+            "validity": {
+              "status": "EVALUATED",
+              "score": 97.7,
+              "configured_weight": 0.2,
+              "effective_weight": 0.2,
+              "evaluated_rules_count": 3,
+              "passed_rules_count": 1,
+              "failed_rules_count": 2
+            },
+            "uniqueness": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.15,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            },
+            "consistency": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.1,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            },
+            "conformity": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.1,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            },
+            "referential_integrity": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.15,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            },
+            "accuracy": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.1,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            },
+            "timeliness": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.05,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            }
+          },
+          "root_cause_summary": {
+            "rule_hit_count": 2,
+            "distinct_issue_types": 2,
+            "distinct_rows_affected": 44,
+            "distinct_cells_affected": 44,
+            "root_cause_family_count": 1,
+            "family_counts_are_non_additive": true,
+            "root_cause_groups": [
+              {
+                "family": "other",
+                "issue_types_triggered": [
+                  "numeric_outliers_iqr",
+                  "numeric_outliers_zscore"
+                ],
+                "distinct_cells_affected": 44,
+                "distinct_rows_affected": 44
+              }
+            ]
+          },
+          "estimated_clean_rows_after_high": 998,
+          "estimated_clean_rows_after_high_and_medium": 956,
+          "readiness": "UNKNOWN",
+          "gating_blockers": [
+            "INSUFFICIENT_SCORE_COVERAGE: 0.20 < 0.80"
+          ],
+          "assessment_confidence": 100.0,
+          "rule_coverage": {
+            "total_rules": 3,
+            "evaluated": 3,
+            "passed": 1,
+            "failed": 2,
+            "not_applicable": 0,
+            "not_evaluated": 0,
+            "execution_errors": 0,
+            "configuration_errors": 0,
+            "insufficient_evidence": 0,
+            "coverage_percentage": 100.0
+          }
+        },
+        "privacy_findings": [],
+        "rule_results": [
+          {
+            "rule_id": "dhara_native.numeric_outliers_iqr",
+            "rule_version": "3.1.0",
+            "status": "FAIL",
+            "dataset": "factory.json",
+            "column": "units_produced",
+            "dimension": "validity",
+            "severity": "MEDIUM",
+            "confidence": 1.0,
+            "evaluated_count": 1000,
+            "failed_count": 44,
+            "failure_rate": 0.044,
+            "affected_rows": [
+              1,
+              39,
+              68,
+              81,
+              90,
+              98,
+              137,
+              141,
+              158,
+              162,
+              180,
+              201,
+              265,
+              290,
+              293,
+              320,
+              340,
+              364,
+              380,
+              393,
+              397,
+              432,
+              444,
+              445,
+              482,
+              596,
+              606,
+              667,
+              696,
+              703,
+              738,
+              753,
+              793,
+              817,
+              833,
+              835,
+              855,
+              862,
+              874,
+              892,
+              919,
+              949,
+              963,
+              980
+            ],
+            "samples": [
+              399,
+              410,
+              363,
+              381,
+              488
+            ],
+            "evidence": {
+              "issue_type": "numeric_outliers_iqr",
+              "gating": true,
+              "provider": "dhara_native"
+            },
+            "execution_time_ms": 0.0,
+            "error_message": null
+          },
+          {
+            "rule_id": "dhara_native.numeric_outliers_zscore",
+            "rule_version": "3.1.0",
+            "status": "FAIL",
+            "dataset": "factory.json",
+            "column": "units_produced",
+            "dimension": "validity",
+            "severity": "HIGH",
+            "confidence": 1.0,
+            "evaluated_count": 1000,
+            "failed_count": 2,
+            "failure_rate": 0.002,
+            "affected_rows": [
+              703,
+              949
+            ],
+            "samples": [
+              536,
+              515
+            ],
+            "evidence": {
+              "issue_type": "numeric_outliers_zscore",
+              "gating": true,
+              "provider": "dhara_native"
+            },
+            "execution_time_ms": 0.0,
+            "error_message": null
+          },
+          {
+            "rule_id": "gx.unknown",
+            "rule_version": "3.1.0",
+            "status": "PASS",
+            "dataset": "factory.json",
+            "column": null,
+            "dimension": "validity",
+            "severity": "LOW",
+            "confidence": 1.0,
+            "evaluated_count": 0,
+            "failed_count": 0,
+            "failure_rate": 0.0,
+            "affected_rows": [],
+            "samples": [],
+            "evidence": {
+              "gx_expectation_type": "unknown",
+              "gx_kwargs": {},
+              "gx_provider_version": "1.18.1",
+              "execution_metadata": {}
+            },
+            "execution_time_ms": 0.0,
+            "error_message": null
+          }
+        ],
+        "component_manifest": {
+          "engine_family": "AGENT_DHARA_DQ",
+          "engine_version": "3.1.0",
+          "components": {
+            "orchestrator": "3.1.0",
+            "semantic_inference": "3.0.0",
+            "key_engine": "3.0.0",
+            "relationship_engine": "3.0.0",
+            "privacy_engine": "3.0.0",
+            "finding_deduplicator": "3.0.0",
+            "dimension_scorer": "3.0.0",
+            "remediation_engine": "3.0.0",
+            "great_expectations_provider": "3.1.0",
+            "dhara_native_provider": "3.1.0",
+            "gx_result_translator": "3.1.0",
+            "gx_suite_builder": "3.1.0",
+            "gx_capability_registry": "3.1.0"
+          },
+          "validation_providers": {
+            "great_expectations": {
+              "enabled": true,
+              "version": "1.18.1",
+              "context_mode": "ephemeral",
+              "semantic_aware_planning": true,
+              "result_translator_active": true
+            },
+            "dhara_native": {
+              "enabled": true,
+              "version": "3.1.0"
+            }
+          },
+          "feature_flags": {
+            "dq_engine_v3": true,
+            "semantic_inference_v2": true,
+            "key_engine_v2": true,
+            "relationship_engine_v2": true,
+            "finding_deduplicator_v2": true,
+            "dimension_scoring_v2": true,
+            "privacy_score_separation": true,
+            "gx_validation_provider": true,
+            "gx_semantic_aware_planning": true,
+            "gx_result_translator": true,
+            "legacy_rule_engine": false,
+            "legacy_flat_penalty_scorer": false,
+            "legacy_pii_quality_findings": false,
+            "legacy_semantic_detection": false,
+            "component_manifest_in_report": true,
+            "reproducibility_hashes": true
+          },
+          "legacy_components_enabled": [],
+          "privacy_separation": true,
+          "dimension_scorer_v3": true,
+          "semantic_inference_v3": true,
+          "key_engine_v3": true,
+          "relationship_engine_v3": true
+        },
+        "deduplication_diagnostics": []
+      },
+      "llm_hints": {
+        "table_grain": "one row per production record",
+        "business_entity": "factory_production",
+        "probable_pk_columns": [
+          "production_id"
+        ],
+        "business_key_confirmation": {
+          "confirmed": true,
+          "business_key_cols": [
+            "production_id"
+          ],
+          "business_key_duplicate_count": 0,
+          "missing_business_key_count": 0,
+          "dedup_strategy_hint": "no_action_needed"
+        }
+      },
+      "source_type": "fabric_files_zone",
+      "source_blob_root": "abfss://04a585ce-f0ec-4a3a-9db2-e237711fd9e7@onelake.dfs.fabric.microsoft.com/abd8c72d-b5aa-4b58-83bd-fb97587de47e/Files/raw/factory_json.json"
+    }
+  },
+  "relationships": [],
+  "data_quality_issues": {
+    "datasets": {
+      "factory.json": {
+        "issues": [
+          {
+            "severity": "medium",
+            "type": "numeric_outliers_iqr",
+            "column": "units_produced",
+            "count": 44,
+            "row_indexes": [
+              1,
+              39,
+              68,
+              81,
+              90,
+              98,
+              137,
+              141,
+              158,
+              162,
+              180,
+              201,
+              265,
+              290,
+              293,
+              320,
+              340,
+              364,
+              380,
+              393,
+              397,
+              432,
+              444,
+              445,
+              482,
+              596,
+              606,
+              667,
+              696,
+              703,
+              738,
+              753,
+              793,
+              817,
+              833,
+              835,
+              855,
+              862,
+              874,
+              892,
+              919,
+              949,
+              963,
+              980
+            ],
+            "sample_values": [
+              399,
+              410,
+              363,
+              381,
+              488
+            ],
+            "message": "44 IQR outlier(s) outside [-66.38, 350.62]",
+            "fixability": "COMPLEX",
+            "gating": true,
+            "duplicate_group_metrics": null,
+            "dataset": "factory.json",
+            "issue_type": "numeric_outliers_iqr",
+            "source": "profiler",
+            "rule_source": "built_in",
+            "fixability_details": {
+              "fixability": "COMPLEX",
+              "automation_allowed": false,
+              "requires_policy": false,
+              "recommended_disposition": "QUARANTINE"
+            },
+            "finding_id": "f12ea087615f5f47",
+            "canonical_rule_id": "dhara_native.numeric_outliers_iqr",
+            "recommendation": "Investigate values beyond 1.5x IQR; check if they represent extreme cases, fraud, or data entry errors."
+          },
+          {
+            "severity": "high",
+            "type": "numeric_outliers_zscore",
+            "column": "units_produced",
+            "count": 2,
+            "row_indexes": [
+              703,
+              949
+            ],
+            "sample_values": [
+              536,
+              515
+            ],
+            "message": "2 extreme outlier(s) beyond 4σ from mean (154.41 ± 88.59)",
+            "fixability": "COMPLEX",
+            "gating": true,
+            "duplicate_group_metrics": null,
+            "dataset": "factory.json",
+            "issue_type": "numeric_outliers_zscore",
+            "source": "profiler",
+            "rule_source": "built_in",
+            "fixability_details": {
+              "fixability": "COMPLEX",
+              "automation_allowed": false,
+              "requires_policy": false,
+              "recommended_disposition": "QUARANTINE"
+            },
+            "finding_id": "cd79160dd36ed79a",
+            "canonical_rule_id": "dhara_native.numeric_outliers_zscore",
+            "recommendation": "Investigate extreme z-score outliers (>4 std devs); likely data entry errors, test records, or fraud signals."
+          }
+        ],
+        "summary": {
+          "issue_count": 2,
+          "high_severity": 1,
+          "medium_severity": 1,
+          "low_severity": 0,
+          "dq_score_0_100": 97.7,
+          "score_methodology_version": "dimension_scorer_v3",
+          "score_is_comparable_to_prior_version": false,
+          "score_formula": "dimension_scorer_v3 (weighted sum of evaluated quality dimensions)",
+          "score_components": {
+            "flat_penalty": 3.0,
+            "row_penalty": 0.69,
+            "total_penalty": 3.69,
+            "weights": {
+              "high_flat_per_type": 2.5,
+              "medium_flat_per_type": 0.5,
+              "low_flat_per_type": 0.1,
+              "high_row_fraction": 30.0,
+              "medium_row_fraction": 15.0,
+              "low_row_fraction": 5.0,
+              "flat_penalty_cap": 15.0
+            },
+            "high_issue_type_count": 1,
+            "medium_issue_type_count": 1,
+            "distinct_high_rows": 2,
+            "distinct_medium_rows": 42,
+            "distinct_low_rows": 0,
+            "row_severity_buckets_are_mutually_exclusive": true,
+            "advisory_issues_included_in_score": false,
+            "row_count": 1000
+          },
+          "dimension_breakdown": {
+            "completeness": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.15,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            },
+            "validity": {
+              "status": "EVALUATED",
+              "score": 97.7,
+              "configured_weight": 0.2,
+              "effective_weight": 0.2,
+              "evaluated_rules_count": 3,
+              "passed_rules_count": 1,
+              "failed_rules_count": 2
+            },
+            "uniqueness": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.15,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            },
+            "consistency": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.1,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            },
+            "conformity": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.1,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            },
+            "referential_integrity": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.15,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            },
+            "accuracy": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.1,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            },
+            "timeliness": {
+              "status": "NOT_EVALUATED",
+              "score": null,
+              "configured_weight": 0.05,
+              "effective_weight": 0.0,
+              "evaluated_rules_count": 0,
+              "passed_rules_count": 0,
+              "failed_rules_count": 0
+            }
+          },
+          "root_cause_summary": {
+            "rule_hit_count": 2,
+            "distinct_issue_types": 2,
+            "distinct_rows_affected": 44,
+            "distinct_cells_affected": 44,
+            "root_cause_family_count": 1,
+            "family_counts_are_non_additive": true,
+            "root_cause_groups": [
+              {
+                "family": "other",
+                "issue_types_triggered": [
+                  "numeric_outliers_iqr",
+                  "numeric_outliers_zscore"
+                ],
+                "distinct_cells_affected": 44,
+                "distinct_rows_affected": 44
+              }
+            ]
+          },
+          "estimated_clean_rows_after_high": 998,
+          "estimated_clean_rows_after_high_and_medium": 956,
+          "readiness": "UNKNOWN",
+          "gating_blockers": [
+            "INSUFFICIENT_SCORE_COVERAGE: 0.20 < 0.80"
+          ],
+          "assessment_confidence": 100.0,
+          "rule_coverage": {
+            "total_rules": 3,
+            "evaluated": 3,
+            "passed": 1,
+            "failed": 2,
+            "not_applicable": 0,
+            "not_evaluated": 0,
+            "execution_errors": 0,
+            "configuration_errors": 0,
+            "insufficient_evidence": 0,
+            "coverage_percentage": 100.0
+          }
+        },
+        "privacy_findings": [],
+        "rule_results": [
+          {
+            "rule_id": "dhara_native.numeric_outliers_iqr",
+            "rule_version": "3.1.0",
+            "status": "FAIL",
+            "dataset": "factory.json",
+            "column": "units_produced",
+            "dimension": "validity",
+            "severity": "MEDIUM",
+            "confidence": 1.0,
+            "evaluated_count": 1000,
+            "failed_count": 44,
+            "failure_rate": 0.044,
+            "affected_rows": [
+              1,
+              39,
+              68,
+              81,
+              90,
+              98,
+              137,
+              141,
+              158,
+              162,
+              180,
+              201,
+              265,
+              290,
+              293,
+              320,
+              340,
+              364,
+              380,
+              393,
+              397,
+              432,
+              444,
+              445,
+              482,
+              596,
+              606,
+              667,
+              696,
+              703,
+              738,
+              753,
+              793,
+              817,
+              833,
+              835,
+              855,
+              862,
+              874,
+              892,
+              919,
+              949,
+              963,
+              980
+            ],
+            "samples": [
+              399,
+              410,
+              363,
+              381,
+              488
+            ],
+            "evidence": {
+              "issue_type": "numeric_outliers_iqr",
+              "gating": true,
+              "provider": "dhara_native"
+            },
+            "execution_time_ms": 0.0,
+            "error_message": null
+          },
+          {
+            "rule_id": "dhara_native.numeric_outliers_zscore",
+            "rule_version": "3.1.0",
+            "status": "FAIL",
+            "dataset": "factory.json",
+            "column": "units_produced",
+            "dimension": "validity",
+            "severity": "HIGH",
+            "confidence": 1.0,
+            "evaluated_count": 1000,
+            "failed_count": 2,
+            "failure_rate": 0.002,
+            "affected_rows": [
+              703,
+              949
+            ],
+            "samples": [
+              536,
+              515
+            ],
+            "evidence": {
+              "issue_type": "numeric_outliers_zscore",
+              "gating": true,
+              "provider": "dhara_native"
+            },
+            "execution_time_ms": 0.0,
+            "error_message": null
+          },
+          {
+            "rule_id": "gx.unknown",
+            "rule_version": "3.1.0",
+            "status": "PASS",
+            "dataset": "factory.json",
+            "column": null,
+            "dimension": "validity",
+            "severity": "LOW",
+            "confidence": 1.0,
+            "evaluated_count": 0,
+            "failed_count": 0,
+            "failure_rate": 0.0,
+            "affected_rows": [],
+            "samples": [],
+            "evidence": {
+              "gx_expectation_type": "unknown",
+              "gx_kwargs": {},
+              "gx_provider_version": "1.18.1",
+              "execution_metadata": {}
+            },
+            "execution_time_ms": 0.0,
+            "error_message": null
+          }
+        ],
+        "component_manifest": {
+          "engine_family": "AGENT_DHARA_DQ",
+          "engine_version": "3.1.0",
+          "components": {
+            "orchestrator": "3.1.0",
+            "semantic_inference": "3.0.0",
+            "key_engine": "3.0.0",
+            "relationship_engine": "3.0.0",
+            "privacy_engine": "3.0.0",
+            "finding_deduplicator": "3.0.0",
+            "dimension_scorer": "3.0.0",
+            "remediation_engine": "3.0.0",
+            "great_expectations_provider": "3.1.0",
+            "dhara_native_provider": "3.1.0",
+            "gx_result_translator": "3.1.0",
+            "gx_suite_builder": "3.1.0",
+            "gx_capability_registry": "3.1.0"
+          },
+          "validation_providers": {
+            "great_expectations": {
+              "enabled": true,
+              "version": "1.18.1",
+              "context_mode": "ephemeral",
+              "semantic_aware_planning": true,
+              "result_translator_active": true
+            },
+            "dhara_native": {
+              "enabled": true,
+              "version": "3.1.0"
+            }
+          },
+          "feature_flags": {
+            "dq_engine_v3": true,
+            "semantic_inference_v2": true,
+            "key_engine_v2": true,
+            "relationship_engine_v2": true,
+            "finding_deduplicator_v2": true,
+            "dimension_scoring_v2": true,
+            "privacy_score_separation": true,
+            "gx_validation_provider": true,
+            "gx_semantic_aware_planning": true,
+            "gx_result_translator": true,
+            "legacy_rule_engine": false,
+            "legacy_flat_penalty_scorer": false,
+            "legacy_pii_quality_findings": false,
+            "legacy_semantic_detection": false,
+            "component_manifest_in_report": true,
+            "reproducibility_hashes": true
+          },
+          "legacy_components_enabled": [],
+          "privacy_separation": true,
+          "dimension_scorer_v3": true,
+          "semantic_inference_v3": true,
+          "key_engine_v3": true,
+          "relationship_engine_v3": true
+        },
+        "deduplication_diagnostics": []
+      }
+    },
+    "global_issues": {
+      "orphan_foreign_keys": [],
+      "cross_dataset_inconsistencies": [],
+      "schema_drift": [],
+      "relationship_row_issues": [],
+      "relationship_warnings": [],
+      "cross_dataset_consistency": []
+    }
+  },
+  "dq_recommendations": {
+    "recommendations": [
+      {
+        "priority": 1,
+        "dataset": "factory.json",
+        "column": "units_produced",
+        "issue_type": "numeric_outliers_zscore",
+        "severity": "high",
+        "why_it_matters": "Extreme outliers may indicate data entry errors or fraud, impacting data integrity.",
+        "suggested_fix": "Investigate and potentially quarantine the extreme outlier values.",
+        "mapped_action": "flag_outliers",
+        "example_sql": null,
+        "example_pandas": null,
+        "risk": "High risk of incorrect data affecting analysis and decision-making.",
+        "example_pyspark": "import pyspark.sql.functions as F\nraw = F.col('units_produced')\ndf = (\n    df\n    .withColumn('units_produced_raw', raw)\n    .withColumn('units_produced_clean', raw.cast('double'))\n    .withColumn(\n        'units_produced_validation_status',\n        F.when(raw.isNull(), 'source_null')\n         .when(F.trim(raw.cast('string')) == '', 'empty')\n         .when(raw.cast('double').isNull(), 'invalid_numeric')\n         .otherwise('valid')\n    )\n)"
+      },
+      {
+        "priority": 2,
+        "dataset": "factory.json",
+        "column": "units_produced",
+        "issue_type": "numeric_outliers_iqr",
+        "severity": "medium",
+        "why_it_matters": "Outliers can skew analysis and lead to incorrect conclusions.",
+        "suggested_fix": "Investigate values beyond 1.5x IQR; check if they represent extreme cases, fraud, or data entry errors.",
+        "mapped_action": "flag_outliers",
+        "example_sql": null,
+        "example_pandas": null,
+        "risk": "Medium risk of misleading data affecting operational decisions.",
+        "example_pyspark": "import pyspark.sql.functions as F\nraw = F.col('units_produced')\ndf = (\n    df\n    .withColumn('units_produced_raw', raw)\n    .withColumn('units_produced_clean', raw.cast('double'))\n    .withColumn(\n        'units_produced_validation_status',\n        F.when(raw.isNull(), 'source_null')\n         .when(F.trim(raw.cast('string')) == '', 'empty')\n         .when(raw.cast('double').isNull(), 'invalid_numeric')\n         .otherwise('valid')\n    )\n)"
+      }
+    ],
+    "summary": {
+      "top_themes": [
+        "outliers",
+        "data integrity"
+      ],
+      "notes": "Focus on investigating and addressing outliers in the 'units_produced' column to ensure data quality."
+    }
+  },
+  "run_metadata": {
+    "generated_at": "2026-08-10T11:32:08.948783+00:00"
+  }
+}
