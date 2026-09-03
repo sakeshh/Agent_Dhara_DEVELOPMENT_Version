@@ -522,32 +522,36 @@ def api_load_path(payload: PathPayload) -> Dict[str, Any]:
     return {"datasets": list(data.keys()), "count": len(data)}
 
 
-ALL_CONTAINER_BLOBS = [
-    "Taxidata.csv",
-    "data_quality_issues.csv",
-    "data_quality_issues.json",
-    "data_quality_issues_v2.csv",
-    "data_quality_issues_v2.json",
-    "employee_data_quality_issues_10000.csv",
-    "factory.json",
-    "factory_relational_test.json",
-    "marketing.csv",
-    "marketing_relational_test.csv",
-    "sales.xml",
-    "sales_relational_test.xml"
-]
+
+
+
+def _safe_load_sources_cfg(sources_path: str) -> Dict[str, Any]:
+    try:
+        from agent.bootstrap import load_config
+        return load_config(sources_path)
+    except Exception as ex:
+        logger.warning(f"Failed to load config using bootstrap.load_config: {ex}, trying direct yaml")
+        try:
+            import yaml
+            if os.path.isfile(sources_path):
+                with open(sources_path, "r", encoding="utf-8") as f:
+                    return yaml.safe_load(f) or {}
+        except Exception as ey:
+            logger.error(f"Failed to load sources config file {sources_path}: {ey}")
+    return {}
 
 
 @app.get("/blob/files", tags=["sources"])
 def api_blob_files() -> Dict[str, Any]:
     """
     List all blob files residing in the configured Azure Blob Storage container.
+    Returns only real live data from Azure Blob Storage.
     """
     sources_path = os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml"
     files = []
+    error_msg = None
     try:
-        import main as _main
-        cfg = _main.load_config(sources_path)
+        cfg = _safe_load_sources_cfg(sources_path)
         source_cfg = cfg.get("source", cfg) or {}
         locations = source_cfg.get("locations", []) or []
         for loc in locations:
@@ -559,68 +563,89 @@ def api_blob_files() -> Dict[str, Any]:
                     if files:
                         break
                 except Exception as ex:
+                    error_msg = str(ex)
                     logger.warning(f"Failed to list blobs: {ex}")
     except Exception as e:
+        error_msg = str(e)
         logger.error(f"Error listing blob files: {e}")
 
-    if not files:
-        files = ALL_CONTAINER_BLOBS
-
-    return {"ok": True, "count": len(files), "files": files}
+    return {"ok": error_msg is None, "count": len(files), "files": files, "error": error_msg}
 
 
 @app.get("/sources")
 def api_sources() -> Dict[str, Any]:
     """
     Return available source configurations from sources.yaml with discovered file / table lists.
+    Each source is completely isolated: a failure in SQL or Blob will never block the other.
+    Returns only real live data discovered from each source.
     """
     sources_path = os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml"
+    out = []
+
     try:
-        import main as _main
-        cfg = _main.load_config(sources_path)
+        cfg = _safe_load_sources_cfg(sources_path)
         source_cfg = cfg.get("source", cfg) or {}
         locations = source_cfg.get("locations", []) or []
-        out = []
-        sql_default_tables = ["customers", "sales_fact", "products", "inventory", "dim_customer"]
+    except Exception as e:
+        logger.error(f"Error loading sources config: {e}")
+        locations = []
 
-        for idx, loc in enumerate(locations):
-            loc_type = str(loc.get("type") or "").lower()
-            files = []
+    for idx, loc in enumerate(locations):
+        loc_type = str(loc.get("type") or "").lower()
+        files = []
+        source_error = None
+        try:
             if "blob" in loc_type:
                 try:
                     from connectors.azure_blob_storage import AzureBlobStorageConnector
                     conn = AzureBlobStorageConnector(loc.get("connection", {}))
                     files = conn.list_blobs()
                 except Exception as ex:
+                    source_error = str(ex)
                     logger.warning(f"Failed to list blobs for location {idx}: {ex}")
-                if not files:
-                    files = ALL_CONTAINER_BLOBS
-            elif "filesystem" in loc_type or "local" in loc_type:
-                path = loc.get("path")
-                if path and os.path.exists(path):
-                    if os.path.isdir(path):
-                        files = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
-                    else:
-                        files = [os.path.basename(path)]
-                if not files:
-                    files = ALL_CONTAINER_BLOBS
-            elif "database" in loc_type or "sql" in loc_type:
-                cached_tables = _SCHEMA_CACHE.get("tables")
-                files = cached_tables if isinstance(cached_tables, list) and len(cached_tables) > 0 else sql_default_tables
-            else:
-                files = ALL_CONTAINER_BLOBS
 
-            out.append(
-                {
-                    "index": idx,
-                    "id": loc.get("id") or loc.get("label") or loc.get("name") or None,
-                    "type": loc.get("type"),
-                    "files": files,
-                }
-            )
-        return {"sources_path": sources_path, "location_count": len(out), "locations": out}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            elif "database" in loc_type or "sql" in loc_type:
+                try:
+                    cached_tables = _SCHEMA_CACHE.get("tables")
+                    if isinstance(cached_tables, list) and len(cached_tables) > 0:
+                        files = cached_tables
+                    else:
+                        # Attempt to discover tables dynamically
+                        from agent.mcp_interface import list_tables
+                        if os.path.isfile(sources_path):
+                            with open(sources_path, "r", encoding="utf-8") as f:
+                                files = list_tables(f.read())
+                except Exception as ex:
+                    source_error = str(ex)
+                    logger.warning(f"Failed to resolve SQL tables for location {idx}: {ex}")
+
+            elif "filesystem" in loc_type or "local" in loc_type:
+                try:
+                    path = loc.get("path")
+                    if path and os.path.exists(path):
+                        if os.path.isdir(path):
+                            files = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
+                        else:
+                            files = [os.path.basename(path)]
+                except Exception as ex:
+                    source_error = str(ex)
+                    logger.warning(f"Failed to list filesystem files for location {idx}: {ex}")
+
+        except Exception as loc_err:
+            source_error = str(loc_err)
+            logger.error(f"Unexpected error inspecting source {idx} ({loc_type}): {loc_err}")
+
+        out.append(
+            {
+                "index": idx,
+                "id": loc.get("id") or loc.get("label") or loc.get("name") or f"source_{idx}",
+                "type": loc.get("type"),
+                "files": files,
+                "error": source_error,
+            }
+        )
+
+    return {"sources_path": sources_path, "location_count": len(out), "locations": out}
 
 
 @app.post("/assess")

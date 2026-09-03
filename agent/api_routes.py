@@ -336,8 +336,13 @@ def api_sources(_auth: None = Depends(require_backend_token)) -> Dict[str, Any]:
     """
     sources_path = os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml"
     try:
-        import main as _main
-        cfg = _main.load_config(sources_path)
+        try:
+            from agent.bootstrap import load_config
+            cfg = load_config(sources_path)
+        except Exception:
+            import yaml
+            with open(sources_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
         source_cfg = cfg.get("source", cfg) or {}
         locations = source_cfg.get("locations", []) or []
         # Return only minimal location metadata
@@ -352,7 +357,8 @@ def api_sources(_auth: None = Depends(require_backend_token)) -> Dict[str, Any]:
             )
         return {"sources_path": sources_path, "location_count": len(out), "locations": out}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to load sources in api_routes: {e}")
+        return {"sources_path": sources_path, "location_count": 0, "locations": []}
 
 
 @router.post("/assess")
