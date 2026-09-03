@@ -259,8 +259,8 @@ async def auth_and_logging_middleware(request: Request, call_next):
     request.state.request_id = rid
     try:
         _limiter.check(client_ip(request))
-        # Require auth for everything except health
-        if request.url.path not in ("/", "/healthz", "/readyz") and not request.url.path.startswith("/api/v1"):
+        # Require auth for everything except health and Azure internal probes
+        if request.url.path not in ("/", "/healthz", "/readyz", "/robots933456.txt") and not request.url.path.startswith("/api/v1"):
             require_backend_token(request)
         response = await call_next(request)
         response.headers["X-Request-Id"] = rid
