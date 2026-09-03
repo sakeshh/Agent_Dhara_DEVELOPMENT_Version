@@ -72,12 +72,58 @@ def _first_present(d: Dict[str, str], keys: List[str], default=None):
 
 class AzureSQLPythonNetConnector:
     def __init__(self, conn_cfg: Dict[str, str]):
-        if not PYTHONNET_AVAILABLE:
-            raise RuntimeError(
-                "AzureSQLPythonNetConnector is unavailable on this Linux runtime (requires .NET / libmono). "
-                "Use pyodbc or Azure SQL REST / Managed Identity connector instead."
-            )
         self.cfg = conn_cfg
+        self.use_pyodbc = not PYTHONNET_AVAILABLE
+        if self.use_pyodbc:
+            logger.info("Using pyodbc fallback for Azure SQL connection.")
+
+    def _pyodbc_connect(self):
+        import pyodbc
+        server = _first_present(self.cfg, ["server", "Server", "host", "hostname"]) or os.environ.get("AZURE_SQL_SERVER")
+        if server and not server.endswith(".database.windows.net") and "localhost" not in server and "127.0.0.1" not in server and ":" not in server:
+            server = server + ".database.windows.net"
+        database = _first_present(self.cfg, ["database", "Database", "db"]) or os.environ.get("AZURE_SQL_DATABASE")
+        user = (
+            _first_present(self.cfg, ["user", "username", "User Id", "UserID", "uid"])
+            or os.environ.get("AZURE_SQL_USERNAME")
+            or os.environ.get("AZURE_SQL_USER")
+        )
+        password = _first_present(self.cfg, ["password", "Password", "pwd"]) or os.environ.get("AZURE_SQL_PASSWORD")
+
+        if not server or not database:
+            raise ValueError("Missing required connection keys: 'server' and 'database'.")
+
+        driver = "ODBC Driver 18 for SQL Server"
+        try:
+            drivers = pyodbc.drivers()
+            sql_drivers = [d for d in drivers if "sql server" in d.lower() or "odbc driver" in d.lower()]
+            if sql_drivers:
+                for pref in ["ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server", "SQL Server"]:
+                    if any(pref.lower() in d.lower() for d in sql_drivers):
+                        match = [d for d in sql_drivers if pref.lower() in d.lower()]
+                        if match:
+                            driver = match[0]
+                            break
+                else:
+                    driver = sql_drivers[0]
+        except Exception:
+            pass
+
+        parts = [
+            f"Driver={{{driver}}}",
+            f"Server={server}",
+            f"Database={database}",
+        ]
+        if user and password:
+            parts.append(f"Uid={user}")
+            parts.append(f"Pwd={password}")
+        parts.extend([
+            "Encrypt=yes",
+            "TrustServerCertificate=yes",
+            "Connection Timeout=30",
+        ])
+        conn_str = ";".join(parts) + ";"
+        return pyodbc.connect(conn_str, autocommit=True)
 
     def _connect(self):
         server = _first_present(self.cfg, ["server", "Server", "host", "hostname"]) or os.environ.get("AZURE_SQL_SERVER")
@@ -117,6 +163,15 @@ class AzureSQLPythonNetConnector:
         WHERE TABLE_TYPE='BASE TABLE'
         ORDER BY TABLE_SCHEMA, TABLE_NAME
         """
+        if self.use_pyodbc:
+            conn = self._pyodbc_connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(sql)
+                return [f"{row[0]}.{row[1]}" for row in cursor.fetchall()]
+            finally:
+                conn.close()
+
         conn = self._connect()
         try:
             conn.Open()
@@ -157,13 +212,19 @@ class AzureSQLPythonNetConnector:
     ) -> str:
         """
         Export a full table to CSV without storing all rows in memory.
-
-        Notes:
-        - Uses a forward-only reader and writes each row to disk.
-        - Values are written as-is; non-primitive .NET values are stringified.
         """
         output_path = os.path.abspath(output_path)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        if self.use_pyodbc:
+            conn = self._pyodbc_connect()
+            try:
+                table_quoted = self._quote_two_part_name(table)
+                df = pd.read_sql(f"SELECT * FROM {table_quoted}", conn)
+                df.to_csv(output_path, index=False, header=include_header)
+                return output_path
+            finally:
+                conn.close()
 
         conn = self._connect()
         try:
@@ -188,6 +249,15 @@ class AzureSQLPythonNetConnector:
             conn.Close()
 
     def load_table(self, table: str, max_rows: Optional[int] = None) -> pd.DataFrame:
+        if self.use_pyodbc:
+            conn = self._pyodbc_connect()
+            try:
+                table_quoted = self._quote_two_part_name(table)
+                limit = f"TOP {int(max_rows)} " if max_rows and int(max_rows) > 0 else ""
+                return pd.read_sql(f"SELECT {limit}* FROM {table_quoted}", conn)
+            finally:
+                conn.close()
+
         conn = self._connect()
         try:
             conn.Open()
@@ -204,6 +274,14 @@ class AzureSQLPythonNetConnector:
     def preview_table(self, table: str, rows: int = 5) -> pd.DataFrame:
         rows = int(rows) if rows and rows > 0 else 5
         rows = max(1, min(rows, 10000))
+        if self.use_pyodbc:
+            conn = self._pyodbc_connect()
+            try:
+                table_quoted = self._quote_two_part_name(table)
+                return pd.read_sql(f"SELECT TOP {rows} * FROM {table_quoted}", conn)
+            finally:
+                conn.close()
+
         conn = self._connect()
         try:
             conn.Open()
@@ -225,13 +303,34 @@ class AzureSQLPythonNetConnector:
         sql = """
         SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE
         FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = @schema AND TABLE_NAME = @table
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
         ORDER BY ORDINAL_POSITION
         """
+        if self.use_pyodbc:
+            conn = self._pyodbc_connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(sql, (schema, name))
+                cols = []
+                for r in cursor.fetchall():
+                    cols.append({
+                        "name": str(r[0]),
+                        "type": str(r[1]),
+                        "nullable": str(r[2]),
+                        "max_length": (None if r[3] is None else int(r[3])),
+                        "precision": (None if r[4] is None else int(r[4])),
+                        "scale": (None if r[5] is None else int(r[5])),
+                    })
+                return cols
+            finally:
+                conn.close()
+
+        sql_dotnet = sql.replace("?", "@schema", 1)
+        sql_dotnet = sql_dotnet.replace("?", "@table", 1)
         conn = self._connect()
         try:
             conn.Open()
-            cmd = SqlCommand(sql, conn)
+            cmd = SqlCommand(sql_dotnet, conn)
             cmd.Parameters.AddWithValue("@schema", schema)
             cmd.Parameters.AddWithValue("@table", name)
             reader = cmd.ExecuteReader()
@@ -256,25 +355,29 @@ class AzureSQLPythonNetConnector:
         Execute a SELECT query (read-only). Reject non-SELECT statements.
         """
         q = (sql or "").strip()
-        # Basic hardening: single statement, SELECT-only (CTE allowed), no dangerous keywords.
-        # Allow a *trailing* semicolon, but reject multi-statement queries.
         q = q.rstrip().rstrip(";").rstrip()
         if ";" in q:
             raise ValueError("Only a single SELECT statement is allowed.")
         q_norm = q.lower()
-        # SQL Server batch separator can also be used for multi-statement scripts.
         if re.search(r"(?im)^[ \t]*go[ \t]*$", q):
             raise ValueError("Only a single SELECT statement is allowed.")
-        # Allow common-table-expressions: WITH ... SELECT ...
         if not (q_norm.startswith("select") or q_norm.startswith("with")):
             raise ValueError("Only SELECT queries are allowed.")
         banned = ("insert", "update", "delete", "merge", "drop", "alter", "create", "exec", "execute", "truncate")
-        if any(re.search(rf"\\b{kw}\\b", q_norm) for kw in banned):
+        if any(re.search(rf"\b{kw}\b", q_norm) for kw in banned):
             raise ValueError("Query contains forbidden keywords.")
         if max_rows is not None:
             max_rows = int(max_rows) if max_rows and max_rows > 0 else 0
             if max_rows > 0 and " top " not in q_norm[:120]:
                 q = f"SELECT TOP {max_rows} * FROM ({q}) AS q"
+
+        if self.use_pyodbc:
+            conn = self._pyodbc_connect()
+            try:
+                return pd.read_sql(q, conn)
+            finally:
+                conn.close()
+
         conn = self._connect()
         try:
             conn.Open()
@@ -288,35 +391,68 @@ class AzureSQLPythonNetConnector:
         """
         S4-02: SQL Server Pushdown — compute per-column aggregate stats directly
         on the server to avoid pulling all rows into memory.
-
-        Returns:
-        {
-            "row_count": int,
-            "columns": {
-                "<col>": {
-                    "null_count": int,
-                    "null_percentage": float,
-                    "distinct_count": int,
-                    "min_value": str | None,
-                    "max_value": str | None,
-                },
-                ...
-            }
-        }
         """
         table_quoted = self._quote_two_part_name(table)
 
-        # Step 1: Get column names from schema
         if "." in table:
             schema, name = table.split(".", 1)
         else:
             schema, name = "dbo", table
 
+        if self.use_pyodbc:
+            conn = self._pyodbc_connect()
+            try:
+                cursor = conn.cursor()
+                schema_sql = """
+                SELECT COLUMN_NAME, DATA_TYPE
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+                ORDER BY ORDINAL_POSITION
+                """
+                cursor.execute(schema_sql, (schema, name))
+                col_info = [{"name": str(r[0]), "data_type": str(r[1])} for r in cursor.fetchall()]
+                if not col_info:
+                    return {"row_count": 0, "columns": {}}
+
+                agg_parts = ["COUNT(*) AS [__row_count__]"]
+                for ci in col_info:
+                    cname = ci["name"]
+                    quoted = f"[{cname}]"
+                    agg_parts.append(f"SUM(CASE WHEN {quoted} IS NULL THEN 1 ELSE 0 END) AS [{cname}__null_count]")
+                    agg_parts.append(f"COUNT(DISTINCT {quoted}) AS [{cname}__distinct_count]")
+                    agg_parts.append(f"CAST(MIN({quoted}) AS NVARCHAR(MAX)) AS [{cname}__min_value]")
+                    agg_parts.append(f"CAST(MAX({quoted}) AS NVARCHAR(MAX)) AS [{cname}__max_value]")
+
+                agg_sql = f"SELECT {', '.join(agg_parts)} FROM {table_quoted}"
+                cursor.execute(agg_sql)
+                row = cursor.fetchone()
+                row_count = int(row[0]) if row and row[0] is not None else 0
+                result: Dict[str, Any] = {"row_count": row_count, "columns": {}}
+                col_names = [col[0] for col in cursor.description]
+                val_map = dict(zip(col_names, row)) if row else {}
+
+                for ci in col_info:
+                    cname = ci["name"]
+                    null_count = int(val_map.get(f"{cname}__null_count") or 0)
+                    distinct_count = int(val_map.get(f"{cname}__distinct_count") or 0)
+                    min_val = str(val_map.get(f"{cname}__min_value")) if val_map.get(f"{cname}__min_value") is not None else None
+                    max_val = str(val_map.get(f"{cname}__max_value")) if val_map.get(f"{cname}__max_value") is not None else None
+                    null_pct = (null_count / row_count) if row_count > 0 else 0.0
+                    result["columns"][cname] = {
+                        "null_count": null_count,
+                        "null_percentage": round(null_pct, 6),
+                        "distinct_count": distinct_count,
+                        "min_value": min_val,
+                        "max_value": max_val,
+                        "sql_data_type": ci["data_type"],
+                    }
+                return result
+            finally:
+                conn.close()
+
         conn = self._connect()
         try:
             conn.Open()
-
-            # Get column list
             schema_sql = """
             SELECT COLUMN_NAME, DATA_TYPE
             FROM INFORMATION_SCHEMA.COLUMNS
@@ -338,15 +474,12 @@ class AzureSQLPythonNetConnector:
             if not col_info:
                 return {"row_count": 0, "columns": {}}
 
-            # Step 2: Build a single aggregate query for all columns
-            # Use CAST to NVARCHAR for min/max to handle all types uniformly
             agg_parts = ["COUNT(*) AS [__row_count__]"]
             for ci in col_info:
                 cname = ci["name"]
                 quoted = f"[{cname}]"
                 agg_parts.append(f"SUM(CASE WHEN {quoted} IS NULL THEN 1 ELSE 0 END) AS [{cname}__null_count]")
                 agg_parts.append(f"COUNT(DISTINCT {quoted}) AS [{cname}__distinct_count]")
-                # min/max: cast to NVARCHAR for uniform output
                 agg_parts.append(f"CAST(MIN({quoted}) AS NVARCHAR(MAX)) AS [{cname}__min_value]")
                 agg_parts.append(f"CAST(MAX({quoted}) AS NVARCHAR(MAX)) AS [{cname}__max_value]")
 
