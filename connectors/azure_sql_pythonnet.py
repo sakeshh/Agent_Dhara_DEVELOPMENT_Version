@@ -5,57 +5,62 @@ Azure SQL connector using pythonnet (Microsoft.Data.SqlClient or System.Data.Sql
 import os
 import sys
 import re
-import clr_loader
-import pythonnet
-
-# Force .NET Framework runtime if possible (fixes ModuleNotFoundError: No module named 'System.Data')
-try:
-    rt = clr_loader.get_netfx()
-    pythonnet.set_runtime(rt)
-except Exception:
-    pass
-
-import clr
+import logging
+from typing import Any, Dict, List, Optional
 import pandas as pd
 import csv
-from typing import Any, Dict, List, Optional
 
-clr.AddReference("System.Data")
+logger = logging.getLogger("connectors.azure_sql_pythonnet")
 
-# Force .NET SecurityProtocol to support modern TLS versions (TLS 1.1/1.2/1.3)
-# Azure SQL blocks legacy TLS 1.0/SSL3 which older .NET runtimes default to.
-try:
-    clr.AddReference("System.Net")
-    from System.Net import ServicePointManager
-    # 768 = Tls11, 3072 = Tls12, 12288 = Tls13
-    ServicePointManager.SecurityProtocol |= 768 | 3072 | 12288
-except Exception:
-    pass
-
+PYTHONNET_AVAILABLE = False
+SqlConnection = None
+SqlCommand = None
 SQLCLIENT_PROVIDER = None
 
-
-def _try_load_microsoft_sqlclient():
-    asm_dir = os.environ.get("SQLCLIENT_ASSEMBLY_DIR")
-    if asm_dir and asm_dir not in sys.path:
-        sys.path.append(asm_dir)
+try:
+    import clr_loader
+    import pythonnet
     try:
-        clr.AddReference("Microsoft.Data.SqlClient")
-        from Microsoft.Data.SqlClient import SqlConnection, SqlCommand  # type: ignore
-        return SqlConnection, SqlCommand
+        rt = clr_loader.get_netfx()
+        pythonnet.set_runtime(rt)
     except Exception:
-        return None
+        pass
 
+    import clr
+    clr.AddReference("System.Data")
 
-_ms = _try_load_microsoft_sqlclient()
-if _ms:
-    SqlConnection, SqlCommand = _ms
-    SQLCLIENT_PROVIDER = "Microsoft.Data.SqlClient"
-else:
-    from System.Data.SqlClient import SqlConnection, SqlCommand  # type: ignore
-    SQLCLIENT_PROVIDER = "System.Data.SqlClient"
+    # Force modern TLS
+    try:
+        clr.AddReference("System.Net")
+        from System.Net import ServicePointManager
+        ServicePointManager.SecurityProtocol |= 768 | 3072 | 12288
+    except Exception:
+        pass
 
-print(f"[INFO] Using SQL Client provider: {SQLCLIENT_PROVIDER}")
+    def _try_load_microsoft_sqlclient():
+        asm_dir = os.environ.get("SQLCLIENT_ASSEMBLY_DIR")
+        if asm_dir and asm_dir not in sys.path:
+            sys.path.append(asm_dir)
+        try:
+            clr.AddReference("Microsoft.Data.SqlClient")
+            from Microsoft.Data.SqlClient import SqlConnection as _SC, SqlCommand as _SCmd
+            return _SC, _SCmd
+        except Exception:
+            return None
+
+    _ms = _try_load_microsoft_sqlclient()
+    if _ms:
+        SqlConnection, SqlCommand = _ms
+        SQLCLIENT_PROVIDER = "Microsoft.Data.SqlClient"
+    else:
+        from System.Data.SqlClient import SqlConnection as _SC, SqlCommand as _SCmd  # type: ignore
+        SqlConnection, SqlCommand = _SC, _SCmd
+        SQLCLIENT_PROVIDER = "System.Data.SqlClient"
+    PYTHONNET_AVAILABLE = True
+    logger.info(f"Using SQL Client provider: {SQLCLIENT_PROVIDER}")
+except Exception as ex:
+    logger.warning(f"pythonnet/.NET runtime not available on this host: {ex}")
+    PYTHONNET_AVAILABLE = False
 
 
 def _first_present(d: Dict[str, str], keys: List[str], default=None):
@@ -67,6 +72,11 @@ def _first_present(d: Dict[str, str], keys: List[str], default=None):
 
 class AzureSQLPythonNetConnector:
     def __init__(self, conn_cfg: Dict[str, str]):
+        if not PYTHONNET_AVAILABLE:
+            raise RuntimeError(
+                "AzureSQLPythonNetConnector is unavailable on this Linux runtime (requires .NET / libmono). "
+                "Use pyodbc or Azure SQL REST / Managed Identity connector instead."
+            )
         self.cfg = conn_cfg
 
     def _connect(self):
