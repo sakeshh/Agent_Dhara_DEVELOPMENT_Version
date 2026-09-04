@@ -4,6 +4,7 @@ from typing import Dict, Any, List, Optional, Tuple
 import logging
 import re
 import numpy as np
+from datetime import date, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -366,8 +367,6 @@ def run_gx_validation(
                             regex=r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                         )
                     elif semantic_type in ("date", "datetime", "timestamp"):
-                        import pandas as pd
-                        from datetime import date, datetime
                         is_already_dt = pd.api.types.is_datetime64_any_dtype(s)
                         if not is_already_dt and not s.dropna().empty:
                             first_val = s.dropna().iloc[0]

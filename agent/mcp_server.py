@@ -23,7 +23,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -312,6 +312,11 @@ def healthz_fabric_env() -> Dict[str, Any]:
 def readyz() -> Dict[str, str]:
     return {"ok": "true"}
 
+
+@app.get("/robots933456.txt", tags=["health"])
+def robots_probe() -> PlainTextResponse:
+    """Azure App Service health probe endpoint — must return 200 OK."""
+    return PlainTextResponse(content="", status_code=200)
 
 def validate_startup_config():
     problems = []

@@ -427,7 +427,10 @@ _CATALOG: Dict[str, List[ResolutionOption]] = {
         _opt("keep_as_is", "Keep as-is", "noop"),
     ],
     "implausible_age": [
-        _opt("clip_or_flag", "Clip or flag out-of-range ages", "clip_or_flag", recommended=True, description="Clip age values to range [0, 150] or flag them."),
+        _opt("flag_outliers", "Flag out-of-range ages", "flag_outliers", recommended=True,
+             description="Add audit column flagging age values outside [0, 150]. Safe Phase 1 default."),
+        _opt("clip_outliers", "Clip age to valid range [0, 150]", "clip_outliers",
+             description="Cap age values to [0, 150]. Changes business values — approve carefully."),
         _opt("keep_as_is", "Keep as-is", "noop"),
     ],
     "implausible_percentage": [
@@ -507,6 +510,41 @@ _CATALOG: Dict[str, List[ResolutionOption]] = {
     "orphan_foreign_key_rows": [
         _opt("validate_and_partition_relationship", "Flag relationship orphans", "validate_and_partition_relationship", recommended=True, description="Validate relationship key; partition into valid and quarantine tables."),
         _opt("keep_as_is", "Keep as-is", "noop"),
+    ],
+
+    # ── Proactive suggestions — emitted by transformation_suggester for well-known column patterns ──
+    # These have clear, deterministic actions and should never fall through to the dynamic "Unknown" fallback.
+    "proactive_trim": [
+        _opt("trim", "Trim leading/trailing whitespace (auto)", "trim",
+             recommended=True,
+             description="Remove leading and trailing whitespace. Safe, non-destructive operation."),
+        _opt("keep_as_is", "Keep as-is (skip)", "noop"),
+    ],
+    "proactive_parse_dates": [
+        _opt("parse_dates", "Parse and standardize date format", "parse_dates",
+             recommended=True,
+             description="Convert and validate date strings into standard ISO format. Quarantines invalid dates."),
+        _opt("keep_as_is", "Keep as-is (skip)", "noop"),
+    ],
+    "proactive_sanitize_email": [
+        _opt("sanitize_email", "Sanitize and validate email addresses", "sanitize_email",
+             recommended=True,
+             description="Lowercase, trim, validate email syntax and nullify malformed addresses. Reduces PII exposure."),
+        _opt("keep_as_is", "Keep as-is (accept privacy risk)", "noop"),
+    ],
+    "proactive_normalize_phone": [
+        _opt("normalize_phone", "Normalize phone number format", "normalize_phone",
+             recommended=True,
+             description="Standardize phone numbers by stripping non-numeric characters. Reduces PII exposure."),
+        _opt("keep_as_is", "Keep as-is (accept privacy risk)", "noop"),
+    ],
+    "proactive_lowercase": [
+        _opt("lowercase", "Normalize to lowercase", "lowercase",
+             recommended=True,
+             description="Convert text column values to lowercase for consistent matching and deduplication."),
+        _opt("trim_preserve_case", "Trim only (preserve case)", "trim_preserve_case",
+             description="Remove whitespace without altering case. Suitable for display fields."),
+        _opt("keep_as_is", "Keep as-is (skip)", "noop"),
     ],
 }
 

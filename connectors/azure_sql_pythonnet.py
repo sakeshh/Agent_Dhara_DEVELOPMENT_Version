@@ -77,6 +77,73 @@ class AzureSQLPythonNetConnector:
         if self.use_pyodbc:
             logger.info("Using pyodbc fallback for Azure SQL connection.")
 
+    def _get_sqlalchemy_engine(self):
+        """
+        Build a SQLAlchemy engine from the same config used by _pyodbc_connect.
+        Returns None if sqlalchemy is not installed (will fall back to raw pyodbc).
+        """
+        try:
+            from sqlalchemy import create_engine
+        except ImportError:
+            return None
+        import pyodbc
+        server = _first_present(self.cfg, ["server", "Server", "host", "hostname"]) or os.environ.get("AZURE_SQL_SERVER")
+        if server and not server.endswith(".database.windows.net") and "localhost" not in server and "127.0.0.1" not in server and ":" not in server:
+            server = server + ".database.windows.net"
+        database = _first_present(self.cfg, ["database", "Database", "db"]) or os.environ.get("AZURE_SQL_DATABASE")
+        user = (
+            _first_present(self.cfg, ["user", "username", "User Id", "UserID", "uid"])
+            or os.environ.get("AZURE_SQL_USERNAME")
+            or os.environ.get("AZURE_SQL_USER")
+        )
+        password = _first_present(self.cfg, ["password", "Password", "pwd"]) or os.environ.get("AZURE_SQL_PASSWORD")
+        if not server or not database:
+            return None
+        driver = "ODBC Driver 18 for SQL Server"
+        try:
+            sql_drivers = [d for d in pyodbc.drivers() if "sql server" in d.lower() or "odbc driver" in d.lower()]
+            for pref in ["ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server", "SQL Server"]:
+                if any(pref.lower() in d.lower() for d in sql_drivers):
+                    driver = [d for d in sql_drivers if pref.lower() in d.lower()][0]
+                    break
+        except Exception:
+            pass
+        try:
+            import urllib.parse
+            if user and password:
+                conn_str = (
+                    f"DRIVER={{{driver}}};SERVER={server};DATABASE={database};"
+                    f"UID={user};PWD={password};Encrypt=yes;TrustServerCertificate=yes;Connection Timeout=30;"
+                )
+            else:
+                conn_str = (
+                    f"DRIVER={{{driver}}};SERVER={server};DATABASE={database};"
+                    "Encrypt=yes;TrustServerCertificate=yes;Authentication=ActiveDirectoryDefault;Connection Timeout=30;"
+                )
+            encoded = urllib.parse.quote_plus(conn_str)
+            return create_engine(f"mssql+pyodbc:///?odbc_connect={encoded}", fast_executemany=True)
+        except Exception:
+            return None
+
+    def _read_sql_pyodbc(self, query: str, conn) -> pd.DataFrame:
+        """
+        pd.read_sql wrapper that prefers SQLAlchemy engine to avoid the DBAPI2 UserWarning.
+        Falls back to raw pyodbc connection with the warning suppressed.
+        """
+        engine = self._get_sqlalchemy_engine()
+        if engine is not None:
+            try:
+                with engine.connect() as sa_conn:
+                    return pd.read_sql(query, sa_conn)
+            except Exception:
+                pass  # fall through to raw pyodbc
+        # Fallback: raw pyodbc — suppress pandas DBAPI2 warning
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*DBAPI2.*", category=UserWarning)
+            warnings.filterwarnings("ignore", message=".*SQLAlchemy.*", category=UserWarning)
+            return pd.read_sql(query, conn)
+
     def _pyodbc_connect(self):
         import pyodbc
         server = _first_present(self.cfg, ["server", "Server", "host", "hostname"]) or os.environ.get("AZURE_SQL_SERVER")
@@ -220,7 +287,7 @@ class AzureSQLPythonNetConnector:
             conn = self._pyodbc_connect()
             try:
                 table_quoted = self._quote_two_part_name(table)
-                df = pd.read_sql(f"SELECT * FROM {table_quoted}", conn)
+                df = self._read_sql_pyodbc(f"SELECT * FROM {table_quoted}", conn)
                 df.to_csv(output_path, index=False, header=include_header)
                 return output_path
             finally:
@@ -254,7 +321,7 @@ class AzureSQLPythonNetConnector:
             try:
                 table_quoted = self._quote_two_part_name(table)
                 limit = f"TOP {int(max_rows)} " if max_rows and int(max_rows) > 0 else ""
-                return pd.read_sql(f"SELECT {limit}* FROM {table_quoted}", conn)
+                return self._read_sql_pyodbc(f"SELECT {limit}* FROM {table_quoted}", conn)
             finally:
                 conn.close()
 
@@ -278,7 +345,7 @@ class AzureSQLPythonNetConnector:
             conn = self._pyodbc_connect()
             try:
                 table_quoted = self._quote_two_part_name(table)
-                return pd.read_sql(f"SELECT TOP {rows} * FROM {table_quoted}", conn)
+                return self._read_sql_pyodbc(f"SELECT TOP {rows} * FROM {table_quoted}", conn)
             finally:
                 conn.close()
 
@@ -374,7 +441,7 @@ class AzureSQLPythonNetConnector:
         if self.use_pyodbc:
             conn = self._pyodbc_connect()
             try:
-                return pd.read_sql(q, conn)
+                return self._read_sql_pyodbc(q, conn)
             finally:
                 conn.close()
 

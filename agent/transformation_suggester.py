@@ -23,7 +23,7 @@ ISSUE_TO_ACTION = {
     "invalid_email": "sanitize_email",
     "invalid_phone": "normalize_phone",
     "invalid_numeric": "coerce_numeric",
-    "negative_values": "clip_or_flag",
+    "negative_values": "flag_outliers",
     "suspicious_zero": "zero_to_null",
     "mixed_types": "coerce_numeric",
     "nested_structure": "flatten_nested",
@@ -34,7 +34,7 @@ ISSUE_TO_ACTION = {
     "custom_regex": "regex_replace",
     "custom_not_null": "fill_or_drop",
     "potential_primary_key": "review_manually",
-    "numeric_outliers_iqr": "clip_or_flag",
+    "numeric_outliers_iqr": "flag_outliers",
     "extremely_long_strings": "regex_replace",
     "control_characters_in_text": "regex_replace",
     "empty_string_values": "fill_or_drop",
@@ -66,11 +66,11 @@ ISSUE_TO_ACTION = {
     "internal_whitespace": "trim",
     "html_tags_in_text": "regex_replace",
     "non_ascii_characters": "regex_replace",
-    "numeric_outliers_zscore": "clip_or_flag",
+    "numeric_outliers_zscore": "flag_outliers",
     "mixed_scalar_types": "coerce_numeric",
     "mixed_phone_formats": "normalize_phone",
     "invalid_url": "review_manually",
-    "implausible_age": "clip_or_flag",
+    "implausible_age": "flag_outliers",
     "implausible_percentage": "range_clip",
     "string_with_only_digits_in_text_column": "cast_type",
     "repeated_token_in_string": "review_manually",
@@ -448,12 +448,31 @@ def suggest_transformations(
 
             # 4. Categorical and text columns -> trim and case normalization (trim + lowercase)
             elif sem_type in ("categorical", "text") or any(x in col_lower for x in ("city", "status", "state", "category", "gender", "country", "name")):
+                # Determine if the column is 'protected' — i.e. should never receive a lowercase or case suggestion
+                is_numeric_sem = sem_type in (
+                    "numeric_measure", "numeric", "metric", "amount", "currency", "salary",
+                    "price", "quantity", "count", "rate", "ratio", "score", "weight",
+                    "percentage", "percent", "budget", "revenue", "cost", "profit", "tax",
+                    "date", "datetime", "timestamp",
+                    "identifier", "primary_key", "foreign_key",
+                )
+                col_info_check = col_info if isinstance(col_info, dict) else {}
+                col_dtype = str(col_info_check.get("dtype") or col_info_check.get("type") or "").lower()
+                is_numeric_dtype = any(t in col_dtype for t in ("int", "float", "double", "decimal", "numeric", "real"))
                 is_protected = (
-                    sem_type in ("numeric_measure", "numeric", "date", "datetime", "timestamp", "identifier", "primary_key", "foreign_key")
+                    is_numeric_sem
+                    or is_numeric_dtype
                     or col_lower.endswith(("_id", "_key", "id", "key", "code"))
                     or any(x in col_lower for x in ("name", "first_name", "last_name", "fullname", "desc", "description"))
+                    or any(x in col_lower for x in ("salary", "amount", "price", "cost", "budget", "revenue", "profit", "tax", "rate", "score", "count", "qty", "quantity", "weight", "ratio", "percent"))
                 )
-                if not any(s["dataset"] == ds_name and s["column"] == col_name and s["suggested_action"] == "trim" for s in suggested):
+                # Skip trim for date/numeric columns — the Step Filter will drop it anyway
+                is_date_or_numeric = (
+                    is_numeric_sem
+                    or is_numeric_dtype
+                    or any(x in col_lower for x in ("date", "time", "stamp", "salary", "amount", "price", "cost", "qty", "quantity"))
+                )
+                if not is_date_or_numeric and not any(s["dataset"] == ds_name and s["column"] == col_name and s["suggested_action"] == "trim" for s in suggested):
                     suggested.append({
                         "dataset": ds_name,
                         "column": col_name,
