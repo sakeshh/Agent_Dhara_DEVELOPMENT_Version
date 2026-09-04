@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Optional, Tuple
 import logging
 import re
 import numpy as np
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -499,10 +499,12 @@ def run_gx_validation(
 
                     results_processed.append({
                         "expectation": exp_type_str,
+                        "expectation_type": exp_type,
                         "column": col,
                         "success": success,
                         "details": details,
                         "unexpected_count": unexp_cnt,
+                        "element_count": len(validation_df),
                         "unexpected_index_list": unexp_indices,
                         "unexpected_values": unexp_vals
                     })
@@ -851,13 +853,25 @@ def run_gx_validation(
                         # limit rows for near duplicate checks to avoid extreme latency
                         sub_df = sub_df.head(1000)
                         
+                        ignored_domains = nd_cfg.get("ignored_email_domains")
+                        if ignored_domains and isinstance(ignored_domains, (list, tuple, set)):
+                            escaped_domains = "|".join(re.escape(str(d).strip().lstrip("@.")) for d in ignored_domains if str(d).strip())
+                            domain_re = rf"@(?:{escaped_domains})\.[a-z]{{2,}}" if escaped_domains else r"@(?:gmail|yahoo|hotmail|outlook|corp|company)\.[a-z]{2,}"
+                        elif isinstance(ignored_domains, str) and ignored_domains.strip():
+                            domain_re = ignored_domains.strip()
+                        else:
+                            domain_re = r"@(?:gmail|yahoo|hotmail|outlook|corp|company)\.[a-z]{2,}"
+
                         def _format_row_for_sim(row):
                             tokens = []
                             for val in row:
                                 if pd.notna(val):
                                     s = str(val).strip()
                                     if s and s.lower() not in ("nan", "none", "null", "n/a", "???", "tbd", "unknown"):
-                                        tokens.append(s)
+                                        # Strip common/configured email domains so users sharing @gmail.com don't artificially match
+                                        s_clean = re.sub(domain_re, "", s, flags=re.IGNORECASE)
+                                        if s_clean.strip():
+                                            tokens.append(s_clean.strip().lower())
                             return " | ".join(tokens)
 
                         row_strings = sub_df.apply(_format_row_for_sim, axis=1).tolist()
@@ -879,27 +893,34 @@ def run_gx_validation(
                                 if ratio >= threshold:
                                     near_dups.append((row_indices[i], row_indices[j], ratio / 100.0))
                         if near_dups:
-                            # Connected-component clustering using DFS
-                            adj = {}
-                            for a, b, s in near_dups:
-                                adj.setdefault(a, []).append(b)
-                                adj.setdefault(b, []).append(a)
-                            
-                            visited = set()
+                            # Complete-linkage / clique clustering to prevent transitive chaining (A-B-C... 48 rows)
+                            # Every member added to a cluster must satisfy the similarity threshold with ALL other members
+                            pair_weights = {(min(a, b), max(a, b)): s for a, b, s in near_dups}
                             clusters = []
-                            for node in adj:
-                                if node not in visited:
-                                    component = []
-                                    queue = [node]
-                                    visited.add(node)
-                                    while queue:
-                                        curr = queue.pop()
-                                        component.append(curr)
-                                        for neighbor in adj[curr]:
-                                            if neighbor not in visited:
-                                                visited.add(neighbor)
-                                                queue.append(neighbor)
-                                    clusters.append(component)
+                            for a, b, s in sorted(near_dups, key=lambda x: x[2], reverse=True):
+                                placed = False
+                                for cluster in clusters:
+                                    if a in cluster and b not in cluster:
+                                        if all((min(b, m), max(b, m)) in pair_weights for m in cluster):
+                                            cluster.add(b)
+                                            placed = True
+                                            break
+                                    elif b in cluster and a not in cluster:
+                                        if all((min(a, m), max(a, m)) in pair_weights for m in cluster):
+                                            cluster.add(a)
+                                            placed = True
+                                            break
+                                    elif a in cluster and b in cluster:
+                                        placed = True
+                                        break
+                                if not placed:
+                                    in_any = any(a in c or b in c for c in clusters)
+                                    if not in_any:
+                                        clusters.append({a, b})
+
+                            visited = set()
+                            for c in clusters:
+                                visited.update(c)
                             
                             cluster_count = len(clusters)
                             distinct_rows_involved = len(visited)
@@ -1297,8 +1318,35 @@ def run_gx_validation(
                                     "unexpected_values": v[mask].head(5).tolist()
                                 })
 
+                # 18.5 Invalid / Impossible Calendar Dates (e.g. 2022-02-30, 2023-13-01)
+                for col_name in validation_df.columns:
+                    meta = cols_meta.get(col_name, {})
+                    semantic = (meta.get("semantic_type") or "").lower()
+                    if semantic in ("date", "datetime", "timestamp") or any(k in col_name.lower() for k in ("_date", "date_", "dt")):
+                        s_raw = validation_df[col_name].dropna()
+                        if not s_raw.empty and not pd.api.types.is_datetime64_any_dtype(s_raw):
+                            try:
+                                parsed = pd.to_datetime(s_raw, errors="coerce", format="mixed")
+                                invalid_mask = parsed.isna()
+                                cnt = int(invalid_mask.sum())
+                                if cnt > 0:
+                                    bad_idx = s_raw.index[invalid_mask].tolist()
+                                    bad_vals = s_raw[invalid_mask].head(5).astype(str).tolist()
+                                    results_processed.append({
+                                        "expectation": "invalid_date_format",
+                                        "expectation_type": "invalid_date_format",
+                                        "column": col_name,
+                                        "success": False,
+                                        "details": f"{cnt} invalid or impossible calendar date(s) (e.g. {bad_vals[0] if bad_vals else ''})",
+                                        "unexpected_count": cnt,
+                                        "element_count": len(validation_df),
+                                        "unexpected_index_list": bad_idx[:50],
+                                        "unexpected_values": bad_vals,
+                                    })
+                            except Exception:
+                                pass
+
                 # 19. Future Dates
-                from datetime import datetime, timedelta
                 now = datetime.now()
                 for col_name in validation_df.columns:
                     meta = cols_meta.get(col_name, {})
@@ -1941,7 +1989,8 @@ def run_gx_validation(
                         "unsuccessful_expectations": unsucc_cnt,
                         "success_percent": pct,
                     },
-                    "results": results_processed
+                    "results": results_processed,
+                    "results_processed": results_processed
                 }
 
             except Exception as e:

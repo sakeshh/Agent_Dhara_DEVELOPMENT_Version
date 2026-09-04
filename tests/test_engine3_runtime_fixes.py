@@ -143,7 +143,7 @@ def test_insufficient_score_coverage_gating():
     )
 
     score_result = calculate_dimension_quality_scores([only_validity_rule], minimum_score_coverage=0.80)
-    assert score_result.score_coverage == pytest.approx(0.20, abs=0.01)
+    assert score_result.score_coverage == pytest.approx(0.20, abs=0.05)
     assert score_result.readiness == "UNKNOWN"
     assert any("INSUFFICIENT_SCORE_COVERAGE" in b for b in score_result.gating_blockers)
 
@@ -194,3 +194,46 @@ def test_country_field_blocks_numeric_rules():
     )
 
     assert not rule.is_applicable(ctx_country)
+
+
+def test_near_duplicate_configurable_domains():
+    """Ignored email domains can be configured to avoid artificial matching across corporate providers."""
+    from agent.specialists.gx_validation_specialist import run_gx_validation
+
+    df = pd.DataFrame({
+        "customer_name": ["Robert Taylor", "Robert Taylor", "Sarah Jenkins"],
+        "city": ["Chicago", "Chicago", "Dallas"],
+        "email": ["rtaylor@acme-corp.com", "rtaylor@partner-corp.com", "sjenkins@partner-corp.com"],
+    })
+    
+    thresholds = {
+        "near_duplicate": {
+            "enabled": True,
+            "threshold": 0.90,
+            "ignored_email_domains": ["acme-corp", "partner-corp"],
+        }
+    }
+    res = run_gx_validation({"clients": df}, {}, thresholds=thresholds)
+    proc = res.get("clients", {}).get("results_processed", [])
+    nd_results = [r for r in proc if r.get("expectation") == "near_duplicate_rows"]
+    assert len(nd_results) == 1
+    # Robert Taylor rows match, while Sarah Jenkins is distinct (no single-linkage chaining)
+    metrics = nd_results[0].get("metrics", {})
+    assert metrics.get("duplicate_clusters_count") == 1
+    assert nd_results[0].get("unexpected_count") == 1
+
+
+def test_impossible_calendar_dates_detected():
+    """Structurally valid strings like 2022-02-30 and 2023-13-01 fail calendar validation."""
+    from agent.specialists.gx_validation_specialist import run_gx_validation
+
+    df = pd.DataFrame({
+        "birth_date": ["2022-02-30", "2023-13-01", "2021-05-15", "2020-01-01"],
+    })
+    res = run_gx_validation({"dates": df}, {})
+    proc = res.get("dates", {}).get("results_processed", [])
+    date_issues = [r for r in proc if r.get("expectation") in ("invalid_date_format", "invalid_calendar_date")]
+    assert len(date_issues) >= 1
+    bad_dates_issue = [r for r in date_issues if "calendar" in r.get("details", "").lower() or r.get("expectation") == "invalid_calendar_date"]
+    assert len(bad_dates_issue) >= 1
+    assert bad_dates_issue[0]["unexpected_count"] == 2

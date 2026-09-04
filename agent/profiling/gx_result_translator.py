@@ -33,37 +33,106 @@ log_component_startup("GXResultTranslator", "3.1.0")
 
 
 # ── GX expectation_type → canonical Dhara rule_id ─────────────────────────────
+# ── GX expectation_type → canonical Dhara rule_id ─────────────────────────────
 GX_EXPECTATION_TO_RULE_ID: Dict[str, str] = {
     "expect_column_values_to_not_be_null":                "column.not_null",
+    "column_values_to_not_be_null":                       "column.not_null",
+    "column values to not be null":                       "column.not_null",
     "expect_column_values_to_be_unique":                  "column.unique",
+    "column_values_to_be_unique":                         "column.unique",
+    "column values to be unique":                         "column.unique",
     "expect_compound_columns_to_be_unique":               "compound_key.unique",
+    "compound_columns_to_be_unique":                      "compound_key.unique",
+    "compound columns to be unique":                      "compound_key.unique",
     "expect_column_values_to_be_in_set":                  "column.allowed_values",
+    "column_values_to_be_in_set":                         "column.allowed_values",
+    "column values to be in set":                         "column.allowed_values",
     "expect_column_values_to_match_regex":                "column.regex",
+    "column_values_to_match_regex":                       "column.regex",
+    "column values to match regex":                       "column.regex",
     "expect_column_values_to_be_between":                 "column.numeric_range",
+    "column_values_to_be_between":                        "column.numeric_range",
+    "column values to be between":                        "column.numeric_range",
     "expect_column_value_lengths_to_be_between":          "column.length",
+    "column_value_lengths_to_be_between":                 "column.length",
+    "column value lengths to be between":                 "column.length",
     "expect_table_columns_to_match_ordered_list":         "table.required_columns",
+    "table_columns_to_match_ordered_list":                "table.required_columns",
+    "table columns to match ordered list":                "table.required_columns",
     "expect_table_columns_to_match_set":                  "table.required_columns",
+    "table_columns_to_match_set":                         "table.required_columns",
     "expect_table_row_count_to_be_between":               "table.row_count",
+    "table_row_count_to_be_between":                      "table.row_count",
+    "table row count to be between":                      "table.row_count",
     "expect_column_values_to_be_dateutil_parseable":      "column.date_parseable",
+    "column_values_to_be_dateutil_parseable":             "column.date_parseable",
+    "column values to be dateutil parseable":              "column.date_parseable",
     "expect_column_values_to_be_in_type_list":            "column.type_check",
+    "column_values_to_be_in_type_list":                   "column.type_check",
+    "column values to be in type list":                   "column.type_check",
     "expect_column_values_to_not_be_in_set":              "column.sentinel_values",
+    "column_values_to_not_be_in_set":                     "column.sentinel_values",
+    "column values to not be in set":                     "column.sentinel_values",
+    "invalid_email":                                      "column.regex",
+    "invalid_phone":                                      "column.regex",
+    "invalid_uuid":                                       "column.regex",
+    "negative_values":                                    "column.numeric_range",
+    "sentinel_numeric_value":                             "column.sentinel_values",
+    "suspicious_zero":                                    "column.sentinel_values",
+    "invalid_date_format":                                "column.date_parseable",
+    "future_dates":                                       "column.date_range",
+    "ancient_dates":                                      "column.date_range",
 }
 
 # ── GX expectation_type → DQ dimension ───────────────────────────────────────
 GX_EXPECTATION_TO_DIMENSION: Dict[str, str] = {
     "expect_column_values_to_not_be_null":           "completeness",
+    "column_values_to_not_be_null":                  "completeness",
+    "column values to not be null":                  "completeness",
     "expect_column_values_to_be_unique":             "uniqueness",
+    "column_values_to_be_unique":                    "uniqueness",
+    "column values to be unique":                    "uniqueness",
     "expect_compound_columns_to_be_unique":          "uniqueness",
+    "compound_columns_to_be_unique":                 "uniqueness",
+    "compound columns to be unique":                 "uniqueness",
     "expect_column_values_to_be_in_set":             "conformity",
+    "column_values_to_be_in_set":                    "conformity",
+    "column values to be in set":                    "conformity",
     "expect_column_values_to_match_regex":           "conformity",
+    "column_values_to_match_regex":                  "conformity",
+    "column values to match regex":                  "conformity",
     "expect_column_values_to_be_between":            "validity",
+    "column_values_to_be_between":                   "validity",
+    "column values to be between":                   "validity",
     "expect_column_value_lengths_to_be_between":     "validity",
+    "column_value_lengths_to_be_between":            "validity",
+    "column value lengths to be between":            "validity",
     "expect_table_columns_to_match_ordered_list":    "conformity",
+    "table_columns_to_match_ordered_list":           "conformity",
+    "table columns to match ordered list":           "conformity",
     "expect_table_columns_to_match_set":             "conformity",
+    "table_columns_to_match_set":                    "conformity",
     "expect_table_row_count_to_be_between":          "completeness",
+    "table_row_count_to_be_between":                 "completeness",
+    "table row count to be between":                 "completeness",
     "expect_column_values_to_be_dateutil_parseable": "validity",
+    "column_values_to_be_dateutil_parseable":        "validity",
+    "column values to be dateutil parseable":         "validity",
     "expect_column_values_to_be_in_type_list":       "validity",
-    "expect_column_values_to_not_be_in_set":         "validity",
+    "column_values_to_be_in_type_list":              "validity",
+    "column values to be in type list":              "validity",
+    "expect_column_values_to_not_be_in_set":         "accuracy",
+    "column_values_to_not_be_in_set":                "accuracy",
+    "column values to not be in set":                "accuracy",
+    "invalid_email":                                 "conformity",
+    "invalid_phone":                                 "conformity",
+    "invalid_uuid":                                  "conformity",
+    "negative_values":                               "validity",
+    "sentinel_numeric_value":                        "accuracy",
+    "suspicious_zero":                               "accuracy",
+    "invalid_date_format":                           "validity",
+    "future_dates":                                  "timeliness",
+    "ancient_dates":                                 "timeliness",
 }
 
 
@@ -157,14 +226,17 @@ def translate_gx_result_list(
         ]
 
     for r in gx_result_list:
-        # ── Extract config and outcome ────────────────────────────────────────
         exp_cfg = getattr(r, "expectation_config", None) if not isinstance(r, dict) else r.get("expectation_config")
-        kwargs = _extract_gx_kwargs(exp_cfg)
-        exp_type = _extract_gx_exp_type(exp_cfg)
-
-        col = kwargs.get("column") or "-"
-        if col == "-" and "column_list" in kwargs:
-            col = ",".join(str(c) for c in kwargs["column_list"])
+        if exp_cfg:
+            kwargs = _extract_gx_kwargs(exp_cfg)
+            exp_type = _extract_gx_exp_type(exp_cfg)
+            col = kwargs.get("column") or "-"
+            if col == "-" and "column_list" in kwargs:
+                col = ",".join(str(c) for c in kwargs["column_list"])
+        else:
+            exp_type = r.get("expectation_type") or r.get("expectation") or "unknown"
+            col = r.get("column") or "-"
+            kwargs = {"column": col}
 
         rule_id = GX_EXPECTATION_TO_RULE_ID.get(exp_type, f"gx.{exp_type}")
         dimension = GX_EXPECTATION_TO_DIMENSION.get(exp_type, "validity")
@@ -173,6 +245,13 @@ def translate_gx_result_list(
         if isinstance(r, dict):
             success = r.get("success")
             res_dict = r.get("result", {}) or {}
+            if not res_dict:
+                res_dict = {
+                    "unexpected_count": r.get("unexpected_count", 0),
+                    "element_count": r.get("element_count", 0),
+                    "unexpected_index_list": r.get("unexpected_index_list", []),
+                    "unexpected_list": r.get("unexpected_values", []),
+                }
         else:
             success = getattr(r, "success", None)
             res_obj = getattr(r, "result", None)

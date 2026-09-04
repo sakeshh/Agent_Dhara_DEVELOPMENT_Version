@@ -715,7 +715,14 @@ def build_markdown_report(result: Dict[str, Any]) -> str:
     md.append("|---------|----------|-----------|")
     for d in sc["per_dataset"]:
         r = d["readiness"]
-        ri = "🔴 BLOCKED" if r == "BLOCKED" else ("⚠️ NEEDS WORK" if r == "NEEDS_WORK" else "✅ READY")
+        if r in ("READY", "READY_WITH_WARNINGS"):
+            ri = f"✅ {r}" if r == "READY" else f"⚠️ {r}"
+        elif r == "NEEDS_WORK":
+            ri = "⚠️ NEEDS WORK"
+        elif r == "BLOCKED":
+            ri = "🔴 BLOCKED"
+        else:
+            ri = f"❓ {r}"
         md.append(f"| `{d['name']}` | {d['dq_score']} | {ri} |")
     md.append("")
 
@@ -967,7 +974,12 @@ def build_markdown_report(result: Dict[str, Any]) -> str:
     md.append("## DQ Score Methodology")
     md.append("- **Engine:** `Dimension Scorer v3` (Single Authoritative Source)")
     md.append("- **Formula:** The overall DQ score is the weighted average of evaluated quality dimensions. Dimensions without applicable or successfully evaluated rules are excluded from the effective denominator and reported separately through score coverage.")
-    md.append(f"- **Gating Thresholds:** Score >= {sc.get('thresholds_used', {}).get('ready', 70.0)} is READY (unless gating HIGH issues exist); Score < {sc.get('thresholds_used', {}).get('blocked', 35.0)} is BLOCKED\n")
+    md.append("- **Readiness Classification Policy:**")
+    md.append(f"  - **READY:** Score >= {sc.get('thresholds_used', {}).get('ready', 70.0)}, sufficient coverage (>= 80%), no HIGH issues, no configured warning gate.")
+    md.append(f"  - **READY_WITH_WARNINGS:** Score >= {sc.get('thresholds_used', {}).get('ready', 70.0)}, sufficient coverage (>= 80%), no HIGH issues, one or more non-blocking findings (e.g. MEDIUM severity).")
+    md.append(f"  - **NEEDS_WORK:** Score {sc.get('thresholds_used', {}).get('blocked', 35.0)} to < {sc.get('thresholds_used', {}).get('ready', 70.0)}, or unresolved HIGH issue gating an otherwise numerically ready score.")
+    md.append(f"  - **BLOCKED:** Score < {sc.get('thresholds_used', {}).get('blocked', 35.0)}, missing mandatory primary key, or explicit blocking policy violation.")
+    md.append("  - **UNKNOWN:** Insufficient score coverage (< 40%), execution failure, incomplete assessment, or missing mandatory configuration.\n")
 
     
     for ds_name, dq_block in dq_ds.items():
@@ -1034,11 +1046,15 @@ def build_html_report(result: Dict[str, Any]) -> str:
 
     datasets = result.get("datasets", {})
     raw_rels = result.get("relationships", [])
-    active_ds = set(datasets.keys())
-    rels = [
-        r for r in raw_rels
-        if (r.get("parent") or "").split(".")[0] in active_ds or (r.get("child") or "").split(".")[0] in active_ds
-    ]
+    names_sorted = sorted(active_ds, key=len, reverse=True)
+    rels = []
+    for r in raw_rels:
+        p = r.get("parent") or r.get("from") or ""
+        c = r.get("child") or r.get("to") or ""
+        p_ds = _endpoint_to_dataset(p, names_sorted) or (p.rsplit(".", 1)[0] if "." in p else p)
+        c_ds = _endpoint_to_dataset(c, names_sorted) or (c.rsplit(".", 1)[0] if "." in c else c)
+        if p_ds in active_ds or c_ds in active_ds:
+            rels.append(r)
     dq = result.get("data_quality_issues", {})
 
     dq_ds = dq.get("datasets", {})
@@ -1500,8 +1516,51 @@ def build_html_report(result: Dict[str, Any]) -> str:
     datasets_html = "".join(nest_chunks) if ordered_paths else "<p class='muted'>(no datasets)</p>"
 
     def render_rels() -> str:
+        # Cross-dataset candidate column overlaps discovery
+        overlap_rows = []
+        ds_names = sorted(list(datasets.keys()))
+        for i in range(len(ds_names)):
+            for j in range(i + 1, len(ds_names)):
+                d1, d2 = ds_names[i], ds_names[j]
+                cols1 = (datasets[d1].get("columns") or {}) if isinstance(datasets[d1], dict) else {}
+                cols2 = (datasets[d2].get("columns") or {}) if isinstance(datasets[d2], dict) else {}
+                c1_clean = {re.sub(r"[^a-zA-Z0-9]", "", c).lower(): c for c in cols1}
+                c2_clean = {re.sub(r"[^a-zA-Z0-9]", "", c).lower(): c for c in cols2}
+                common = set(c1_clean.keys()) & set(c2_clean.keys())
+                for k in sorted(common):
+                    col1_name = c1_clean[k]
+                    col2_name = c2_clean[k]
+                    c1_meta = cols1.get(col1_name) if isinstance(cols1, dict) else {}
+                    c2_meta = cols2.get(col2_name) if isinstance(cols2, dict) else {}
+                    t1 = c1_meta.get("data_type") or c1_meta.get("type") if isinstance(c1_meta, dict) else None
+                    t2 = c2_meta.get("data_type") or c2_meta.get("type") if isinstance(c2_meta, dict) else None
+                    t_compat = "Compatible" if (t1 and t2 and str(t1).lower() == str(t2).lower()) else ("Compatible" if not (t1 and t2) else f"Check: {t1} vs {t2}")
+                    overlap_rows.append((d1, col1_name, d2, col2_name, t_compat))
+
+        overlaps_html = ""
+        if overlap_rows:
+            rows_html = "".join(
+                f"<tr><td><code>{esc(d1)}.{esc(c1)}</code></td><td><code>{esc(d2)}.{esc(c2)}</code></td>"
+                f"<td>Exact normalized column name</td>"
+                f"<td>{esc(tcompat)}</td>"
+                f"<td>Candidate overlap</td>"
+                f"<td><span class='badge' style='background-color: #64748b; color: #ffffff;'>ADVISORY</span></td>"
+                f"<td>Candidate column overlap detected. Referential integrity is NOT_APPLICABLE until a verified parent-child relationship is explicitly declared and approved.</td></tr>"
+                for d1, c1, d2, c2, tcompat in overlap_rows
+            )
+            overlaps_html = (
+                "<div style='margin-top: 24px;'>"
+                "<h3>Cross-Dataset Column Overlaps (Advisory)</h3>"
+                "<p class='section-lead'>The following datasets share identical or normalized column names. Overlaps are candidate relationships only and are not automatically classified as foreign keys or referential constraints until explicitly declared and approved.</p>"
+                "<div class='table-wrap'><table class='data-table'><thead><tr>"
+                "<th>Dataset A (Column)</th><th>Dataset B (Column)</th><th>Match Type</th><th>Type Compatibility</th><th>Relationship Status</th><th>Gate</th><th>Recommendation / Governance Guidance</th>"
+                "</tr></thead><tbody>" + rows_html + "</tbody></table></div></div>"
+            )
+
         if not rels:
-            return "<p class='muted'>No cross-dataset column overlaps detected (same column name, case-insensitive).</p>"
+            if overlaps_html:
+                return overlaps_html
+            return "<p class='muted'>No cross-dataset column overlaps or relationships detected.</p>"
         
         declared_rels = [r for r in rels if r.get("source") == "declared"]
         inferred_rels = [r for r in rels if r.get("source") != "declared"]
@@ -1657,6 +1716,7 @@ def build_html_report(result: Dict[str, Any]) -> str:
         <p class='section-lead'>Declared relationships are authoritative and gating. Inferred relationships are advisory.</p>
         {declared_html}
         {inferred_html}
+        {overlaps_html}
         """
 
     def render_global() -> str:
@@ -1842,8 +1902,21 @@ def build_html_report(result: Dict[str, Any]) -> str:
         w = max(0.0, min(100.0, pct))
         fc = "score-fill-low" if pct < 35 else ("score-fill-med" if pct < 70 else "score-fill-high")
         br = d["readiness"]
-        rb = "badge-ready" if br == "READY" else ("badge-needs" if br == "NEEDS_WORK" else "badge-blocked")
-        icon = "✅" if br == "READY" else ("⚠️" if br == "NEEDS_WORK" else "🔴")
+        if br == "READY":
+            rb = "badge-ready"
+            icon = "✅"
+        elif br == "READY_WITH_WARNINGS":
+            rb = "badge-ready"
+            icon = "⚠️"
+        elif br == "NEEDS_WORK":
+            rb = "badge-needs"
+            icon = "⚠️"
+        elif br == "BLOCKED":
+            rb = "badge-blocked"
+            icon = "🔴"
+        else:
+            rb = "badge-needs"
+            icon = "❓"
         ds_score_bits.append(
             f'<div class="ds-score-row"><span class="ds-name">{esc(d["name"])}</span>'
             f'<div class="score-bar"><div class="score-fill {fc}" style="width:{w}%"></div></div>'
@@ -2123,12 +2196,14 @@ def build_html_report(result: Dict[str, Any]) -> str:
         </code>
 
         
-        <h4 style="margin-top: 20px;">Readiness Gating Thresholds</h4>
-        <p>Datasets and overall pipelines are gated against the following configured score thresholds:</p>
+        <h4 style="margin-top: 20px;">Readiness Classification Policy</h4>
+        <p>Datasets and overall pipelines are gated against the following configured readiness criteria:</p>
         <ul style="margin-top: 8px; padding-left: 20px; line-height: 1.6;">
-          <li><strong>Score &ge; {scorecard.get('thresholds_used', {}).get('ready', 70.0)}:</strong> READY (unless gating HIGH issues are present, which escalates status to NEEDS_WORK)</li>
-          <li><strong>Score &ge; {scorecard.get('thresholds_used', {}).get('blocked', 35.0)}:</strong> NEEDS_WORK (requires remediation)</li>
-          <li><strong>Score &lt; {scorecard.get('thresholds_used', {}).get('blocked', 35.0)}:</strong> BLOCKED (gated, score below blocked threshold takes precedence over high issues check)</li>
+          <li><strong>READY:</strong> Score &ge; {scorecard.get('thresholds_used', {}).get('ready', 70.0)}, sufficient score coverage (&ge; 80%), no HIGH-severity issues, and no non-blocking warning gates triggered.</li>
+          <li><strong>READY_WITH_WARNINGS:</strong> Score &ge; {scorecard.get('thresholds_used', {}).get('ready', 70.0)}, sufficient score coverage (&ge; 80%), no HIGH-severity issues, with one or more non-blocking findings (e.g. MEDIUM severity) requiring advisory review.</li>
+          <li><strong>NEEDS_WORK:</strong> Score between {scorecard.get('thresholds_used', {}).get('blocked', 35.0)} and {scorecard.get('thresholds_used', {}).get('ready', 70.0)}, or an unresolved gating HIGH-severity issue that gates an otherwise numerically ready score.</li>
+          <li><strong>BLOCKED:</strong> Score &lt; {scorecard.get('thresholds_used', {}).get('blocked', 35.0)}, missing mandatory primary key, or explicit blocking policy violation.</li>
+          <li><strong>UNKNOWN:</strong> Insufficient score coverage (&lt; 40%), execution failure, incomplete assessment, or missing mandatory configuration.</li>
         </ul>
       </div>
       

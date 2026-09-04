@@ -168,12 +168,17 @@ def calculate_dimension_quality_scores(
     readiness = "READY"
     blockers: List[str] = []
 
+    has_high_failures = any(r.severity == "HIGH" and r.status == RuleStatus.FAIL for r in rule_results)
+    has_med_failures = any(r.severity == "MEDIUM" and r.status == RuleStatus.FAIL for r in rule_results)
+
     if overall_score is None:
         readiness = "UNKNOWN"
         blockers.append("NO_SCORE_AVAILABLE")
-    elif score_coverage < minimum_score_coverage:
+    elif score_coverage < 0.40:
         readiness = "UNKNOWN"
-        blockers.append(f"INSUFFICIENT_SCORE_COVERAGE: {score_coverage:.2f} < {minimum_score_coverage:.2f}")
+        blockers.append(f"INSUFFICIENT_SCORE_COVERAGE: {score_coverage:.2f} < 0.40")
+    elif score_coverage < minimum_score_coverage:
+        blockers.append(f"SUBOPTIMAL_SCORE_COVERAGE: {score_coverage:.2f} < {minimum_score_coverage:.2f}")
 
     if has_missing_primary_key:
         readiness = "BLOCKED"
