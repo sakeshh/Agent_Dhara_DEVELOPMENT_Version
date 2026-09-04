@@ -836,19 +836,46 @@ def run_gx_validation(
                 nd_cfg = thresholds.get("near_duplicate") or {}
                 if nd_cfg.get("enabled", True):
                     from rapidfuzz import fuzz
-                    text_cols = [c for c in validation_df.columns if _is_text_dtype(validation_df[c].dtype) and not c.lower().endswith("id")]
+                    def _is_id_like(col_name: str) -> bool:
+                        cl = col_name.lower()
+                        return (
+                            cl.endswith("id")
+                            or cl.endswith("_id")
+                            or cl.endswith("_key")
+                            or cl in ("id", "pk", "uuid", "guid", "code", "identifier")
+                        )
+
+                    text_cols = [c for c in validation_df.columns if _is_text_dtype(validation_df[c].dtype) and not _is_id_like(c)]
                     if len(text_cols) >= 2:
                         sub_df = validation_df[text_cols].dropna(how="all")
                         # limit rows for near duplicate checks to avoid extreme latency
                         sub_df = sub_df.head(1000)
-                        row_strings = sub_df.apply(lambda row: " | ".join(str(val) for val in row), axis=1).tolist()
+                        
+                        def _format_row_for_sim(row):
+                            tokens = []
+                            for val in row:
+                                if pd.notna(val):
+                                    s = str(val).strip()
+                                    if s and s.lower() not in ("nan", "none", "null", "n/a", "???", "tbd", "unknown"):
+                                        tokens.append(s)
+                            return " | ".join(tokens)
+
+                        row_strings = sub_df.apply(_format_row_for_sim, axis=1).tolist()
                         row_indices = sub_df.index.tolist()
-                        threshold = float(nd_cfg.get("threshold", 0.92)) * 100
+                        base_thresh = float(nd_cfg.get("threshold", 0.92)) * 100
+                        # When only 2 text columns exist, require slightly higher threshold (95%) to avoid common token matches
+                        threshold = max(base_thresh, 95.0) if len(text_cols) <= 2 else base_thresh
                         near_dups = []
                         # Compare pairwise
                         for i in range(len(row_strings)):
+                            s_i = row_strings[i]
+                            if len(s_i) < 8:
+                                continue
                             for j in range(i + 1, len(row_strings)):
-                                ratio = fuzz.token_sort_ratio(row_strings[i], row_strings[j])
+                                s_j = row_strings[j]
+                                if len(s_j) < 8:
+                                    continue
+                                ratio = fuzz.token_sort_ratio(s_i, s_j)
                                 if ratio >= threshold:
                                     near_dups.append((row_indices[i], row_indices[j], ratio / 100.0))
                         if near_dups:
@@ -898,6 +925,10 @@ def run_gx_validation(
                                 if row_strings[idx_a] == row_strings[idx_b]:
                                     exact_dup_pairs += 1
                                     
+                            # Report defect count as redundant rows in clusters, capped at total evaluated rows
+                            redundant_rows = max(1, distinct_rows_involved - cluster_count) if distinct_rows_involved > cluster_count else distinct_rows_involved
+                            unexp_cnt = min(len(sub_df), redundant_rows)
+
                             details_msg = (
                                 f"Found {len(near_dups)} near-duplicate pair(s) (similarity >= {threshold/100:.2f}). "
                                 f"Clustering: {cluster_count} cluster(s) involving {distinct_rows_involved} distinct row(s) "
@@ -909,9 +940,16 @@ def run_gx_validation(
                                 "column": "[Row-level]",
                                 "success": False,
                                 "details": details_msg,
-                                "unexpected_count": len(near_dups),
-                                "unexpected_index_list": [a for a, b, s in near_dups],
-                                "unexpected_values": [{"row_index_a": int(a), "row_index_b": int(b), "similarity": float(s)} for a, b, s in near_dups[:10]]
+                                "unexpected_count": unexp_cnt,
+                                "unexpected_index_list": sorted(list(visited))[:100],
+                                "unexpected_values": [{"row_index_a": int(a), "row_index_b": int(b), "similarity": float(s)} for a, b, s in near_dups[:10]],
+                                "metrics": {
+                                    "candidate_pairs_count": len(near_dups),
+                                    "duplicate_clusters_count": cluster_count,
+                                    "distinct_rows_involved": distinct_rows_involved,
+                                    "estimated_redundant_rows": unexp_cnt,
+                                    "exact_duplicate_pairs": exact_dup_pairs,
+                                }
                             })
 
 

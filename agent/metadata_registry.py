@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -70,17 +71,33 @@ def resolve_dataset_manifest(dataset_name: str, manifest: Dict[str, Any]) -> Tup
 
 def validate_manifest_against_schema(manifest_entry: Dict[str, Any], columns: List[str]) -> List[str]:
     """Return human-readable validation errors (empty if OK)."""
+    def _norm(name: Any) -> str:
+        return re.sub(r"[^a-zA-Z0-9]", "", str(name)).lower()
+
     errs: List[str] = []
-    colset = {c.lower() for c in columns}
+    
+    # Check for physical column name collisions under canonical normalization
+    norm_map: Dict[str, List[str]] = {}
+    for c in columns:
+        norm_map.setdefault(_norm(c), []).append(c)
+    for norm_c, orig_cols in norm_map.items():
+        if len(orig_cols) > 1:
+            errs.append(
+                f"metadata_column_ambiguity: multiple physical columns {orig_cols} collapse to canonical '{norm_c}'"
+            )
+
+    colset = set(norm_map.keys())
+    missing_pks = set()
     pk = manifest_entry.get("primary_key") or []
     if isinstance(pk, list):
         for c in pk:
-            if str(c).lower() not in colset:
+            if _norm(c) not in colset:
                 errs.append(f"primary_key column missing from data: {c}")
+                missing_pks.add(_norm(c))
     cols_meta = manifest_entry.get("columns") or {}
     if isinstance(cols_meta, dict):
         for c in cols_meta.keys():
-            if str(c).lower() not in colset:
+            if _norm(c) not in colset and _norm(c) not in missing_pks:
                 errs.append(f"manifest column not in data: {c}")
     return errs
 

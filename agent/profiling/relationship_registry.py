@@ -189,13 +189,19 @@ def discover_inferred_relationships(
 
     min_overlap_count = int(discovery_cfg.get("minimum_overlap_count", 10))
     min_overlap_ratio = float(discovery_cfg.get("minimum_overlap_ratio", 0.10))
-    suffixes = discovery_cfg.get("suffixes") or ["_id", "_key", "_code", "_sku"]
+    suffixes = discovery_cfg.get("suffixes") or ["_id", "_key", "_code", "_sku", "id", "key", "code", "sku"]
 
     def _is_key_like(name: str) -> bool:
         name_lower = name.lower()
-        if name_lower == "id" or name_lower == "sku":
+        if name_lower in ("id", "sku", "pk", "fk", "key", "code"):
             return True
-        return any(name_lower.endswith(s) for s in suffixes)
+        return (
+            any(name_lower.endswith(s) for s in suffixes)
+            or name_lower.endswith("id")
+            or name_lower.endswith("key")
+            or name_lower.endswith("code")
+            or name_lower.endswith("sku")
+        )
 
     names = list(datasets.keys())
     discovered = []
@@ -219,20 +225,21 @@ def discover_inferred_relationships(
                     if not _is_key_like(c2):
                         continue
 
-                    # If names are completely different and neither is 'id', skip unless we have some name similarity
                     c1_lower = c1.lower()
                     c2_lower = c2.lower()
+                    c1_clean = re.sub(r"[^a-zA-Z0-9]", "", c1_lower)
+                    c2_clean = re.sub(r"[^a-zA-Z0-9]", "", c2_lower)
                     
-                    # Compute name similarity score
-                    if c1_lower == c2_lower:
+                    # Compute name similarity score (with separator-insensitive matching)
+                    if c1_clean == c2_clean:
                         name_sim_score = 1.0
-                    elif c1_lower in c2_lower or c2_lower in c1_lower:
+                    elif c1_clean in c2_clean or c2_clean in c1_clean:
                         name_sim_score = 0.7
                     else:
                         name_sim_score = 0.4
 
                     # Only evaluate if there is some name similarity or at least one is named 'id'
-                    if name_sim_score < 0.7 and c1_lower != "id" and c2_lower != "id":
+                    if name_sim_score < 0.7 and c1_clean != "id" and c2_clean != "id":
                         continue
 
                     try:

@@ -60,17 +60,20 @@ _ISSUE_TYPE_TO_DIMENSION: Dict[str, str] = {
     "mixed_scalar_types":              "validity",
     "invalid_date_format":             "validity",
     "mixed_date_formats":              "validity",
-    "future_dates":                    "validity",
-    "ancient_dates":                   "validity",
-    "numeric_outliers_iqr":            "validity",
-    "numeric_outliers_zscore":         "validity",
-    "suspicious_zero":                 "validity",
-    "sentinel_numeric_value":          "validity",
     "negative_values":                 "validity",
     "negative_values_in_non_negative_measure": "validity",
-    "out_of_range":                    "validity",
-    "implausible_age":                 "validity",
-    "implausible_percentage":          "validity",
+    "negative_values_review_required": "validity",
+    "cross_field_non_negative":        "validity",
+    "punctuation_only_value":          "validity",
+    # Accuracy (real-world correctness, plausibility, anomaly detection)
+    "implausible_age":                 "accuracy",
+    "implausible_percentage":          "accuracy",
+    "sentinel_numeric_value":          "accuracy",
+    "suspicious_zero":                 "accuracy",
+    "numeric_outliers_iqr":            "accuracy",
+    "numeric_outliers_zscore":         "accuracy",
+    "multivariate_outliers":           "accuracy",
+    "out_of_range":                    "accuracy",
     # Conformity
     "invalid_email":                   "conformity",
     "invalid_phone":                   "conformity",
@@ -79,6 +82,7 @@ _ISSUE_TYPE_TO_DIMENSION: Dict[str, str] = {
     "invalid_lookup_value":            "conformity",
     "custom_one_of":                   "conformity",
     "string_with_only_digits_in_text_column": "conformity",
+    "dtype_drift":                     "conformity",
     # Consistency
     "formula_rule_violation":          "consistency",
     "custom_rule_violation":           "consistency",
@@ -88,6 +92,8 @@ _ISSUE_TYPE_TO_DIMENSION: Dict[str, str] = {
     "orphan_foreign_key_rows":         "referential_integrity",
     "intra_dataset_orphan_fk":         "referential_integrity",
     # Timeliness
+    "future_dates":                    "timeliness",
+    "ancient_dates":                   "timeliness",
     "date_range_violation":            "timeliness",
     "weekend_date_anomaly":            "timeliness",
     "timezone_inconsistency":          "timeliness",
@@ -217,7 +223,8 @@ def build_rule_results_from_issues(
         severity_str = str(issue.get("severity") or "medium").upper()
         count = int(issue.get("count") or 0)
         rows = issue.get("row_indexes") or []
-        eval_count = max(count, len(rows), 1)
+        eval_units = max(1, n_rows)
+        failed_units = min(count, eval_units)
 
         status = RuleStatus.FAIL if count > 0 else RuleStatus.PASS
 
@@ -230,9 +237,9 @@ def build_rule_results_from_issues(
             dimension=dimension,
             severity=severity_str,
             confidence=1.0,
-            evaluated_count=n_rows,
-            failed_count=count,
-            failure_rate=round(count / max(1, n_rows), 4),
+            evaluated_count=eval_units,
+            failed_count=failed_units,
+            failure_rate=round(failed_units / eval_units, 4),
             affected_rows=rows[:100],
             samples=(issue.get("sample_values") or [])[:25],
             error_message=None,

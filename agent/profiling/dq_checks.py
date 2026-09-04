@@ -443,7 +443,12 @@ def analyze_dataset_quality(
         severity = "medium"
         issue_type = "custom_rule_violation"
         gating = True
-        msg = f"{col}: expectation failed."
+        if details and details != "Validation failed for some values.":
+            msg = f"{col}: {details} ({exp})" if exp else f"{col}: {details}"
+        elif exp:
+            msg = f"{col}: expectation '{exp}' failed ({unexp_cnt} invalid)" if unexp_cnt > 0 else f"{col}: expectation '{exp}' failed."
+        else:
+            msg = f"{col}: expectation failed."
         
         if exp == "placeholder_detected":
             issue_type = "placeholder_detected"

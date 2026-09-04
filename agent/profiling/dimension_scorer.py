@@ -43,6 +43,7 @@ class OverallQualityScore(BaseModel):
     dimension_scores: Dict[str, DimensionScoreBreakdown] = Field(default_factory=dict)
     gating_blockers: List[str] = Field(default_factory=list)
     unevaluated_dimensions: List[str] = Field(default_factory=list)
+    score_calculation_warnings: List[Dict[str, Any]] = Field(default_factory=list)
     policy_version: str = "2026.08.2"
 
 
@@ -55,7 +56,9 @@ def calculate_dimension_quality_scores(
 ) -> OverallQualityScore:
     """
     Computes dimension-based quality scores and evaluates gating overrides.
-    Zero-evaluated dimensions return score=None and effective_weight=0.0.
+    Coverage is computed over applicable dimensions (e.g. referential_integrity
+    is marked NOT_APPLICABLE and excluded from the denominator when no relationship
+    checks exist for the dataset).
     """
     weights = custom_weights or DEFAULT_DIMENSION_WEIGHTS
     dim_results: Dict[str, List[RuleEvaluationResult]] = {dim: [] for dim in weights}
@@ -73,9 +76,9 @@ def calculate_dimension_quality_scores(
             dim_results["validity"].append(res)
 
     dim_breakdowns: Dict[str, DimensionScoreBreakdown] = {}
+    score_warnings: List[Dict[str, Any]] = []
     weighted_score_sum = 0.0
     total_weight_used = 0.0
-    configured_total_weight = sum(weights.values())
     unevaluated_dims: List[str] = []
 
     for dim, weight in weights.items():
@@ -83,9 +86,15 @@ def calculate_dimension_quality_scores(
         eval_rules = [r for r in results if r.status in (RuleStatus.PASS, RuleStatus.FAIL)]
         
         if not eval_rules:
+            # Check if dimension is genuinely applicable to this dataset scan
+            is_applicable = True
+            if dim == "referential_integrity" and not any(r.dimension.lower() == "referential_integrity" for r in rule_results):
+                is_applicable = False
+
+            status = "NOT_EVALUATED" if is_applicable else "NOT_APPLICABLE"
             dim_breakdowns[dim] = DimensionScoreBreakdown(
                 dimension=dim,
-                status="NOT_EVALUATED",
+                status=status,
                 score=None,
                 configured_weight=weight,
                 effective_weight=0.0,
@@ -93,18 +102,36 @@ def calculate_dimension_quality_scores(
                 passed_rules_count=0,
                 failed_rules_count=0
             )
-            unevaluated_dims.append(dim)
+            if is_applicable:
+                unevaluated_dims.append(dim)
             continue
 
         passed = [r for r in eval_rules if r.status == RuleStatus.PASS]
         failed = [r for r in eval_rules if r.status == RuleStatus.FAIL]
         total_eval_units = sum(r.evaluated_count for r in eval_rules)
-        total_failed_units = sum(r.failed_count for r in eval_rules)
+        total_failed_units_raw = sum(r.failed_count for r in eval_rules)
+        total_failed_units = min(total_eval_units, total_failed_units_raw)
 
         if total_eval_units > 0:
-            dim_score = round(100.0 * (1.0 - (total_failed_units / total_eval_units)), 2)
+            raw_score = 100.0 * (1.0 - (total_failed_units_raw / total_eval_units))
+            dim_score = round(max(0.0, min(100.0, raw_score)), 2)
         else:
-            dim_score = round(100.0 * (len(passed) / len(eval_rules)), 2)
+            raw_score = 100.0 * (len(passed) / len(eval_rules))
+            dim_score = round(max(0.0, min(100.0, raw_score)), 2)
+
+        # Telemetry: warn when raw score was outside valid [0, 100] bounds
+        if raw_score < 0.0 or raw_score > 100.0:
+            warn = {
+                "dimension": dim,
+                "raw_score": round(raw_score, 2),
+                "clamped_score": dim_score,
+                "reason": "failed_units_exceeded_evaluated_units" if raw_score < 0.0 else "passed_units_exceeded_evaluated_units",
+                "total_failed_units": total_failed_units_raw,
+                "total_eval_units": total_eval_units,
+            }
+            score_warnings.append(warn)
+            logger.warning("[DQ-Score-Warning] dim=%s raw_score=%.2f clamped=%.2f: %s",
+                           dim, raw_score, dim_score, warn["reason"])
 
         dim_breakdowns[dim] = DimensionScoreBreakdown(
             dimension=dim,
@@ -121,12 +148,17 @@ def calculate_dimension_quality_scores(
         total_weight_used += weight
 
     overall_score = (
-        round(weighted_score_sum / total_weight_used, 2)
+        round(max(0.0, min(100.0, weighted_score_sum / total_weight_used)), 2)
         if total_weight_used > 0 else None
     )
+
+    # Calculate coverage over applicable dimensions rather than all globally configured dimensions
+    applicable_total_weight = sum(
+        bd.configured_weight for bd in dim_breakdowns.values() if bd.status != "NOT_APPLICABLE"
+    )
     score_coverage = (
-        round(total_weight_used / configured_total_weight, 4)
-        if configured_total_weight > 0 else 0.0
+        round(total_weight_used / applicable_total_weight, 4)
+        if applicable_total_weight > 0 else 0.0
     )
 
     # Assessment confidence
@@ -168,6 +200,7 @@ def calculate_dimension_quality_scores(
         dimension_scores=dim_breakdowns,
         gating_blockers=blockers,
         unevaluated_dimensions=unevaluated_dims,
+        score_calculation_warnings=score_warnings,
         policy_version="2026.08.2"
     )
 
