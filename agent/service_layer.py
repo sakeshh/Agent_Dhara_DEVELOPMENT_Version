@@ -2111,8 +2111,13 @@ def build_html_report(result: Dict[str, Any]) -> str:
                 </div>"""
 
             # Destination-aware paths
-            clean_ds_name = ds.split(".")[0]  # remove file extension
-            src_ext = ds.split(".")[-1].upper() if "." in ds else "FILE"
+            file_extensions = ("csv", "json", "parquet", "tsv", "txt", "xml", "xlsx")
+            if "." in ds and ds.rsplit(".", 1)[-1].lower() in file_extensions:
+                clean_ds_name = ds.rsplit(".", 1)[0]
+                src_ext = ds.rsplit(".", 1)[-1].upper()
+            else:
+                clean_ds_name = ds
+                src_ext = "TABLE" if "." in ds else "FILE"
             
             is_dup = "duplicate" in issue.lower()
             val_col = "row_validation_status" if (is_dup or not col) else f"{col}_validation_status"

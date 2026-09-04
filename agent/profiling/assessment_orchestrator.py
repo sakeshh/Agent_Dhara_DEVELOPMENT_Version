@@ -344,13 +344,17 @@ def analyze_cross_dataset_relationships(
 
                 oc = inf["child_orphan_distinct_keys"]
                 if oc > 0:
+                    c_ds = inf.get("child_dataset") or (inf["child"].rsplit(".", 1)[0] if "." in inf["child"] else inf["child"])
+                    c_col = inf.get("child_column") or (inf["child"].rsplit(".", 1)[-1] if "." in inf["child"] else "")
+                    p_ds = inf.get("parent_dataset") or (inf["parent"].rsplit(".", 1)[0] if "." in inf["parent"] else inf["parent"])
+                    p_col = inf.get("parent_column") or (inf["parent"].rsplit(".", 1)[-1] if "." in inf["parent"] else "")
                     warnings.append({
                         "severity": inf["severity"],
                         "type": "orphan_foreign_key_rows",
-                        "dataset": inf["child"].split(".")[0],
-                        "column": inf["child"].split(".")[1],
-                        "related_dataset": inf["parent"].split(".")[0],
-                        "related_column": inf["parent"].split(".")[1],
+                        "dataset": c_ds,
+                        "column": c_col,
+                        "related_dataset": p_ds,
+                        "related_column": p_col,
                         "count": oc,
                         "row_indexes": [],
                         "sample_values": [],

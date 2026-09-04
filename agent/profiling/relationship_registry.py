@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import logging
+import re
 from typing import Any, Dict, List, Tuple, Optional
 import pandas as pd
 
@@ -309,6 +310,10 @@ def discover_inferred_relationships(
                             },
                             "parent": f"{n1}.{c1}",
                             "child": f"{n2}.{c2}",
+                            "parent_dataset": n1,
+                            "parent_column": c1,
+                            "child_dataset": n2,
+                            "child_column": c2,
                             "shared_distinct_keys": shared_count,
                             "child_orphan_distinct_keys": len(s2 - s1),
                             "unreferenced_parent_distinct_keys": len(s1 - s2),

@@ -9,10 +9,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 def _db_path() -> str:
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    out_dir = os.path.join(root, "output")
-    os.makedirs(out_dir, exist_ok=True)
-    return os.path.join(out_dir, "jobs.sqlite3")
+    data_dir = os.environ.get("DHARA_DATA_DIR")
+    if not data_dir:
+        if os.environ.get("WEBSITE_SITE_NAME") and os.path.isdir("/home") and os.access("/home", os.W_OK):
+            data_dir = "/home/data"
+        else:
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            data_dir = os.path.join(root, "output")
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, "jobs.sqlite3")
 
 
 def _connect() -> sqlite3.Connection:
