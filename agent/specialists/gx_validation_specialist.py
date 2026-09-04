@@ -366,7 +366,17 @@ def run_gx_validation(
                             regex=r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                         )
                     elif semantic_type in ("date", "datetime", "timestamp"):
-                        validator.expect_column_values_to_be_dateutil_parseable(column=col_name)
+                        import pandas as pd
+                        from datetime import date, datetime
+                        is_already_dt = pd.api.types.is_datetime64_any_dtype(s)
+                        if not is_already_dt and not s.dropna().empty:
+                            first_val = s.dropna().iloc[0]
+                            if isinstance(first_val, (date, datetime, pd.Timestamp)):
+                                is_already_dt = True
+                        if is_already_dt:
+                            validator.expect_column_values_to_not_be_null(column=col_name)
+                        else:
+                            validator.expect_column_values_to_be_dateutil_parseable(column=col_name)
 
                     # ── Step 8: Numeric bounds — ONLY for true numeric semantic types ───────
                     # identifiers, country codes, status values, postal codes etc. are EXCLUDED
