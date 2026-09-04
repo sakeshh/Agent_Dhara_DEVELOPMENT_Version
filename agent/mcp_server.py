@@ -54,12 +54,12 @@ if load_dotenv is not None:
     except Exception:
         pass
 
-# Report builders from main (avoid circular import by importing after main is loaded)
+# Report builders from service layer
 try:
-    import main as _main
-    _build_html = _main.build_html_report
-    _build_md = _main.build_markdown_report
-except Exception:
+    from agent.service_layer import build_html_report as _build_html
+    from agent.service_layer import build_markdown_report as _build_md
+except Exception as _ex:
+    logger.warning(f"Could not import report builders: {_ex}")
     _build_html = None
     _build_md = None
 

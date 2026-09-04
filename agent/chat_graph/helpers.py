@@ -1,8 +1,11 @@
 # Helper utilities for formatting and rendering responses.
 from __future__ import annotations
 import json
+import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 import agent.chat_graph
 from agent.chat_graph.state import ChatState
@@ -79,13 +82,11 @@ def _render_report_markdown(result: Dict[str, Any]) -> Optional[str]:
     Render a formal report as Markdown when report builder is available.
     """
     try:
-        import main as _main  # type: ignore
-
-        if hasattr(_main, "build_markdown_report"):
-            return _main.build_markdown_report(result)  # type: ignore
-    except Exception:
+        from agent.service_layer import build_markdown_report
+        return build_markdown_report(result)
+    except Exception as e:
+        logger.warning(f"Failed to render report markdown: {e}")
         return None
-    return None
 
 
 def _render_report_html(result: Dict[str, Any]) -> Optional[str]:
@@ -93,13 +94,11 @@ def _render_report_html(result: Dict[str, Any]) -> Optional[str]:
     Render a formal report as HTML when the report builder is available.
     """
     try:
-        import main as _main  # type: ignore
-
-        if hasattr(_main, "build_html_report"):
-            return _main.build_html_report(result)  # type: ignore
-    except Exception:
+        from agent.service_layer import build_html_report
+        return build_html_report(result)
+    except Exception as e:
+        logger.warning(f"Failed to render report html: {e}")
         return None
-    return None
 
 
 def _override_source_root_for_datasets(result: Dict[str, Any], dataset_names: List[str], source_root: str) -> None:
@@ -671,12 +670,9 @@ def _write_report_artifacts(
     try:
         import sys as _sys
 
-        _root = os.path.abspath(os.path.join(here, ".."))
-        if _root not in _sys.path:
-            _sys.path.insert(0, _root)
-        import main as _main_mod
+        from agent.service_layer import build_dq_scorecard, build_cleaning_manifest
 
-        _sc = _main_mod.build_dq_scorecard(result)
+        _sc = build_dq_scorecard(result)
         _sug = result.get("transformation_suggestions") if isinstance(result.get("transformation_suggestions"), dict) else {}
         if not isinstance(_sug.get("suggested_transformations"), list) or (_sug.get("_error")):
             try:
@@ -685,7 +681,7 @@ def _write_report_artifacts(
                 _sug = suggest_transformations(result)
             except Exception:
                 _sug = {"suggested_transformations": [], "summary": {}}
-        _mf = _main_mod.build_cleaning_manifest(result, _sug, _sc)
+        _mf = build_cleaning_manifest(result, _sug, _sc)
         _mpath = os.path.join(reports_dir, "cleaning_manifest.json")
         with open(_mpath, "w", encoding="utf-8") as _mfh:
             json.dump(_mf, _mfh, indent=2, default=str)

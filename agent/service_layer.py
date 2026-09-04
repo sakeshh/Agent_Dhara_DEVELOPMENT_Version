@@ -889,18 +889,16 @@ def build_markdown_report(result: Dict[str, Any]) -> str:
     md.append("**Data Quality Issues & Root Causes**\n")
     for ds_name, dq_block in dq_ds.items():
         md.append(f"### Dataset: `{ds_name}`")
-        summ = dq_block.get("summary") or {}
+        if isinstance(dq_block, list):
+            summ = {}
+            issues = dq_block
+        elif isinstance(dq_block, dict):
+            summ = dq_block.get("summary") or {}
+            issues = dq_block.get("issues", [])
+        else:
+            summ = {}
+            issues = []
         rc_sum = summ.get("root_cause_summary") or {}
-        if rc_sum and rc_sum.get("root_cause_groups"):
-            md.append("#### Root-Cause Groups (Non-Additive)")
-            md.append("| Root-Cause Family | Issue Types Triggered | Cells Affected | Rows Affected |")
-            md.append("|---|---|---|---|")
-            for g in rc_sum["root_cause_groups"]:
-                itypes_str = ", ".join(f"`{t}`" for t in g["issue_types_triggered"])
-                md.append(f"| **{g['family']}** | {itypes_str} | {g['distinct_cells_affected']:,} | {g['distinct_rows_affected']:,} |")
-            md.append("")
-            
-        issues = dq_block.get("issues", [])
         if not issues:
             md.append("  - (no issues)")
         else:
@@ -973,7 +971,7 @@ def build_markdown_report(result: Dict[str, Any]) -> str:
 
     
     for ds_name, dq_block in dq_ds.items():
-        summ = dq_block.get("summary") or {}
+        summ = dq_block.get("summary") or {} if isinstance(dq_block, dict) else {}
         db = summ.get("dimension_breakdown") or {}
         if db:
             md.append(f"### Dimension Breakdown: `{ds_name}`")
@@ -1261,9 +1259,17 @@ def build_html_report(result: Dict[str, Any]) -> str:
     def render_dataset_block(name: str, meta: Dict[str, Any], pi: int) -> str:
         rows, cols, bytes_ = meta.get("row_count", 0), meta.get("column_count", 0), meta.get("data_volume_bytes", 0)
         profile_tbl = render_profile_table(meta.get("columns", {}) or {})
-        ds_issues = dq_ds.get(name, {}).get("issues", []) or []
+        ds_raw = dq_ds.get(name, {}) if isinstance(dq_ds, dict) else {}
+        if isinstance(ds_raw, list):
+            ds_issues = ds_raw
+            ds_summary = {}
+        elif isinstance(ds_raw, dict):
+            ds_issues = ds_raw.get("issues", []) or []
+            ds_summary = ds_raw.get("summary") or {}
+        else:
+            ds_issues = []
+            ds_summary = {}
         buckets = split_by_sev(ds_issues)
-        ds_summary = (dq_ds.get(name, {}).get("summary") or {}) if isinstance(dq_ds.get(name, {}), dict) else {}
         src = meta.get("source_root") or ""
         raw = path_raw_for_copy(src)
         if src == "__database__":
