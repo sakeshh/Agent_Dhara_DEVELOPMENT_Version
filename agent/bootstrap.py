@@ -108,11 +108,30 @@ def _doctor_env_hint() -> None:
         logger.info("Azure env preflight: all required vars appear set.")
 
 
+def resolve_sources_path(path: Optional[str] = None) -> str:
+    """
+    Resolve sources.yaml path safely against environment variables,
+    current working directory, and the project root directory.
+    """
+    target = (path or "").strip() or os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml"
+    if os.path.isfile(target):
+        return os.path.abspath(target)
+    if not os.path.isabs(target):
+        alt = os.path.join(PROJECT_DIR, target)
+        if os.path.isfile(alt):
+            return alt
+    fallback = os.path.join(PROJECT_DIR, "config", "sources.yaml")
+    if os.path.isfile(fallback):
+        return fallback
+    return target
+
+
 def load_config(path: str) -> Dict[str, Any]:
-    """Load YAML or JSON config."""
-    if not os.path.isfile(path):
-        logger.critical("Config file not found: %s", path)
-        sys.exit(2)
+    """Load YAML or JSON config, safely resolving relative paths against PROJECT_DIR."""
+    resolved_path = resolve_sources_path(path)
+    if not os.path.isfile(resolved_path):
+        logger.error("Config file not found: %s (resolved: %s)", path, resolved_path)
+        raise FileNotFoundError(f"Config file not found: {path}")
 
     def _expand_env(obj: Any) -> Any:
         """
@@ -139,17 +158,17 @@ def load_config(path: str) -> Dict[str, Any]:
 
         return pattern.sub(_sub, obj)
 
-    ext = os.path.splitext(path)[1].lower()
-    with open(path, "r", encoding="utf-8") as f:
+    ext = os.path.splitext(resolved_path)[1].lower()
+    with open(resolved_path, "r", encoding="utf-8") as f:
         if ext == ".json":
             return _expand_env(json.load(f))
         if ext in (".yaml", ".yml"):
             if yaml is None:
-                logger.critical("PyYAML required for YAML configs. pip install pyyaml")
-                sys.exit(3)
+                logger.error("PyYAML required for YAML configs. pip install pyyaml")
+                raise ImportError("PyYAML required for YAML configs. pip install pyyaml")
             return _expand_env(yaml.safe_load(f) or {})
-        logger.critical("Unsupported config format: %s", ext)
-        sys.exit(4)
+        logger.error("Unsupported config format: %s", ext)
+        raise ValueError(f"Unsupported config format: {ext}")
 
 
 def get_db_connection_cfg(cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:

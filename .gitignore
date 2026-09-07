@@ -58,10 +58,9 @@ Agent Dhara Backend/agent/output/
 Agent Dhara Backend/agent/output/reports/
 Agent Dhara Backend/config/schema_cache.json
 Agent Dhara Backend/agent/chat_graph/data/checkpointer.db
-Agent Dhara Backend/agent/chat_graph/data/*.db
-*.db
-*.sqlite
-*.sqlite3
+*.db*
+*.sqlite*
+*.sqlite3*
 output/
 
 # Python artifacts

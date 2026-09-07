@@ -237,7 +237,8 @@ def api_schema_tables(ttl_seconds: int = 30, _auth: None = Depends(require_backe
     - In-memory cache with TTL
     - Auto-invalidates when sources.yaml mtime changes
     """
-    sources_path = os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml"
+    from agent.bootstrap import resolve_sources_path
+    sources_path = resolve_sources_path(os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml")
     ttl = max(0, int(ttl_seconds))
 
     try:
@@ -335,14 +336,23 @@ def api_sources(_auth: None = Depends(require_backend_token)) -> Dict[str, Any]:
     Return available source configurations from sources.yaml (no secrets redacted here; keep it internal).
     """
     sources_path = os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml"
+    if not os.path.isfile(sources_path) and not os.path.isabs(sources_path):
+        proj_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        alt = os.path.join(proj_dir, sources_path)
+        if os.path.isfile(alt):
+            sources_path = alt
+
     try:
         try:
             from agent.bootstrap import load_config
             cfg = load_config(sources_path)
-        except Exception:
+        except BaseException:
             import yaml
-            with open(sources_path, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
+            if os.path.isfile(sources_path):
+                with open(sources_path, "r", encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f) or {}
+            else:
+                cfg = {}
         source_cfg = cfg.get("source", cfg) or {}
         locations = source_cfg.get("locations", []) or []
         # Return only minimal location metadata
@@ -502,7 +512,8 @@ def api_infer_semantics(payload: SemanticInferencePayload, _auth: None = Depends
     from agent.mcp_interface import _parse_config_text
     import pandas as pd
 
-    sources_path = (
+    from agent.bootstrap import resolve_sources_path
+    sources_path = resolve_sources_path(
         (payload.sources_path or "").strip()
         or os.environ.get("MCP_SOURCES_PATH")
         or "config/sources.yaml"

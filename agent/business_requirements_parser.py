@@ -71,7 +71,8 @@ def get_dataset_schemas(session_id: str) -> Dict[str, List[str]]:
     sess = load_session(session_id)
     context = sess.get("context") or {}
     
-    sources_path = os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml"
+    from agent.bootstrap import resolve_sources_path
+    sources_path = resolve_sources_path(os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml")
     if not os.path.isfile(sources_path):
         return {}
         

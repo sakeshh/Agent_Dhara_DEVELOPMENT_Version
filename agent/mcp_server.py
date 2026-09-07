@@ -437,7 +437,8 @@ def api_schema_tables(ttl_seconds: int = 30) -> Dict[str, Any]:
     - In-memory cache with TTL
     - Auto-invalidates when sources.yaml mtime changes
     """
-    sources_path = os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml"
+    from agent.bootstrap import resolve_sources_path
+    sources_path = resolve_sources_path(os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml")
     ttl = max(0, int(ttl_seconds))
 
     try:
@@ -533,18 +534,47 @@ def api_load_path(payload: PathPayload) -> Dict[str, Any]:
 
 
 def _safe_load_sources_cfg(sources_path: str) -> Dict[str, Any]:
+    resolved = sources_path
+    if not os.path.isfile(resolved) and not os.path.isabs(resolved):
+        proj_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        alt = os.path.join(proj_dir, sources_path)
+        if os.path.isfile(alt):
+            resolved = alt
+
     try:
         from agent.bootstrap import load_config
-        return load_config(sources_path)
-    except Exception as ex:
+        return load_config(resolved)
+    except BaseException as ex:
         logger.warning(f"Failed to load config using bootstrap.load_config: {ex}, trying direct yaml")
         try:
             import yaml
-            if os.path.isfile(sources_path):
-                with open(sources_path, "r", encoding="utf-8") as f:
+            if os.path.isfile(resolved):
+                with open(resolved, "r", encoding="utf-8") as f:
                     return yaml.safe_load(f) or {}
         except Exception as ey:
-            logger.error(f"Failed to load sources config file {sources_path}: {ey}")
+            logger.error(f"Failed to load sources config file {resolved}: {ey}")
+
+    # Fallback to configured environment variables if file is absent
+    sql_server = os.environ.get("AZURE_SQL_SERVER") or os.environ.get("SQL_SERVER")
+    if sql_server:
+        return {
+            "source": {
+                "name": "enterprise_data",
+                "locations": [
+                    {
+                        "type": "database",
+                        "id": "SQL data",
+                        "connector": "azure_sql_pythonnet",
+                        "connection": {
+                            "server": sql_server,
+                            "database": os.environ.get("AZURE_SQL_DATABASE") or "AgentDharatables",
+                            "username": os.environ.get("AZURE_SQL_USERNAME") or "user",
+                            "password": os.environ.get("AZURE_SQL_PASSWORD") or "",
+                        },
+                    }
+                ],
+            }
+        }
     return {}
 
 
@@ -586,7 +616,8 @@ def api_sources() -> Dict[str, Any]:
     Each source is completely isolated: a failure in SQL or Blob will never block the other.
     Returns only real live data discovered from each source.
     """
-    sources_path = os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml"
+    from agent.bootstrap import resolve_sources_path
+    sources_path = resolve_sources_path(os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml")
     out = []
 
     try:
@@ -852,7 +883,8 @@ def api_infer_semantics(payload: SemanticInferencePayload) -> Dict[str, Any]:
     from agent.mcp_interface import _parse_config_text
     import pandas as pd
 
-    sources_path = (
+    from agent.bootstrap import resolve_sources_path
+    sources_path = resolve_sources_path(
         (payload.sources_path or "").strip()
         or os.environ.get("MCP_SOURCES_PATH")
         or "config/sources.yaml"
