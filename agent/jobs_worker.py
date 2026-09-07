@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger("agent.jobs_worker")
 
 from agent.jobs_store import (
     add_event,
@@ -195,19 +198,28 @@ class JobWorker:
         if self._thread and self._thread.is_alive():
             return
         requeue_stale_jobs(stale_after_seconds=0)
+        logger.info("Starting JobWorker background thread...")
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
+        logger.info("Stopping JobWorker...")
         self._stop.set()
 
     def _loop(self) -> None:
+        logger.info("JobWorker background loop is now running.")
         while not self._stop.is_set():
-            job = claim_next_job()
+            try:
+                job = claim_next_job()
+            except Exception as e:
+                logger.error(f"JobWorker error while claiming job: {e}")
+                time.sleep(1.0)
+                continue
             if not job:
                 time.sleep(0.25)
                 continue
             job_id = job["job_id"]
+            logger.info(f"JobWorker claimed job {job_id} (kind: {job.get('kind')})")
             try:
                 add_event(job_id=job_id, level="info", message="started")
                 result = _run_job(job)
@@ -223,7 +235,9 @@ class JobWorker:
                     manifest_blob_path=manifest_blob,
                 )
                 add_event(job_id=job_id, level="info", message="succeeded")
+                logger.info(f"JobWorker job {job_id} completed successfully.")
             except Exception as e:
+                logger.exception(f"JobWorker job {job_id} failed: {e}")
                 update_job_status(job_id, status="failed", error=str(e), current_stage="failed")
                 add_event(job_id=job_id, level="error", message="failed", data={"error": str(e)})
 

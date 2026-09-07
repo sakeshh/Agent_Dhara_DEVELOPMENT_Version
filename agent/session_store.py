@@ -71,8 +71,17 @@ def _connect() -> ConnectionProxy:
         
     if not hasattr(_local_conn, "conn") or _local_conn.conn is None:
         conn = sqlite3.connect(_db_path(), timeout=30)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            try:
+                conn.execute("PRAGMA journal_mode=DELETE")
+            except Exception:
+                pass
+        try:
+            conn.execute("PRAGMA synchronous=NORMAL")
+        except Exception:
+            pass
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS sessions (

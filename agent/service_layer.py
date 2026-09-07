@@ -1046,6 +1046,7 @@ def build_html_report(result: Dict[str, Any]) -> str:
 
     datasets = result.get("datasets", {})
     raw_rels = result.get("relationships", [])
+    active_ds = set(datasets.keys()) if isinstance(datasets, dict) else set()
     names_sorted = sorted(active_ds, key=len, reverse=True)
     rels = []
     for r in raw_rels:

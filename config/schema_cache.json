@@ -1,9 +1,23 @@
 {
-    "factory.json": {
-        "production_id": "object",
-        "product_id": "object",
-        "plant": "object",
-        "units_produced": "int64",
-        "sales_id": "object"
+    "dbo.Customers": {
+        "CustomerID": "int64",
+        "Name": "object",
+        "Email": "object",
+        "Age": "float64"
+    },
+    "dbo.Courses": {
+        "CourseID": "int64",
+        "InstructorID": "int64",
+        "CourseTitle": "object",
+        "Price": "object",
+        "CreatedDate": "object"
+    },
+    "dbo.Customers_Raw": {
+        "CustomerID": "int64",
+        "CustomerName": "object",
+        "Email": "object",
+        "Phone": "object",
+        "City": "object",
+        "CreatedDate": "object"
     }
 }

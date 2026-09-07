@@ -28,9 +28,18 @@ def get_db_connection() -> sqlite3.Connection:
     if not hasattr(_thread_local, "conn") or _thread_local.conn is None:
         conn = sqlite3.connect(get_db_path(), timeout=30.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            try:
+                conn.execute("PRAGMA journal_mode=DELETE")
+            except Exception:
+                pass
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA synchronous=NORMAL")
+        except Exception:
+            pass
         _thread_local.conn = conn
     return _thread_local.conn
 

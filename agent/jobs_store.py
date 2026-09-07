@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+logger = logging.getLogger("agent.jobs_store")
 
 from agent.durable_artifact_store import (
     get_instance_id,
@@ -14,23 +16,69 @@ from agent.durable_artifact_store import (
     load_durable_job_state,
 )
 
+_RESOLVED_DB_PATH: Optional[str] = None
+
 
 def _db_path() -> str:
+    global _RESOLVED_DB_PATH
+    if _RESOLVED_DB_PATH:
+        return _RESOLVED_DB_PATH
+
     data_dir = os.environ.get("DHARA_DATA_DIR")
     if not data_dir:
-        if os.environ.get("WEBSITE_SITE_NAME") and os.path.isdir("/home") and os.access("/home", os.W_OK):
-            data_dir = "/home/data"
-        else:
+        # Check /home/data on Azure Linux App Service
+        if os.environ.get("WEBSITE_SITE_NAME") and os.path.isdir("/home"):
+            candidate = "/home/data"
+            try:
+                os.makedirs(candidate, exist_ok=True)
+                test_file = os.path.join(candidate, ".write_test")
+                with open(test_file, "w") as f:
+                    f.write("ok")
+                os.remove(test_file)
+                data_dir = candidate
+            except Exception as e:
+                logger.warning(f"/home/data not writable ({e}), falling back to local workspace/tmp")
+                data_dir = None
+
+        if not data_dir:
             root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            data_dir = os.path.join(root, "output")
-    os.makedirs(data_dir, exist_ok=True)
-    return os.path.join(data_dir, "jobs.sqlite3")
+            candidate = os.path.join(root, "output")
+            try:
+                os.makedirs(candidate, exist_ok=True)
+                test_file = os.path.join(candidate, ".write_test")
+                with open(test_file, "w") as f:
+                    f.write("ok")
+                os.remove(test_file)
+                data_dir = candidate
+            except Exception:
+                data_dir = "/tmp/dhara_data"
+                os.makedirs(data_dir, exist_ok=True)
+
+    db_file = os.path.join(data_dir, "jobs.sqlite3")
+    logger.info(f"Opening SQLite database at: {db_file} (parent directory exists: {os.path.exists(data_dir)})")
+    _RESOLVED_DB_PATH = db_file
+    return db_file
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), timeout=30, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
+    path = _db_path()
+    try:
+        conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
+    except sqlite3.OperationalError as e:
+        logger.error(f"Failed to connect to SQLite at {path}: {e}. Falling back to /tmp/jobs.sqlite3")
+        conn = sqlite3.connect("/tmp/jobs.sqlite3", timeout=30, check_same_thread=False)
+
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        try:
+            conn.execute("PRAGMA journal_mode=DELETE")
+        except Exception:
+            pass
+    try:
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS jobs (
