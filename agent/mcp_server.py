@@ -1,15 +1,17 @@
 """FastAPI MCP server for Intelligent Data Assessment (run, list_tables, stream, upload, load_path)."""
 # Reloading...
 
-# Force .NET Framework runtime for pythonnet (MUST happen before any clr/pythonnet usage)
-try:
-    import clr_loader
-    import pythonnet
-    # If set_runtime fails, it means it's already initialized, which is usually okay if it's the right one.
-    # On this specific PC, we MUST force netfx.
-    pythonnet.set_runtime(clr_loader.get_netfx())
-except Exception:
-    pass
+# Force .NET Framework runtime for pythonnet on Windows (MUST happen before any clr/pythonnet usage)
+import sys
+if sys.platform == "win32":
+    try:
+        import clr_loader
+        import pythonnet
+        # If set_runtime fails, it means it's already initialized, which is usually okay if it's the right one.
+        # On this specific PC, we MUST force netfx.
+        pythonnet.set_runtime(clr_loader.get_netfx())
+    except Exception:
+        pass
 
 import os
 # Force Azure CLI path to PATH environment variable if not already present
@@ -23,7 +25,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -1263,14 +1265,23 @@ def api_create_job(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
 def api_get_job(job_id: str) -> Dict[str, Any]:
     j = fetch_job(job_id)
     if not j:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Assessment tracking information not found. Job ID: {job_id}"
+        )
     v = _job_public_view(j)
+    report_blob = j.get("report_blob_path") or (v.get("result", {}).get("report_blob_path") if isinstance(v.get("result"), dict) else None)
+    manifest_blob = j.get("manifest_blob_path") or (v.get("result", {}).get("manifest_blob_path") if isinstance(v.get("result"), dict) else None)
     return {
         "ok": True,
         "job": v,
         "status": v.get("status"),
+        "current_stage": v.get("current_stage"),
         "result": v.get("result"),
         "error": v.get("error"),
+        "report_blob_path": report_blob,
+        "manifest_blob_path": manifest_blob,
+        "report_url": f"/jobs/{job_id}/report",
     }
 
 
@@ -1278,18 +1289,46 @@ def api_get_job(job_id: str) -> Dict[str, Any]:
 def api_etl_assessment_status(job_id: str) -> Dict[str, Any]:
     j = fetch_job(job_id)
     if not j:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Assessment tracking information not found. Job ID: {job_id}"
+        )
     status = j.get("status")
     if status == "succeeded":
         status = "completed"
+    res = j.get("result") if status == "completed" else None
+    report_blob = j.get("report_blob_path") or (res.get("report_blob_path") if isinstance(res, dict) else None)
+    manifest_blob = j.get("manifest_blob_path") or (res.get("manifest_blob_path") if isinstance(res, dict) else None)
     return {
         "ok": True,
         "job_id": job_id,
         "status": status,
+        "current_stage": j.get("current_stage"),
         "progress": j.get("progress", 0),
         "error": j.get("error"),
-        "result": j.get("result") if status == "completed" else None
+        "result": res,
+        "report_blob_path": report_blob,
+        "manifest_blob_path": manifest_blob,
+        "report_url": f"/jobs/{job_id}/report",
     }
+
+
+@app.get("/jobs/{job_id}/report")
+@app.get("/etl/assessment/report/{job_id}")
+def api_get_job_report(job_id: str) -> HTMLResponse:
+    from agent.durable_artifact_store import load_durable_artifact, get_durable_base_dir
+    j = fetch_job(job_id)
+    if j and isinstance(j.get("result"), dict) and j["result"].get("report_html"):
+        return HTMLResponse(content=j["result"]["report_html"], media_type="text/html")
+    raw_html = load_durable_artifact(job_id, "report.html")
+    if raw_html:
+        return HTMLResponse(content=raw_html.decode("utf-8", errors="replace"), media_type="text/html")
+    durable_base = get_durable_base_dir()
+    fallback_path = os.path.join(durable_base, "reports", "report.html")
+    if os.path.isfile(fallback_path):
+        with open(fallback_path, "r", encoding="utf-8", errors="replace") as f:
+            return HTMLResponse(content=f.read(), media_type="text/html")
+    raise HTTPException(status_code=404, detail=f"Assessment report not found for job {job_id}")
 
 
 @app.get("/jobs/{job_id}/events")

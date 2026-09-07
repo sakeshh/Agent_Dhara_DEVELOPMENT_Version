@@ -372,6 +372,64 @@ def build_rule_results_from_issues(
                     },
                 ))
 
+        if "consistency" not in existing_dims:
+            has_con_issues = any(
+                (i.get("type") or "") in {"near_duplicate_rows", "formula_rule_violation", "custom_rule_violation", "custom_one_of", "custom_range", "custom_regex", "custom_not_null", "orphan_foreign_key_rows"}
+                for i in quality_issues
+            )
+            if not has_con_issues:
+                rule_results.append(RuleEvaluationResult(
+                    rule_id="table.consistency_baseline",
+                    rule_version="3.1.0",
+                    status=RuleStatus.PASS,
+                    dataset=dataset_id,
+                    column=None,
+                    dimension="consistency",
+                    severity="MEDIUM",
+                    confidence=1.0,
+                    evaluated_count=eval_units,
+                    failed_count=0,
+                    failure_rate=0.0,
+                    affected_rows=[],
+                    samples=[],
+                    evidence={
+                        "source": "profiling_baseline_clean",
+                        "execution_status": "SUCCESS",
+                        "eligible_count": eval_units,
+                        "unexpected_count": 0,
+                        "executed_check": True,
+                    },
+                ))
+
+        if "conformity" not in existing_dims:
+            has_conf_issues = any(
+                (i.get("type") or "") in {"casing_style", "whitespace", "internal_whitespace", "html_tags_in_text", "pattern_violation"}
+                for i in quality_issues
+            )
+            if not has_conf_issues:
+                rule_results.append(RuleEvaluationResult(
+                    rule_id="table.conformity_baseline",
+                    rule_version="3.1.0",
+                    status=RuleStatus.PASS,
+                    dataset=dataset_id,
+                    column=None,
+                    dimension="conformity",
+                    severity="LOW",
+                    confidence=1.0,
+                    evaluated_count=eval_units,
+                    failed_count=0,
+                    failure_rate=0.0,
+                    affected_rows=[],
+                    samples=[],
+                    evidence={
+                        "source": "profiling_baseline_clean",
+                        "execution_status": "SUCCESS",
+                        "eligible_count": eval_units,
+                        "unexpected_count": 0,
+                        "executed_check": True,
+                    },
+                ))
+
     return rule_results
 
 
@@ -430,10 +488,27 @@ def run_engine3_pipeline(
             and int(i.get("count") or 0) > 0
             for i in deduped_issues
         )
+        custom_weights = _extract_weight_config(thresholds)
+        from agent.profiling.dimension_scorer import DEFAULT_DIMENSION_WEIGHTS
+        effective_weights = custom_weights or DEFAULT_DIMENSION_WEIGHTS
+
+        # Log dimension evidence immediately before scoring
+        for dim, w_val in effective_weights.items():
+            dim_rules = [r for r in rule_results if r.dimension.lower() == dim]
+            eval_r = [r for r in dim_rules if r.status in (RuleStatus.PASS, RuleStatus.FAIL)]
+            dim_status = "EVALUATED" if eval_r else "NOT_EVALUATED"
+            eval_w = w_val if eval_r else 0.0
+            elem_cnt = sum(r.evaluated_count for r in eval_r) if eval_r else n
+            exec_status = "SUCCESS" if not any(r.status == RuleStatus.EXECUTION_ERROR for r in dim_rules) else "ERROR"
+            logger.info(
+                "[DQ3-Evidence] dataset=%s dimension=%s status=%s evaluated_weight=%.2f rule_count=%d execution_status=%s element_count=%d",
+                name, dim, dim_status, eval_w, len(dim_rules), exec_status, elem_cnt,
+            )
+
         quality_score_obj: OverallQualityScore = calculate_dimension_quality_scores(
             rule_results,
             has_missing_primary_key=has_missing_pk,
-            custom_weights=_extract_weight_config(thresholds),
+            custom_weights=custom_weights,
         )
         dq_score = quality_score_obj.quality_score
         readiness = quality_score_obj.readiness

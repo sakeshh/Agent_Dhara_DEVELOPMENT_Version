@@ -8,6 +8,13 @@ import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 
+from agent.durable_artifact_store import (
+    get_instance_id,
+    save_durable_job_state,
+    load_durable_job_state,
+)
+
+
 def _db_path() -> str:
     data_dir = os.environ.get("DHARA_DATA_DIR")
     if not data_dir:
@@ -35,15 +42,29 @@ def _connect() -> sqlite3.Connection:
           input_json TEXT NOT NULL,
           result_json TEXT,
           error TEXT,
-          progress INTEGER DEFAULT 0
+          progress INTEGER DEFAULT 0,
+          current_stage TEXT,
+          worker_instance_id TEXT,
+          heartbeat_at REAL,
+          report_blob_path TEXT,
+          manifest_blob_path TEXT
         )
         """
     )
-    try:
-        conn.execute("ALTER TABLE jobs ADD COLUMN progress INTEGER DEFAULT 0")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass
+    for col_def in (
+        "progress INTEGER DEFAULT 0",
+        "current_stage TEXT",
+        "worker_instance_id TEXT",
+        "heartbeat_at REAL",
+        "report_blob_path TEXT",
+        "manifest_blob_path TEXT",
+    ):
+        try:
+            col_name = col_def.split()[0]
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {col_def}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS job_events (
@@ -75,17 +96,42 @@ def _connect() -> sqlite3.Connection:
 def create_job(*, kind: str, input: Dict[str, Any]) -> str:
     job_id = str(uuid.uuid4())
     now = time.time()
+    instance_id = get_instance_id()
     conn = _connect()
     try:
         conn.execute(
-            "INSERT INTO jobs(job_id, created_at, updated_at, status, kind, input_json) VALUES(?,?,?,?,?,?)",
-            (job_id, now, now, "queued", kind, json.dumps(input, ensure_ascii=False, default=str)),
+            """
+            INSERT INTO jobs(job_id, created_at, updated_at, status, kind, input_json,
+                             progress, current_stage, worker_instance_id, heartbeat_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
+            """,
+            (job_id, now, now, "queued", kind, json.dumps(input, ensure_ascii=False, default=str),
+             0, "queued", instance_id, now),
         )
         conn.commit()
         add_event(job_id=job_id, level="info", message="queued", data={"kind": kind})
-        return job_id
     finally:
         conn.close()
+
+    # Persist durable record immediately before returning to caller
+    save_durable_job_state(job_id, {
+        "job_id": job_id,
+        "created_at": now,
+        "updated_at": now,
+        "status": "queued",
+        "kind": kind,
+        "input": input,
+        "result": None,
+        "error": None,
+        "progress": 0,
+        "current_stage": "queued",
+        "worker_instance_id": instance_id,
+        "heartbeat_at": now,
+        "report_blob_path": None,
+        "manifest_blob_path": None,
+    })
+
+    return job_id
 
 
 def add_event(*, job_id: str, level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
@@ -113,47 +159,75 @@ def update_job_status(
     result: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
     progress: Optional[int] = None,
+    current_stage: Optional[str] = None,
+    report_blob_path: Optional[str] = None,
+    manifest_blob_path: Optional[str] = None,
 ) -> None:
+    now = time.time()
+    instance_id = get_instance_id()
     conn = _connect()
     try:
+        # Extract report/manifest blob paths from result if present
+        if isinstance(result, dict):
+            if not report_blob_path and result.get("report_blob_path"):
+                report_blob_path = result.get("report_blob_path")
+            if not manifest_blob_path and result.get("manifest_blob_path"):
+                manifest_blob_path = result.get("manifest_blob_path")
+
+        updates = ["updated_at=?", "status=?", "result_json=?", "error=?", "heartbeat_at=?", "worker_instance_id=?"]
+        params = [
+            now,
+            status,
+            json.dumps(result, ensure_ascii=False, default=str) if result is not None else None,
+            error,
+            now,
+            instance_id,
+        ]
         if progress is not None:
-            conn.execute(
-                "UPDATE jobs SET updated_at=?, status=?, result_json=?, error=?, progress=? WHERE job_id=?",
-                (
-                    time.time(),
-                    status,
-                    json.dumps(result, ensure_ascii=False, default=str) if result is not None else None,
-                    error,
-                    progress,
-                    job_id,
-                ),
-            )
-        else:
-            conn.execute(
-                "UPDATE jobs SET updated_at=?, status=?, result_json=?, error=? WHERE job_id=?",
-                (
-                    time.time(),
-                    status,
-                    json.dumps(result, ensure_ascii=False, default=str) if result is not None else None,
-                    error,
-                    job_id,
-                ),
-            )
+            updates.append("progress=?")
+            params.append(progress)
+        if current_stage is not None:
+            updates.append("current_stage=?")
+            params.append(current_stage)
+        if report_blob_path is not None:
+            updates.append("report_blob_path=?")
+            params.append(report_blob_path)
+        if manifest_blob_path is not None:
+            updates.append("manifest_blob_path=?")
+            params.append(manifest_blob_path)
+
+        params.append(job_id)
+        sql = f"UPDATE jobs SET {', '.join(updates)} WHERE job_id=?"
+        conn.execute(sql, tuple(params))
         conn.commit()
     finally:
         conn.close()
 
+    # Sync durable record so any instance polling this job gets updated state
+    j = fetch_job(job_id, skip_durable_sync=True)
+    if j:
+        save_durable_job_state(job_id, j)
 
-def fetch_job(job_id: str) -> Optional[Dict[str, Any]]:
+
+def fetch_job(job_id: str, *, skip_durable_sync: bool = False) -> Optional[Dict[str, Any]]:
     conn = _connect()
+    row = None
     try:
         row = conn.execute(
-            "SELECT job_id, created_at, updated_at, status, kind, input_json, result_json, error, progress FROM jobs WHERE job_id=?",
+            """
+            SELECT job_id, created_at, updated_at, status, kind, input_json, result_json,
+                   error, progress, current_stage, worker_instance_id, heartbeat_at,
+                   report_blob_path, manifest_blob_path
+            FROM jobs WHERE job_id=?
+            """,
             (job_id,),
         ).fetchone()
-        if not row:
-            return None
-        return {
+    finally:
+        conn.close()
+
+    local_job = None
+    if row:
+        local_job = {
             "job_id": row[0],
             "created_at": row[1],
             "updated_at": row[2],
@@ -163,9 +237,57 @@ def fetch_job(job_id: str) -> Optional[Dict[str, Any]]:
             "result": json.loads(row[6]) if row[6] else None,
             "error": row[7],
             "progress": row[8] if row[8] is not None else 0,
+            "current_stage": row[9],
+            "worker_instance_id": row[10],
+            "heartbeat_at": row[11],
+            "report_blob_path": row[12],
+            "manifest_blob_path": row[13],
         }
-    finally:
-        conn.close()
+
+    if skip_durable_sync:
+        return local_job
+
+    # If job not found locally OR status is not final (another container may have finished it)
+    if not local_job or local_job.get("status") not in ("succeeded", "failed"):
+        durable = load_durable_job_state(job_id)
+        if durable:
+            # If durable state has newer updated_at or job is missing locally, re-hydrate SQLite
+            d_updated = durable.get("updated_at", 0)
+            l_updated = local_job.get("updated_at", 0) if local_job else -1
+            if d_updated >= l_updated:
+                conn = _connect()
+                try:
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO jobs(
+                            job_id, created_at, updated_at, status, kind, input_json,
+                            result_json, error, progress, current_stage,
+                            worker_instance_id, heartbeat_at, report_blob_path, manifest_blob_path
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            durable.get("job_id", job_id),
+                            durable.get("created_at", time.time()),
+                            durable.get("updated_at", time.time()),
+                            durable.get("status", "queued"),
+                            durable.get("kind", "assess"),
+                            json.dumps(durable.get("input") or {}, ensure_ascii=False, default=str),
+                            json.dumps(durable.get("result"), ensure_ascii=False, default=str) if durable.get("result") is not None else None,
+                            durable.get("error"),
+                            durable.get("progress", 0),
+                            durable.get("current_stage"),
+                            durable.get("worker_instance_id"),
+                            durable.get("heartbeat_at"),
+                            durable.get("report_blob_path"),
+                            durable.get("manifest_blob_path"),
+                        ),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+                return durable
+
+    return local_job
 
 
 def claim_next_job(*, kinds: Optional[List[str]] = None, max_retries: int = 10) -> Optional[Dict[str, Any]]:

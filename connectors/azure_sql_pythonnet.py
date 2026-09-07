@@ -17,50 +17,53 @@ SqlConnection = None
 SqlCommand = None
 SQLCLIENT_PROVIDER = None
 
-try:
-    import clr_loader
-    import pythonnet
+if sys.platform == "win32":
     try:
-        rt = clr_loader.get_netfx()
-        pythonnet.set_runtime(rt)
-    except Exception:
-        pass
-
-    import clr
-    clr.AddReference("System.Data")
-
-    # Force modern TLS
-    try:
-        clr.AddReference("System.Net")
-        from System.Net import ServicePointManager
-        ServicePointManager.SecurityProtocol |= 768 | 3072 | 12288
-    except Exception:
-        pass
-
-    def _try_load_microsoft_sqlclient():
-        asm_dir = os.environ.get("SQLCLIENT_ASSEMBLY_DIR")
-        if asm_dir and asm_dir not in sys.path:
-            sys.path.append(asm_dir)
+        import clr_loader
+        import pythonnet
         try:
-            clr.AddReference("Microsoft.Data.SqlClient")
-            from Microsoft.Data.SqlClient import SqlConnection as _SC, SqlCommand as _SCmd
-            return _SC, _SCmd
+            rt = clr_loader.get_netfx()
+            pythonnet.set_runtime(rt)
         except Exception:
-            return None
+            pass
 
-    _ms = _try_load_microsoft_sqlclient()
-    if _ms:
-        SqlConnection, SqlCommand = _ms
-        SQLCLIENT_PROVIDER = "Microsoft.Data.SqlClient"
-    else:
-        from System.Data.SqlClient import SqlConnection as _SC, SqlCommand as _SCmd  # type: ignore
-        SqlConnection, SqlCommand = _SC, _SCmd
-        SQLCLIENT_PROVIDER = "System.Data.SqlClient"
-    PYTHONNET_AVAILABLE = True
-    logger.info(f"Using SQL Client provider: {SQLCLIENT_PROVIDER}")
-except Exception as ex:
-    logger.warning(f"pythonnet/.NET runtime not available on this host: {ex}")
-    PYTHONNET_AVAILABLE = False
+        import clr
+        clr.AddReference("System.Data")
+
+        # Force modern TLS
+        try:
+            clr.AddReference("System.Net")
+            from System.Net import ServicePointManager
+            ServicePointManager.SecurityProtocol |= 768 | 3072 | 12288
+        except Exception:
+            pass
+
+        def _try_load_microsoft_sqlclient():
+            asm_dir = os.environ.get("SQLCLIENT_ASSEMBLY_DIR")
+            if asm_dir and asm_dir not in sys.path:
+                sys.path.append(asm_dir)
+            try:
+                clr.AddReference("Microsoft.Data.SqlClient")
+                from Microsoft.Data.SqlClient import SqlConnection as _SC, SqlCommand as _SCmd
+                return _SC, _SCmd
+            except Exception:
+                return None
+
+        _ms = _try_load_microsoft_sqlclient()
+        if _ms:
+            SqlConnection, SqlCommand = _ms
+            SQLCLIENT_PROVIDER = "Microsoft.Data.SqlClient"
+        else:
+            from System.Data.SqlClient import SqlConnection as _SC, SqlCommand as _SCmd  # type: ignore
+            SqlConnection, SqlCommand = _SC, _SCmd
+            SQLCLIENT_PROVIDER = "System.Data.SqlClient"
+        PYTHONNET_AVAILABLE = True
+        logger.info(f"Using SQL Client provider: {SQLCLIENT_PROVIDER}")
+    except Exception as ex:
+        logger.debug(f"pythonnet/.NET runtime not available on this host: {ex}")
+        PYTHONNET_AVAILABLE = False
+else:
+    logger.debug("Linux / non-Windows host detected (%s); defaulting to pyodbc for Azure SQL connection.", sys.platform)
 
 
 def _first_present(d: Dict[str, str], keys: List[str], default=None):
@@ -71,11 +74,14 @@ def _first_present(d: Dict[str, str], keys: List[str], default=None):
 
 
 class AzureSQLPythonNetConnector:
+    _pyodbc_logged: bool = False
+
     def __init__(self, conn_cfg: Dict[str, str]):
         self.cfg = conn_cfg
         self.use_pyodbc = not PYTHONNET_AVAILABLE
-        if self.use_pyodbc:
-            logger.info("Using pyodbc fallback for Azure SQL connection.")
+        if self.use_pyodbc and not AzureSQLPythonNetConnector._pyodbc_logged:
+            logger.info("Using pyodbc for Azure SQL connection.")
+            AzureSQLPythonNetConnector._pyodbc_logged = True
 
     def _get_sqlalchemy_engine(self):
         """

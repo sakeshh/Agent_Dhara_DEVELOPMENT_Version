@@ -86,7 +86,6 @@ def calculate_dimension_quality_scores(
         eval_rules = [r for r in results if r.status in (RuleStatus.PASS, RuleStatus.FAIL)]
         
         if not eval_rules:
-            # Check if dimension is genuinely applicable to this dataset scan
             is_applicable = True
             if dim == "referential_integrity" and not any(r.dimension.lower() == "referential_integrity" for r in rule_results):
                 is_applicable = False
@@ -192,9 +191,21 @@ def calculate_dimension_quality_scores(
         readiness = "UNKNOWN"
         blockers.append(f"High rule execution error rate ({exec_errors}/{total_rules})")
 
-    if overall_score is not None and overall_score < 50.0 and readiness != "UNKNOWN":
-        readiness = "BLOCKED"
-        blockers.append(f"Quality score below threshold: {overall_score} < 50.0")
+    if overall_score is not None and readiness not in ("UNKNOWN", "BLOCKED"):
+        if overall_score < 35.0:
+            readiness = "BLOCKED"
+            blockers.append(f"Quality score below threshold: {overall_score} < 35.0")
+        elif overall_score < 70.0 or has_high_failures:
+            readiness = "NEEDS_WORK"
+            if has_high_failures:
+                blockers.append("Gating HIGH severity issues present")
+            if overall_score < 70.0:
+                blockers.append(f"Quality score below ready threshold: {overall_score} < 70.0")
+        elif has_med_failures:
+            readiness = "READY_WITH_WARNINGS"
+            blockers.append("Non-blocking medium severity issues present")
+        else:
+            readiness = "READY"
 
     return OverallQualityScore(
         methodology="dimension_scorer_v3",

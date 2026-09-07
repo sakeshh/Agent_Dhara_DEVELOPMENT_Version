@@ -214,7 +214,10 @@ def run_gx_validation(
                     batch_definition = asset.get_batch_definition(batch_definition_name)
 
                 batch = batch_definition.get_batch(batch_parameters={"dataframe": validation_df})
-                validator = context.get_validator(batch=batch, expectation_suite_name=suite_name)
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message=".*result_format.*", category=UserWarning)
+                    validator = context.get_validator(batch=batch, expectation_suite_name=suite_name)
 
                 # 4. Read Metadata Profile
                 ds_profile = (profile_results.get("datasets") or {}).get(name) or {}

@@ -61,6 +61,8 @@ Agent Dhara Backend/agent/chat_graph/data/checkpointer.db
 Agent Dhara Backend/agent/chat_graph/data/*.db
 *.db
 *.sqlite
+*.sqlite3
+output/
 
 # Python artifacts
 *.pyo

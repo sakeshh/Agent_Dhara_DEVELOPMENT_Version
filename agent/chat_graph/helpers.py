@@ -624,14 +624,11 @@ def _write_report_artifacts(
     report_markdown: Optional[str] = None,
     report_html: Optional[str] = None,
     base_dir: Optional[str] = None,
+    job_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Persist "fresh" report artifacts for the chat workflow.
-
-    The CLI (`main.py --reports-dir`) writes `output/reports/report.*`, but the chat API historically
-    returned reports without writing files. Users expect the output folder to update on each run.
-
-    This function overwrites `report.json/.md/.html`.
+    Persist report artifacts to durable storage.
+    Writes to durable reports directory and assessment-runs/{job_id} when job_id is present.
     """
     import os
     from datetime import datetime, timezone
@@ -639,18 +636,18 @@ def _write_report_artifacts(
     if not isinstance(result, dict):
         return {}
 
-    here = os.path.dirname(os.path.abspath(__file__))
-    default_dir = os.path.abspath(os.path.join(here, "..", "output", "reports"))
+    from agent.durable_artifact_store import get_durable_base_dir, save_durable_artifact
+    durable_base = get_durable_base_dir()
+    default_dir = os.path.join(durable_base, "reports")
     reports_dir = os.path.abspath(base_dir) if base_dir else default_dir
     os.makedirs(reports_dir, exist_ok=True)
 
     meta = result.setdefault("run_metadata", {}) if isinstance(result.get("run_metadata"), dict) or result.get("run_metadata") is None else {}
     if isinstance(meta, dict):
         meta["generated_at"] = datetime.now(timezone.utc).isoformat()
-        # Intentionally do not include local/FS paths in the user-facing report payload.
-        # This directory is internal project storage and should not be shown in the UI.
 
-    json_bytes = json.dumps(result, ensure_ascii=False, indent=2, default=str).encode("utf-8")
+    json_str = json.dumps(result, ensure_ascii=False, indent=2, default=str)
+    json_bytes = json_str.encode("utf-8")
     paths = {"json": os.path.join(reports_dir, "report.json")}
     with open(paths["json"], "wb") as f:
         f.write(json_bytes)
@@ -667,9 +664,8 @@ def _write_report_artifacts(
             f.write(report_html)
         paths["html"] = html_path
 
+    manifest_data = {}
     try:
-        import sys as _sys
-
         from agent.service_layer import build_dq_scorecard, build_cleaning_manifest
 
         _sc = build_dq_scorecard(result)
@@ -682,6 +678,7 @@ def _write_report_artifacts(
             except Exception:
                 _sug = {"suggested_transformations": [], "summary": {}}
         _mf = build_cleaning_manifest(result, _sug, _sc)
+        manifest_data = _mf
         _mpath = os.path.join(reports_dir, "cleaning_manifest.json")
         with open(_mpath, "w", encoding="utf-8") as _mfh:
             json.dump(_mf, _mfh, indent=2, default=str)
@@ -689,7 +686,21 @@ def _write_report_artifacts(
     except Exception:
         pass
 
-    return {"reports_dir": reports_dir, "paths": paths}
+    # If job_id provided, also persist under assessment-runs/{job_id}/ via durable_artifact_store
+    if job_id:
+        try:
+            save_durable_artifact(job_id=job_id, filename="report.json", content=json_str, content_type="application/json")
+            if report_html:
+                save_durable_artifact(job_id=job_id, filename="report.html", content=report_html, content_type="text/html")
+            if report_markdown:
+                save_durable_artifact(job_id=job_id, filename="report.md", content=report_markdown, content_type="text/markdown")
+            if manifest_data:
+                save_durable_artifact(job_id=job_id, filename="cleaning_manifest.json", content=json.dumps(manifest_data, indent=2, default=str), content_type="application/json")
+        except Exception as e:
+            import logging
+            logging.getLogger("agent.chat_graph").warning("[DurableStore] Error persisting run artifacts for %s: %s", job_id, e)
+
+    return {"reports_dir": reports_dir, "paths": paths, "cleaning_manifest_data": manifest_data}
 
 
 def _pick_single_active_dataset(ctx: Dict[str, Any]) -> Optional[str]:

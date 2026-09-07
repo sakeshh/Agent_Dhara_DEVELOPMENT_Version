@@ -93,29 +93,75 @@ def _run_job(job: Dict[str, Any]) -> Dict[str, Any]:
         reports = load_checkpoint(job_id, "reports")
         if reports is None:
             add_event(job_id=job_id, level="info", message="running stage: reports")
-            update_job_status(job_id, status="running", progress=90)
+            update_job_status(job_id, status="running", progress=90, current_stage="reports")
             from agent.chat_graph import _build_report_tables_markdown, _render_report_html, _write_report_artifacts
+            from agent.durable_artifact_store import (
+                save_durable_artifact,
+                verify_durable_artifact_exists,
+            )
 
             report_md = _build_report_tables_markdown(merged_result)
             report_html = _render_report_html(merged_result)
-            artifacts = _write_report_artifacts(result=merged_result, report_markdown=report_md, report_html=report_html)
+            artifacts = _write_report_artifacts(
+                result=merged_result,
+                report_markdown=report_md,
+                report_html=report_html,
+                job_id=job_id,
+            )
+
+            # Upload artifacts to durable store (disk + Azure Blob Storage)
+            report_blob = save_durable_artifact(
+                job_id=job_id,
+                filename="report.html",
+                content=report_html,
+                content_type="text/html",
+            )
+            manifest_dict = artifacts.get("cleaning_manifest_data") or {}
+            manifest_blob = save_durable_artifact(
+                job_id=job_id,
+                filename="cleaning_manifest.json",
+                content=json.dumps(manifest_dict, ensure_ascii=False, indent=2, default=str),
+                content_type="application/json",
+            )
+            save_durable_artifact(
+                job_id=job_id,
+                filename="report.json",
+                content=json.dumps(merged_result, ensure_ascii=False, indent=2, default=str),
+                content_type="application/json",
+            )
+            if report_md:
+                save_durable_artifact(
+                    job_id=job_id,
+                    filename="report.md",
+                    content=report_md,
+                    content_type="text/markdown",
+                )
+
+            # Artifact gating: verify uploaded objects exist in durable storage
+            if not verify_durable_artifact_exists(job_id, "report.html"):
+                raise RuntimeError(f"Report artifact upload verification failed for job {job_id}")
+
             reports = {
                 "report_markdown": report_md,
                 "report_html": report_html,
                 "report_files": artifacts,
+                "report_blob_path": report_blob,
+                "manifest_blob_path": manifest_blob,
             }
             save_checkpoint(job_id, "reports", reports)
             add_event(job_id=job_id, level="info", message="completed stage: reports")
-            update_job_status(job_id, status="running", progress=98)
+            update_job_status(job_id, status="running", progress=98, current_stage="reports_verified")
         else:
             add_event(job_id=job_id, level="info", message="restored stage from checkpoint: reports")
-            update_job_status(job_id, status="running", progress=98)
+            update_job_status(job_id, status="running", progress=98, current_stage="reports_verified")
 
         return {
             "result": merged_result,
             "report_markdown": reports["report_markdown"],
             "report_html": reports["report_html"],
             "report_files": reports["report_files"],
+            "report_blob_path": reports.get("report_blob_path"),
+            "manifest_blob_path": reports.get("manifest_blob_path"),
         }
 
     if kind == "chat":
@@ -164,9 +210,19 @@ class JobWorker:
             try:
                 add_event(job_id=job_id, level="info", message="started")
                 result = _run_job(job)
-                update_job_status(job_id, status="succeeded", result=result)
+                report_blob = result.get("report_blob_path") if isinstance(result, dict) else None
+                manifest_blob = result.get("manifest_blob_path") if isinstance(result, dict) else None
+                update_job_status(
+                    job_id,
+                    status="succeeded",
+                    result=result,
+                    progress=100,
+                    current_stage="completed",
+                    report_blob_path=report_blob,
+                    manifest_blob_path=manifest_blob,
+                )
                 add_event(job_id=job_id, level="info", message="succeeded")
             except Exception as e:
-                update_job_status(job_id, status="failed", error=str(e))
+                update_job_status(job_id, status="failed", error=str(e), current_stage="failed")
                 add_event(job_id=job_id, level="error", message="failed", data={"error": str(e)})
 
