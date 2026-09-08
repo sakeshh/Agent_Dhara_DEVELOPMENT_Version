@@ -24,19 +24,23 @@ DEFAULT_DIMENSION_WEIGHTS: Dict[str, float] = {
 class DimensionScoreBreakdown(BaseModel):
     model_config = ConfigDict(extra="allow")
     dimension: str
-    status: str = "EVALUATED"  # EVALUATED, NOT_EVALUATED
+    status: str = "EVALUATED"  # EVALUATED, NOT_EVALUATED, NOT_APPLICABLE
     score: Optional[float] = None
     configured_weight: float
     effective_weight: float = 0.0
     evaluated_rules_count: int = 0
     passed_rules_count: int = 0
     failed_rules_count: int = 0
+    total_eligible_units: int = 0
+    passed_units: int = 0
+    failed_units: int = 0
 
 
 class OverallQualityScore(BaseModel):
     model_config = ConfigDict(extra="allow")
     methodology: str = "dimension_scorer_v3"
     quality_score: Optional[float] = None
+    gating_adjusted_score: Optional[float] = None
     score_coverage: float = 0.0
     assessment_confidence: float = 100.0
     readiness: str = "READY"  # READY, BLOCKED, UNKNOWN
@@ -56,9 +60,9 @@ def calculate_dimension_quality_scores(
 ) -> OverallQualityScore:
     """
     Computes dimension-based quality scores and evaluates gating overrides.
-    Coverage is computed over applicable dimensions (e.g. referential_integrity
-    is marked NOT_APPLICABLE and excluded from the denominator when no relationship
-    checks exist for the dataset).
+    Coverage is computed over applicable dimensions (e.g. referential_integrity,
+    timeliness, accuracy, consistency are marked NOT_APPLICABLE and excluded
+    from the denominator when no rules of that family exist for the dataset).
     """
     weights = custom_weights or DEFAULT_DIMENSION_WEIGHTS
     dim_results: Dict[str, List[RuleEvaluationResult]] = {dim: [] for dim in weights}
@@ -99,7 +103,10 @@ def calculate_dimension_quality_scores(
                 effective_weight=0.0,
                 evaluated_rules_count=0,
                 passed_rules_count=0,
-                failed_rules_count=0
+                failed_rules_count=0,
+                total_eligible_units=0,
+                passed_units=0,
+                failed_units=0,
             )
             if is_applicable:
                 unevaluated_dims.append(dim)
@@ -140,7 +147,10 @@ def calculate_dimension_quality_scores(
             effective_weight=weight,
             evaluated_rules_count=len(eval_rules),
             passed_rules_count=len(passed),
-            failed_rules_count=len(failed)
+            failed_rules_count=len(failed),
+            total_eligible_units=total_eval_units,
+            passed_units=max(0, total_eval_units - total_failed_units),
+            failed_units=total_failed_units,
         )
 
         weighted_score_sum += dim_score * weight
@@ -173,19 +183,23 @@ def calculate_dimension_quality_scores(
     if overall_score is None:
         readiness = "UNKNOWN"
         blockers.append("NO_SCORE_AVAILABLE")
-    elif score_coverage < 0.40:
+    elif score_coverage < 0.40 and not has_high_failures and not has_med_failures:
         readiness = "UNKNOWN"
         blockers.append(f"INSUFFICIENT_SCORE_COVERAGE: {score_coverage:.2f} < 0.40")
     elif score_coverage < minimum_score_coverage:
-        blockers.append(f"SUBOPTIMAL_SCORE_COVERAGE: {score_coverage:.2f} < {minimum_score_coverage:.2f}")
+        blockers.append(f"LIMITED_CONFIDENCE: Score coverage {score_coverage:.1%} is between 40% and 80%")
 
     if has_missing_primary_key:
         readiness = "BLOCKED"
         blockers.append("Missing primary key on dataset")
 
-    if has_partial_relationship_gating and readiness != "UNKNOWN":
-        readiness = "UNKNOWN"
-        blockers.append("RELATIONSHIP_PARTIALLY_EVALUATED")
+    if has_partial_relationship_gating and readiness not in ("UNKNOWN", "BLOCKED"):
+        if has_high_failures:
+            readiness = "NEEDS_WORK"
+            blockers.append("RELATIONSHIP_PARTIALLY_EVALUATED")
+        else:
+            readiness = "UNKNOWN"
+            blockers.append("RELATIONSHIP_PARTIALLY_EVALUATED")
 
     if exec_errors > 0 and (exec_errors / max(1, total_rules)) >= 0.2:
         readiness = "UNKNOWN"
@@ -204,12 +218,24 @@ def calculate_dimension_quality_scores(
         elif has_med_failures:
             readiness = "READY_WITH_WARNINGS"
             blockers.append("Non-blocking medium severity issues present")
+        elif score_coverage < minimum_score_coverage:
+            readiness = "NEEDS_WORK"
+            blockers.append(f"LIMITED_CONFIDENCE: Readiness held at NEEDS_WORK due to score coverage {score_coverage:.1%} < {minimum_score_coverage:.0%}")
         else:
             readiness = "READY"
+
+    # Gating-adjusted readiness score (capped at 69.9 if unresolved HIGH failures exist)
+    if has_high_failures and overall_score is not None:
+        gating_adjusted_score = round(min(69.9, overall_score), 1)
+    elif overall_score is not None:
+        gating_adjusted_score = overall_score
+    else:
+        gating_adjusted_score = None
 
     return OverallQualityScore(
         methodology="dimension_scorer_v3",
         quality_score=overall_score,
+        gating_adjusted_score=gating_adjusted_score,
         score_coverage=score_coverage,
         assessment_confidence=confidence,
         readiness=readiness,

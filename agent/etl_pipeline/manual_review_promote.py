@@ -39,6 +39,7 @@ _ACTION_PRIORITY: Dict[str, int] = {
     "cast_type": 35,
     "coerce_numeric": 40,
     "parse_dates": 45,
+    "nullify_date": 47,
     "at_least_one": 46,
     "nullify_future_dates": 48,
     "sanitize_email": 50,
@@ -167,6 +168,30 @@ def apply_manual_resolutions(
 
         action = action_for_resolution(issue_type, rid, item.get("resolution_options"))
         
+        # Resolve AI recommendation (llm_suggested) or fallback to item suggested_action / catalog recommendation
+        if not action or rid in ("llm_suggested", "ai_recommended", "recommended", "suggested", "use_llm"):
+            llm_rec = item.get("llm_recommendation")
+            resolved_llm_action = None
+            if isinstance(llm_rec, dict):
+                from agent.etl_pipeline.llm_rec_mapper import map_llm_recommendation_to_action
+                resolved_llm_action = (
+                    llm_rec.get("action")
+                    or llm_rec.get("mapped_action")
+                    or llm_rec.get("suggested_action")
+                    or map_llm_recommendation_to_action(llm_rec)
+                )
+            if resolved_llm_action and resolved_llm_action != "noop":
+                action = resolved_llm_action
+            elif item.get("suggested_action") and item.get("suggested_action") != "noop":
+                action = item.get("suggested_action")
+            else:
+                opts = item.get("resolution_options") or []
+                rec_opt = next((o for o in opts if o.get("recommended") and not o.get("disabled") and o.get("action") not in ("noop", None)), None)
+                if rec_opt:
+                    action = rec_opt.get("action")
+                elif not action:
+                    action = action_for_resolution(issue_type, "recommended", item.get("resolution_options"))
+
         # Check ambiguous legacy resolution IDs
         if rid in LEGACY_AMBIGUOUS_RESOLUTIONS:
             method = res_params.get("outlier_method") or res_params.get("method")
@@ -242,6 +267,34 @@ def apply_manual_resolutions(
 
         ds = str(item.get("dataset") or "").strip()
         col = item.get("column")
+
+        # P0: Route configuration actions separately from dataset column transformations
+        if action in ("update_manifest", "ignore_mismatch", "acknowledge_mismatch", "reconcile_schema") or "manifest" in issue_type:
+            from agent.etl_pipeline.configuration_patch import create_config_patch_proposal
+            target_field = str(col or "").strip()
+            if target_field in ("*", "[Row-level]", "[row-level]", "", "None"):
+                msg = str(item.get("message") or "")
+                m = _re.search(r"manifest column not in data:\s*([a-zA-Z0-9_]+)", msg, _re.I)
+                if m:
+                    target_field = m.group(1)
+                else:
+                    target_field = "manifest"
+            
+            patch_action = "remove_or_map_missing" if action == "update_manifest" else "acknowledge_mismatch"
+            cfg_patch = create_config_patch_proposal(
+                dataset_id=ds,
+                field_name=target_field,
+                action_type=patch_action,
+                justification=item.get("guidance") or item.get("message") or "Manifest column reconciliation",
+                requested_by="human_operator",
+            )
+            plan.setdefault("configuration_changes", []).append(cfg_patch.to_dict())
+            item["status"] = "resolved"
+            item["resolved_action"] = action
+            item["selected_resolution"] = rid
+            resolved_log.append({**item, "promoted": True, "configuration_patch_id": cfg_patch.patch_id})
+            continue
+
         # P0-D: Block synthetic/global dataset scopes
         if not ds or ds in ("_global", "global"):
             errs.append(
@@ -268,6 +321,27 @@ def apply_manual_resolutions(
             params.setdefault("preserve_raw", True)
             params.setdefault("output_column", f"{col}_clean")
             params.setdefault("policy_id", f"POL-{str(col).upper()}-IMPUTE".replace(".", "_"))
+        elif action in ("range_clip", "clip_outliers"):
+            params.setdefault("min_value", 0.0)
+            params.setdefault("lower_bound", 0.0)
+            params.setdefault("output_column", f"{col}_clean")
+            params.setdefault("status_column", f"{col}_validation_status")
+            params.setdefault("reason_column", f"{col}_validation_reason")
+        elif action == "flag_range_violation":
+            params.setdefault("min_value", 0.0)
+            params.setdefault("status_column", f"{col}_validation_status")
+            params.setdefault("reason_column", f"{col}_validation_reason")
+        elif action == "replace_sentinel_values":
+            params.setdefault("sentinel_values", [-999.0, -9999.0, 999.0, 9999.0, 99999.0, 999999.0, "N/A", "NA", "NULL", "UNKNOWN", "UNSPECIFIED", "??", "---"])
+            params.setdefault("status_column", f"{col}_validation_status")
+            params.setdefault("reason_column", f"{col}_validation_reason")
+        elif action in ("parse_dates", "parse_dates_safe", "nullify_future_dates", "nullify_date"):
+            params.setdefault("accepted_formats", ["yyyy-MM-dd", "yyyy/MM/dd", "MM/dd/yyyy", "dd-MM-yyyy"])
+            params.setdefault("status_column", f"{col}_validation_status")
+            params.setdefault("reason_column", f"{col}_validation_reason")
+        elif action in ("normalize_phone", "hash_phone", "sanitize_email"):
+            params.setdefault("status_column", f"{col}_validation_status")
+            params.setdefault("reason_column", f"{col}_validation_reason")
 
         block = datasets.setdefault(ds, {"steps": []})
         steps: List[Dict[str, Any]] = list(block.get("steps") or [])
@@ -280,6 +354,13 @@ def apply_manual_resolutions(
         is_llm = (item.get("authority_source") == "LLM_ADVISORY")
         conf = item.get("llm_confidence") if is_llm else None
 
+        orig_source = item.get("recommendation_source") or item.get("authority_source") or "CATALOG_FALLBACK"
+        events = list(item.get("events") or [])
+        if not events:
+            events.append({"type": "recommendation_created", "source": orig_source})
+        events.append({"type": "option_selected", "source": "HUMAN_OPERATOR", "option_id": rid})
+        events.append({"type": "approval_granted", "authority": "HUMAN_OPERATOR", "at": item.get("resolved_at") or "2026-09-07T13:00:00Z"})
+
         manual_resolution = {
             "policy_card_id": item.get("policy_card_id") or f"POLICY-{str(issue_type).upper()}",
             "selected_option_id": rid,
@@ -288,14 +369,16 @@ def apply_manual_resolutions(
             "selected_by": "user",
             "selected_at": item.get("resolved_at") or "2026-08-05T13:00:00+05:30",
             "approval_reference": item.get("approval_reference"),
-            "resolution_source": "USER_SELECTION"
+            "resolution_source": "USER_SELECTION",
+            "events": events,
         }
 
         step = {
             "order": len(steps) + 1,
             "column": col,
             "action": action,
-            "bucket": res_bucket["bucket"],
+            "bucket": "approved_manual",  # INVARIANT: Human-approved manual review items NEVER become 'auto'
+            "execution_bucket": "approved_manual",
             "phase": res_bucket["phase"],
             "source_issue_type": issue_type,
             "severity": item.get("severity") or "medium",
@@ -305,6 +388,14 @@ def apply_manual_resolutions(
             "execution_mode": "APPROVED_MANUAL",
             "auto_fixable": False,
             "selected_by": "user",
+            "approval_status": "approved",
+            "approval_authority": "HUMAN_OPERATOR",
+            "recommendation_source": orig_source,
+            "selection_source": "HUMAN_OPERATOR",
+            "authority_source": orig_source,
+            "events": events,
+            "projection_status": "estimated_pending_validation",
+            "runtime_auto_fix_authorized": False,
             "requires_impact_preview": True,
             "params": params,
             "manual_resolution": manual_resolution,
@@ -611,6 +702,14 @@ def canonicalize_plan_steps(
     out_steps = list(other_steps)
 
     for col, col_steps in by_col.items():
+        # Rule: promoted manual resolution supersedes unreviewed draft steps on the same column
+        has_promoted_manual = any(bool(st.get("manual_resolution")) for st in col_steps)
+        if has_promoted_manual:
+            col_steps = [
+                st for st in col_steps
+                if st.get("manual_resolution") or (st.get("classification") != "review" and not st.get("requires_user_choice"))
+            ]
+
         # Rule: manual resolution supersedes automatic steps writing to the same output column
         manual_output_cols = set()
         for st in col_steps:
@@ -850,7 +949,7 @@ def canonicalize_promoted_plan(
                 params.setdefault("preserve_raw", True)
                 params.setdefault("output_column", f"{col}_clean")
                 st["params"] = params
-            elif act == "parse_dates":
+            elif act in ("parse_dates", "nullify_date"):
                 params = dict(st.get("params") or {})
                 params.setdefault("preserve_raw", True)
                 params.setdefault("output_column", f"{col}_clean")

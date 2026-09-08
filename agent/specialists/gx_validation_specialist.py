@@ -83,6 +83,40 @@ def _is_actual_numeric_column(col_name: str, approved_semantic_tag: Optional[str
         return False
     return True
 
+def _classify_bad_date(val_str: Any) -> str:
+    """Classifies an unparseable date value into impossible_date, sentinel_date, placeholder_date, or invalid_date_format."""
+    s = str(val_str).strip()
+    s_lower = s.lower()
+    if s_lower in {"00/00/0000", "00-00-0000", "0000-00-00", "99/99/9999", "99-99-9999", "9999-99-99", "9999-12-31", "1900-01-01"}:
+        return "sentinel_date"
+    if s_lower in {"tbd", "tba", "unknown", "na", "n/a", "null", "none", "dummy", "placeholder", "not available"}:
+        return "placeholder_date"
+    
+    m_iso = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})", s)
+    if m_iso:
+        y, m, d = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
+        if m < 1 or m > 12 or d < 1 or d > 31:
+            return "impossible_date"
+        if m in (4, 6, 9, 11) and d > 30:
+            return "impossible_date"
+        if m == 2:
+            is_leap = (y % 4 == 0 and (y % 100 != 0 or y % 400 == 0))
+            if d > (29 if is_leap else 28):
+                return "impossible_date"
+        return "invalid_date_format"
+
+    m_slash = re.match(r"^(\d{1,2})[-/](\d{1,2})[-/](\d{4})", s)
+    if m_slash:
+        p1, p2, y = int(m_slash.group(1)), int(m_slash.group(2)), int(m_slash.group(3))
+        if (p1 > 12 and p2 > 12) or p1 > 31 or p2 > 31 or p1 < 1 or p2 < 1:
+            return "impossible_date"
+        if (p1 == 2 and p2 > 29) or (p2 == 2 and p1 > 29):
+            return "impossible_date"
+        return "invalid_date_format"
+
+    return "invalid_date_format"
+
+
 import os
 
 def get_safe_validation_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -135,7 +169,19 @@ def get_safe_validation_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         if col_count > 100 and not disable_rows:
             target_rows = min(target_rows, 25_000)
         logger.info(f"OOM Protection: Sampling dataset from {row_count} rows to {target_rows} rows for GX validation.")
-        return df.sample(n=target_rows, random_state=42)
+        df = df.sample(n=target_rows, random_state=42)
+
+    # Ensure CLR Decimal or decimal.Decimal in object columns are converted to float/int
+    for col in df.columns:
+        if df[col].dtype == object and not df[col].empty:
+            sample_non_null = df[col].dropna()
+            if not sample_non_null.empty:
+                first_val = sample_non_null.iloc[0]
+                if getattr(first_val, "__class__", type(first_val)).__name__ == "Decimal":
+                    try:
+                        df[col] = df[col].apply(lambda v: (float(str(v)) if pd.notna(v) and v is not None else None))
+                    except Exception:
+                        pass
     return df
 
 def run_gx_validation(
@@ -378,14 +424,18 @@ def run_gx_validation(
                         if is_already_dt:
                             validator.expect_column_values_to_not_be_null(column=col_name)
                         else:
-                            validator.expect_column_values_to_be_dateutil_parseable(column=col_name)
+                            non_nulls = s.dropna()
+                            if not non_nulls.empty and all(isinstance(v, str) for v in non_nulls.head(20)):
+                                validator.expect_column_values_to_be_dateutil_parseable(column=col_name)
+                            else:
+                                validator.expect_column_values_to_not_be_null(column=col_name)
 
-                    # ── Step 8: Numeric bounds — ONLY for true numeric semantic types ───────
-                    # identifiers, country codes, status values, postal codes etc. are EXCLUDED
+                    # ── Step 8: Numeric bounds & sentinels ──────────────────────────────────
+                    col_lower = str(col_name).lower()
                     is_id_like = (
-                        col_name.lower().endswith("id") or
-                        col_name.lower().endswith("key") or
-                        col_name.lower().endswith("code") or
+                        col_lower.endswith("id") or
+                        col_lower.endswith("key") or
+                        col_lower.endswith("code") or
                         semantic_type in {"identifier", "primary_key", "foreign_key",
                                           "sensitive_identifier", "numeric_id", "id"}
                     )
@@ -400,26 +450,33 @@ def run_gx_validation(
                             if local_sentinels:
                                 validator.expect_column_values_to_not_be_in_set(
                                     column=col_name, value_set=list(local_sentinels))
+                    elif (is_id_like or "int" in dtype or "float" in dtype) and local_sentinels:
+                        # Also check sentinels on ID-like numeric columns (e.g. InstructorID = 999)
+                        v_clean = s.dropna()
+                        if not v_clean.empty and ("int" in dtype or "float" in dtype):
+                            validator.expect_column_values_to_not_be_in_set(
+                                column=col_name, value_set=list(local_sentinels))
 
                     # ── Step 9: Suspicious zero for ID columns ────────────────────────────
-                    # Only check string-form IDs — do NOT check numeric columns that happen
-                    # to have 0 as a valid sentinel check
                     if is_id_like and not _is_numeric_semantic:
                         validator.expect_column_values_to_not_be_in_set(
                             column=col_name, value_set=[0, 0.0, "0", "0.0"])
 
-
-
-
                 # 5. Run GX Validation (using COMPLETE format for index tracking)
                 import warnings
+                validation_result = None
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", message=".*result_format.*", category=UserWarning)
-                    validation_result = validator.validate(result_format="COMPLETE")
+                    try:
+                        validation_result = validator.validate(result_format="COMPLETE")
+                    except Exception as e_val:
+                        logger.warning(f"GX validator.validate() failed on {name}: {e_val}. Proceeding with custom checks.")
+                        validation_result = {"results": []}
 
                 # Parse the outcomes
                 results_processed = []
-                res_list = validation_result.get("results", []) if isinstance(validation_result, dict) else getattr(validation_result, "results", [])
+                res_list = (validation_result.get("results", []) if isinstance(validation_result, dict) 
+                            else getattr(validation_result, "results", [])) if validation_result else []
 
                 for r in res_list:
                     exp_type = "unknown"
@@ -616,78 +673,164 @@ def run_gx_validation(
                                 "unexpected_values": col_series.loc[col_stripped.index[pl_mask]].head(5).tolist()
                             })
 
-                # 0.2 Sentinels Check
+                # 0.2 Sentinels Check (runs on normalized numeric values regardless of int, float, or numeric string)
                 for col in validation_df.columns:
                     col_meta = cols_meta.get(col) or {}
                     semantic_type = (col_meta.get("semantic_type") or "unknown").lower()
+                    col_lower = str(col).lower()
                     col_series = validation_df[col]
                     dtype = str(col_series.dtype).lower()
-                    if ("int" in dtype or "float" in dtype) or semantic_type in ("numeric_id", "numeric"):
-                        num_col = pd.to_numeric(col_series.astype(str).str.strip(), errors="coerce").dropna()
-                        if not num_col.empty:
-                            sent_mask = num_col.apply(lambda v: float(v) in local_sentinels)
-                            sent_cnt = int(sent_mask.sum())
-                            if sent_cnt > 0:
-                                results_processed.append({
-                                    "expectation": "sentinel_numeric_value",
-                                    "column": col,
-                                    "success": False,
-                                    "details": f"{sent_cnt} sentinel/magic number(s) detected (e.g. -999, 9999999)",
-                                    "unexpected_count": sent_cnt,
-                                    "unexpected_index_list": num_col.index[sent_mask].tolist(),
-                                    "unexpected_values": col_series.loc[num_col.index[sent_mask]].head(5).tolist()
-                                })
 
-                # 0.3 Text-Encoded Invalid Numeric Check (e.g. <amount>error</amount>)
-                _NUMERIC_NAME_PATTERNS = ("amount", "price", "budget", "cost", "total", "qty", "quantity", "count", "num_", "production_qty", "extent")
+                    # Semantic guard: phone numbers, postal codes, and contact identifiers are not numeric measures
+                    if semantic_type in ("phone", "email", "date", "datetime", "timestamp", "name", "address", "url", "ip_address", "postal_code", "zip") or any(p in col_lower for p in ("phone", "mobile", "tel", "fax", "email", "zip", "postal")):
+                        continue
+
+                    is_candidate = (
+                        "int" in dtype or "float" in dtype or "double" in dtype or "decimal" in dtype
+                        or semantic_type in ("numeric", "numeric_id", "metric", "identifier", "foreign_key", "id")
+                        or col_lower.endswith("id") or col_lower.endswith("_id") or col_lower.endswith("key") or col_lower.endswith("code")
+                    )
+                    clean_str = col_series.dropna().astype(str).str.strip()
+                    if clean_str.empty:
+                        continue
+                    coerced = pd.to_numeric(clean_str, errors="coerce")
+                    valid_numeric = coerced.dropna()
+                    if valid_numeric.empty:
+                        continue
+                    if not is_candidate and (len(valid_numeric) / len(clean_str)) < 0.5:
+                        continue
+
+                    sent_mask = valid_numeric.isin(local_sentinels)
+                    sent_cnt = int(sent_mask.sum())
+                    if sent_cnt > 0:
+                        results_processed.append({
+                            "expectation": "sentinel_numeric_value",
+                            "column": col,
+                            "success": False,
+                            "details": f"{sent_cnt} sentinel/magic number(s) detected (e.g. {valid_numeric[sent_mask].head(3).tolist()})",
+                            "unexpected_count": sent_cnt,
+                            "unexpected_index_list": valid_numeric.index[sent_mask].tolist(),
+                            "unexpected_values": col_series.loc[valid_numeric.index[sent_mask]].head(5).tolist()
+                        })
+
+                # 0.25 Candidate Numeric Validation: Non-Negative & Coerced Parse Failure Check
+                _NUMERIC_NAME_PATTERNS = (
+                    "amount", "price", "budget", "cost", "total", "qty", "quantity", 
+                    "count", "num_", "production_qty", "extent", "fee", "rate", 
+                    "score", "balance", "discount", "margin", "salary", "wage"
+                )
                 for col in validation_df.columns:
                     col_meta = cols_meta.get(col) or {}
                     col_lower = str(col).lower()
                     semantic_type = (col_meta.get("semantic_type") or "").lower()
-                    is_numeric_named = any(p in col_lower for p in _NUMERIC_NAME_PATTERNS) or semantic_type in ("numeric", "metric", "numeric_id")
-                    
-                    if is_numeric_named:
-                        col_series = validation_df[col]
-                        non_null_s = col_series.dropna().astype(str).str.strip()
-                        if not non_null_s.empty:
-                            coerced = pd.to_numeric(non_null_s, errors="coerce")
-                            bad_mask = coerced.isna()
-                            bad_cnt = int(bad_mask.sum())
-                            if bad_cnt > 0:
+                    col_series = validation_df[col]
+                    dtype = str(col_series.dtype).lower()
+
+                    # Semantic guard: phone numbers, postal codes, and contact identifiers are not numeric measures
+                    if semantic_type in ("phone", "email", "date", "datetime", "timestamp", "name", "address", "url", "ip_address", "postal_code", "zip") or any(p in col_lower for p in ("phone", "mobile", "tel", "fax", "email", "zip", "postal")):
+                        continue
+
+                    is_id_like = (
+                        col_lower.endswith("id") or col_lower.endswith("_id") or
+                        col_lower.endswith("key") or col_lower.endswith("code") or
+                        semantic_type in ("identifier", "primary_key", "foreign_key", "id", "numeric_id")
+                    )
+                    is_numeric_named = any(p in col_lower for p in _NUMERIC_NAME_PATTERNS) or semantic_type in ("numeric", "metric", "currency", "amount")
+                    is_numeric_dtype = any(t in dtype for t in ("int", "float", "double", "decimal"))
+
+                    raw_non_empty = col_series.dropna()
+                    if raw_non_empty.empty:
+                        continue
+                    clean_str = raw_non_empty.astype(str).str.strip()
+                    non_placeholder_mask = clean_str.ne("") & ~clean_str.str.lower().isin(local_placeholders)
+                    if not non_placeholder_mask.any():
+                        continue
+
+                    eval_clean = clean_str[non_placeholder_mask]
+                    coerced = pd.to_numeric(eval_clean, errors="coerce")
+                    valid_coerced = coerced.dropna()
+
+                    if not is_numeric_dtype and not is_numeric_named:
+                        if len(eval_clean) >= 5 and (len(valid_coerced) / len(eval_clean)) >= 0.70 and not is_id_like:
+                            is_numeric_named = True
+
+                    if not is_numeric_dtype and not is_numeric_named:
+                        continue
+
+                    # 1. Numeric parse failures (non-empty source failing numeric conversion)
+                    parse_fail_mask = coerced.isna()
+                    parse_fail_cnt = int(parse_fail_mask.sum())
+                    if parse_fail_cnt > 0:
+                        results_processed.append({
+                            "expectation": "numeric_parse_failure",
+                            "column": col,
+                            "success": False,
+                            "details": f"{parse_fail_cnt} non-numeric value(s) in numeric candidate column '{col}'",
+                            "unexpected_count": parse_fail_cnt,
+                            "unexpected_index_list": eval_clean.index[parse_fail_mask].tolist(),
+                            "unexpected_values": col_series.loc[eval_clean.index[parse_fail_mask]].head(5).tolist()
+                        })
+
+                    # 2. Non-negative validation on coerced numeric series (excluding ID columns)
+                    if not is_id_like and not valid_coerced.empty:
+                        non_sentinel_numeric = valid_coerced[~valid_coerced.isin(local_sentinels)]
+                        if not non_sentinel_numeric.empty:
+                            neg_mask = non_sentinel_numeric.lt(0)
+                            neg_cnt = int(neg_mask.sum())
+                            if neg_cnt > 0:
                                 results_processed.append({
-                                    "expectation": "invalid_numeric_values",
+                                    "expectation": "negative_values",
                                     "column": col,
                                     "success": False,
-                                    "details": f"{bad_cnt} non-numeric value(s) in numeric column '{col}' (e.g. 'error', 'invalid')",
-                                    "unexpected_count": bad_cnt,
-                                    "unexpected_index_list": non_null_s.index[bad_mask].tolist(),
-                                    "unexpected_values": col_series.loc[non_null_s.index[bad_mask]].head(5).tolist()
+                                    "details": f"{neg_cnt} negative value(s) detected in column '{col}' (e.g. {non_sentinel_numeric[neg_mask].head(3).tolist()})",
+                                    "unexpected_count": neg_cnt,
+                                    "unexpected_index_list": non_sentinel_numeric.index[neg_mask].tolist(),
+                                    "unexpected_values": col_series.loc[non_sentinel_numeric.index[neg_mask]].head(5).tolist()
                                 })
 
-                # 0.4 Invalid Date Format & Sentinel Date Check (e.g. 00/00/0000, 99/99/9999, invalid)
+                # 0.4 Invalid Date Format & Sentinel / Impossible Date Check
                 _DATE_NAME_PATTERNS = ("date", "dob", "time", "stamp", "dt")
-                _BAD_DATE_STRINGS = {"00/00/0000", "00-00-0000", "0000-00-00", "99/99/9999", "99-99-9999", "9999-99-99", "invalid", "tbd", "not available"}
                 for col in validation_df.columns:
                     col_meta = cols_meta.get(col) or {}
                     col_lower = str(col).lower()
                     semantic_type = (col_meta.get("semantic_type") or "").lower()
-                    is_date_named = any(p in col_lower for p in _DATE_NAME_PATTERNS) or semantic_type == "date"
-                    
+                    is_date_named = any(p in col_lower for p in _DATE_NAME_PATTERNS) or semantic_type in ("date", "datetime", "timestamp")
+
                     if is_date_named:
                         col_series = validation_df[col]
                         non_null_s = col_series.dropna().astype(str).str.strip()
                         if not non_null_s.empty:
-                            bad_mask = non_null_s.str.lower().isin(_BAD_DATE_STRINGS)
-                            bad_cnt = int(bad_mask.sum())
-                            if bad_cnt > 0:
+                            impossible_idx, impossible_vals = [], []
+                            sentinel_idx, sentinel_vals = [], []
+
+                            for idx, val in non_null_s.items():
+                                cls = _classify_bad_date(val)
+                                if cls == "impossible_date":
+                                    impossible_idx.append(idx)
+                                    impossible_vals.append(val)
+                                elif cls in ("sentinel_date", "placeholder_date"):
+                                    sentinel_idx.append(idx)
+                                    sentinel_vals.append(val)
+
+                            if impossible_idx:
                                 results_processed.append({
-                                    "expectation": "invalid_date_format",
+                                    "expectation": "impossible_date",
                                     "column": col,
                                     "success": False,
-                                    "details": f"{bad_cnt} invalid date/sentinel date value(s) in column '{col}'",
-                                    "unexpected_count": bad_cnt,
-                                    "unexpected_index_list": non_null_s.index[bad_mask].tolist(),
-                                    "unexpected_values": col_series.loc[non_null_s.index[bad_mask]].head(5).tolist()
+                                    "details": f"{len(impossible_idx)} impossible calendar date(s) (e.g. {impossible_vals[:3]})",
+                                    "unexpected_count": len(impossible_idx),
+                                    "unexpected_index_list": impossible_idx,
+                                    "unexpected_values": impossible_vals[:5]
+                                })
+                            if sentinel_idx:
+                                results_processed.append({
+                                    "expectation": "sentinel_date",
+                                    "column": col,
+                                    "success": False,
+                                    "details": f"{len(sentinel_idx)} sentinel/placeholder date value(s) in column '{col}'",
+                                    "unexpected_count": len(sentinel_idx),
+                                    "unexpected_index_list": sentinel_idx,
+                                    "unexpected_values": sentinel_vals[:5]
                                 })
 
                 # 0.5 Digit Strings in Categorical Columns (e.g. region = 123, channel = 123)
@@ -850,7 +993,26 @@ def run_gx_validation(
                             or cl in ("id", "pk", "uuid", "guid", "code", "identifier")
                         )
 
-                    text_cols = [c for c in validation_df.columns if _is_text_dtype(validation_df[c].dtype) and not _is_id_like(c)]
+                    def _is_date_or_numeric_like(col_name: str) -> bool:
+                        cl = col_name.lower()
+                        meta = cols_meta.get(col_name) or {}
+                        sem = (meta.get("semantic_type") or "").lower()
+                        return (
+                            sem in ("date", "datetime", "timestamp", "time", "numeric", "metric", "currency", "amount")
+                            or cl.endswith("date")
+                            or cl.endswith("_date")
+                            or cl.endswith("_dt")
+                            or cl.endswith("time")
+                            or cl.endswith("_time")
+                            or cl in ("date", "datetime", "timestamp", "time", "price", "amount", "cost", "fee")
+                        )
+
+                    text_cols = [
+                        c for c in validation_df.columns
+                        if _is_text_dtype(validation_df[c].dtype)
+                        and not _is_id_like(c)
+                        and not _is_date_or_numeric_like(c)
+                    ]
                     if len(text_cols) >= 2:
                         sub_df = validation_df[text_cols].dropna(how="all")
                         # limit rows for near duplicate checks to avoid extreme latency
@@ -895,6 +1057,40 @@ def run_gx_validation(
                                 ratio = fuzz.token_sort_ratio(s_i, s_j)
                                 if ratio >= threshold:
                                     near_dups.append((row_indices[i], row_indices[j], ratio / 100.0))
+
+                        # Domain grain awareness: for course/catalog offerings, check if matches differ on instructor, date, or price
+                        is_catalog_or_offering = any(term in name.lower() for term in ("course", "offering", "event", "session", "schedule", "class", "batch", "product"))
+                        if is_catalog_or_offering and near_dups:
+                            grain_cols = [c for c in validation_df.columns if not _is_id_like(c) or c.lower().startswith("instructor")]
+                            filtered_dups = []
+                            for a, b, s in near_dups:
+                                differs_on_grain = False
+                                for gc in grain_cols:
+                                    if gc not in text_cols:
+                                        val_a = validation_df.at[a, gc] if a in validation_df.index else None
+                                        val_b = validation_df.at[b, gc] if b in validation_df.index else None
+                                        if pd.notna(val_a) and pd.notna(val_b) and val_a != val_b:
+                                            differs_on_grain = True
+                                            break
+                                if not differs_on_grain:
+                                    filtered_dups.append((a, b, s))
+
+                            if len(filtered_dups) == 0:
+                                results_processed.append({
+                                    "expectation": "potential_repeated_course_offerings",
+                                    "column": "[Row-level]",
+                                    "success": True,
+                                    "details": (
+                                        f"Detected {len(near_dups)} candidate title match pair(s). "
+                                        f"Classified as potential repeated course offerings (differentiated by instructor, schedule, or price). Advisory — not gated as duplicate records."
+                                    ),
+                                    "unexpected_count": 0,
+                                    "unexpected_index_list": [],
+                                    "unexpected_values": [],
+                                })
+                                near_dups = []
+                            else:
+                                near_dups = filtered_dups
                         if near_dups:
                             # Complete-linkage / clique clustering to prevent transitive chaining (A-B-C... 48 rows)
                             # Every member added to a cluster must satisfy the similarity threshold with ALL other members
@@ -954,9 +1150,10 @@ def run_gx_validation(
                             unexp_cnt = min(len(sub_df), redundant_rows)
 
                             details_msg = (
-                                f"Found {len(near_dups)} near-duplicate pair(s) (similarity >= {threshold/100:.2f}). "
-                                f"Clustering: {cluster_count} cluster(s) involving {distinct_rows_involved} distinct row(s) "
-                                f"(largest: {largest_cluster}, median: {median_cluster:.1f}, exact duplicate pairs subset: {exact_dup_pairs})."
+                                f"Candidate pairs: {len(near_dups)}, duplicate clusters: {cluster_count}, "
+                                f"distinct cluster members: {distinct_rows_involved}, estimated redundant rows: {unexp_cnt} "
+                                f"({distinct_rows_involved} members - {cluster_count} clusters = {unexp_cnt} redundant rows). "
+                                f"Largest cluster: {largest_cluster}, median cluster size: {median_cluster:.1f}, exact duplicate pairs subset: {exact_dup_pairs}."
                             )
                             
                             results_processed.append({
@@ -970,6 +1167,7 @@ def run_gx_validation(
                                 "metrics": {
                                     "candidate_pairs_count": len(near_dups),
                                     "duplicate_clusters_count": cluster_count,
+                                    "distinct_cluster_members": distinct_rows_involved,
                                     "distinct_rows_involved": distinct_rows_involved,
                                     "estimated_redundant_rows": unexp_cnt,
                                     "exact_duplicate_pairs": exact_dup_pairs,
@@ -1331,21 +1529,60 @@ def run_gx_validation(
                             try:
                                 parsed = pd.to_datetime(s_raw, errors="coerce", format="mixed")
                                 invalid_mask = parsed.isna()
-                                cnt = int(invalid_mask.sum())
-                                if cnt > 0:
-                                    bad_idx = s_raw.index[invalid_mask].tolist()
-                                    bad_vals = s_raw[invalid_mask].head(5).astype(str).tolist()
-                                    results_processed.append({
-                                        "expectation": "invalid_date_format",
-                                        "expectation_type": "invalid_date_format",
-                                        "column": col_name,
-                                        "success": False,
-                                        "details": f"{cnt} invalid or impossible calendar date(s) (e.g. {bad_vals[0] if bad_vals else ''})",
-                                        "unexpected_count": cnt,
-                                        "element_count": len(validation_df),
-                                        "unexpected_index_list": bad_idx[:50],
-                                        "unexpected_values": bad_vals,
-                                    })
+                                if invalid_mask.any():
+                                    bad_s = s_raw[invalid_mask]
+                                    imp_idx, imp_vals = [], []
+                                    sent_idx, sent_vals = [], []
+                                    fmt_idx, fmt_vals = [], []
+
+                                    for idx, val in bad_s.items():
+                                        c_type = _classify_bad_date(val)
+                                        if c_type == "impossible_date":
+                                            imp_idx.append(idx)
+                                            imp_vals.append(str(val))
+                                        elif c_type in ("sentinel_date", "placeholder_date"):
+                                            sent_idx.append(idx)
+                                            sent_vals.append(str(val))
+                                        else:
+                                            fmt_idx.append(idx)
+                                            fmt_vals.append(str(val))
+
+                                    if imp_idx:
+                                        results_processed.append({
+                                            "expectation": "impossible_date",
+                                            "expectation_type": "impossible_date",
+                                            "column": col_name,
+                                            "success": False,
+                                            "details": f"{len(imp_idx)} impossible calendar date(s) (e.g. {imp_vals[0]})",
+                                            "unexpected_count": len(imp_idx),
+                                            "element_count": len(validation_df),
+                                            "unexpected_index_list": imp_idx[:50],
+                                            "unexpected_values": imp_vals[:5],
+                                        })
+                                    if sent_idx:
+                                        results_processed.append({
+                                            "expectation": "sentinel_date",
+                                            "expectation_type": "sentinel_date",
+                                            "column": col_name,
+                                            "success": False,
+                                            "details": f"{len(sent_idx)} sentinel/placeholder date value(s) in column '{col_name}'",
+                                            "unexpected_count": len(sent_idx),
+                                            "element_count": len(validation_df),
+                                            "unexpected_index_list": sent_idx[:50],
+                                            "unexpected_values": sent_vals[:5],
+                                        })
+                                    if fmt_idx:
+                                        results_processed.append({
+                                            "expectation": "invalid_date_format",
+                                            "expectation_type": "invalid_date_format",
+                                            "column": col_name,
+                                            "success": False,
+                                            "details": f"{len(fmt_idx)} invalid date format value(s) (e.g. {fmt_vals[0]})",
+                                            "unexpected_count": len(fmt_idx),
+                                            "element_count": len(validation_df),
+                                            "unexpected_index_list": fmt_idx[:50],
+                                            "unexpected_values": fmt_vals[:5],
+                                        })
                             except Exception:
                                 pass
 
@@ -1951,32 +2188,6 @@ def run_gx_validation(
                                 "unexpected_index_list": validation_df.index[empty_mask].tolist()[:50],
                                 "unexpected_values": [""]
                             })
-
-                # 45. Non-numeric strings in numeric columns
-                for col in validation_df.columns:
-                    col_meta = cols_meta.get(col) or {}
-                    semantic_type = (col_meta.get("semantic_type") or "").lower()
-                    is_semantic_numeric = semantic_type in ("numeric", "metric", "numeric_id") or col.lower() in ("fee", "credits", "amount", "price", "quantity")
-                    if _is_text_dtype(validation_df[col].dtype) and is_semantic_numeric:
-                        s = validation_df[col].dropna()
-                        placeholders = {"", "n/a", "na", "null", "none", "unknown", "nan"}
-                        s_clean = s[~s.astype(str).str.strip().str.lower().isin(placeholders)]
-                        if not s_clean.empty:
-                            coerced = pd.to_numeric(s_clean, errors="coerce")
-                            failed_mask = coerced.isna()
-                            cnt = int(failed_mask.sum())
-                            if cnt > 0:
-                                failed_values = s_clean[failed_mask].head(10).tolist()
-                                failed_indices = s_clean[failed_mask].index.tolist()
-                                results_processed.append({
-                                    "expectation": "invalid_numeric_values",
-                                    "column": col,
-                                    "success": False,
-                                    "details": f"{cnt} non-numeric value(s) (e.g. {failed_values}) in semantically numeric column",
-                                    "unexpected_count": cnt,
-                                    "unexpected_index_list": failed_indices[:50],
-                                    "unexpected_values": failed_values
-                                })
 
                 # Statistics rollup
                 eval_cnt = len(results_processed)

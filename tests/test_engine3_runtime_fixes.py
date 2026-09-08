@@ -232,8 +232,8 @@ def test_impossible_calendar_dates_detected():
     })
     res = run_gx_validation({"dates": df}, {})
     proc = res.get("dates", {}).get("results_processed", [])
-    date_issues = [r for r in proc if r.get("expectation") in ("invalid_date_format", "invalid_calendar_date")]
+    date_issues = [r for r in proc if r.get("expectation") in ("invalid_date_format", "invalid_calendar_date", "impossible_date")]
     assert len(date_issues) >= 1
-    bad_dates_issue = [r for r in date_issues if "calendar" in r.get("details", "").lower() or r.get("expectation") == "invalid_calendar_date"]
+    bad_dates_issue = [r for r in date_issues if "calendar" in r.get("details", "").lower() or r.get("expectation") in ("invalid_calendar_date", "impossible_date")]
     assert len(bad_dates_issue) >= 1
     assert bad_dates_issue[0]["unexpected_count"] == 2

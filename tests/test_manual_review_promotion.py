@@ -192,3 +192,83 @@ class TestManualReviewPromotion(unittest.TestCase):
         codes = [i.code for i in issues]
         self.assertIn("PROMOTION_ACTION_MISMATCH", codes)
 
+    def test_unreviewed_draft_steps_do_not_falsely_fail_with_missing_provenance(self) -> None:
+        """Draft review steps pending user decision must not falsely raise MISSING_PROVENANCE."""
+        plan = {
+            "generation_mode": "cleanse",
+            "datasets": {
+                "dbo.Courses": {
+                    "steps": [
+                        {
+                            "step_id": "step_d962e415de",
+                            "column": "Price",
+                            "action": "range_clip",
+                            "classification": "review",
+                            "requires_user_choice": True,
+                            "params": {"lower_bound": 0.0, "output_column": "Price_clean"},
+                        }
+                    ]
+                },
+                "dbo.Customers": {
+                    "steps": [
+                        {
+                            "step_id": "step_ffbce23954",
+                            "column": "Age",
+                            "action": "range_clip",
+                            "classification": "review",
+                            "requires_user_choice": True,
+                            "params": {"lower_bound": 0.0, "upper_bound": 120, "output_column": "Age_clean"},
+                        }
+                    ]
+                },
+            }
+        }
+        valid, issues = validate_promoted_plan(plan)
+        self.assertTrue(valid)
+        self.assertEqual(len(issues), 0)
+
+    def test_nullify_date_action_validates_and_promotes_cleanly(self) -> None:
+        """Resolving impossible date with nullify_date succeeds and supersedes draft parse_dates."""
+        plan = {
+            "generation_mode": "cleanse",
+            "datasets": {
+                "dbo.Customers_Raw": {
+                    "steps": [
+                        {
+                            "step_id": "step_ae4691d8a5",
+                            "column": "CreatedDate",
+                            "action": "parse_dates",
+                            "classification": "review",
+                            "requires_user_choice": True,
+                            "params": {"output_column": "CreatedDate_clean"},
+                        }
+                    ]
+                }
+            },
+            "manual_review": [
+                {
+                    "id": "mr-createddate-imp",
+                    "dataset": "dbo.Customers_Raw",
+                    "column": "CreatedDate",
+                    "issue_type": "impossible_date",
+                    "status": "pending",
+                    "resolution_options": [
+                        {"id": "nullify_date", "action": "nullify_date", "label": "Nullify impossible dates"}
+                    ]
+                }
+            ]
+        }
+        updated, errs = apply_manual_resolutions(
+            plan,
+            [{"item_id": "mr-createddate-imp", "resolution_id": "nullify_date"}]
+        )
+        self.assertEqual(errs, [])
+        valid, issues = validate_promoted_plan(updated)
+        self.assertTrue(valid, f"Validation failed with: {[i.message for i in issues]}")
+        # The old draft step should be superseded
+        steps = updated["datasets"]["dbo.Customers_Raw"]["steps"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["action"], "nullify_date")
+        self.assertEqual(steps[0]["manual_resolution"]["selected_option_id"], "nullify_date")
+
+

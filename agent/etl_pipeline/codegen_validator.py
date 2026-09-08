@@ -67,6 +67,13 @@ def validate_tsql(code: str, never_drop_rows: bool = False) -> Tuple[bool, List[
         if condition:
             errors.append(msg)
     
+    # Check if GO appears inside BEGIN TRY ... END CATCH
+    try_catch_match = re.search(r"BEGIN\s+TRY([\s\S]*?)END\s+CATCH", code, re.IGNORECASE)
+    if try_catch_match:
+        inner_body = try_catch_match.group(1)
+        if re.search(r"^\s*GO\s*(?:--.*)?$", inner_body, re.MULTILINE | re.IGNORECASE):
+            errors.append("Invalid T-SQL: 'GO' batch separator found inside BEGIN TRY ... END CATCH block (splits batch and causes syntax failure)")
+
     required = [
         ("ETL_LOG", "Missing dbo.etl_log DDL"),
         ("SCOPE_IDENTITY", "Missing SCOPE_IDENTITY() for @run_id capture"),
@@ -77,6 +84,10 @@ def validate_tsql(code: str, never_drop_rows: bool = False) -> Tuple[bool, List[
     for keyword, msg in required:
         if keyword not in upper:
             errors.append(msg)
+
+    # Check transaction balance: if ROLLBACK is present, ensure BEGIN TRANSACTION exists
+    if "ROLLBACK" in upper and "BEGIN TRANSACTION" not in upper and "BEGIN TRAN" not in upper:
+        errors.append("Invalid T-SQL: ROLLBACK encountered without corresponding BEGIN TRANSACTION")
 
     # Advisory only
     if "ETL_REJECTS" not in upper:

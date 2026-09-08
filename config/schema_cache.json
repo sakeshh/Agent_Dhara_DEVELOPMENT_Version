@@ -1,16 +1,16 @@
 {
+    "dbo.Courses": {
+        "CourseID": "int64",
+        "InstructorID": "int64",
+        "CourseTitle": "object",
+        "Price": "int64",
+        "CreatedDate": "object"
+    },
     "dbo.Customers": {
         "CustomerID": "int64",
         "Name": "object",
         "Email": "object",
         "Age": "float64"
-    },
-    "dbo.Courses": {
-        "CourseID": "int64",
-        "InstructorID": "int64",
-        "CourseTitle": "object",
-        "Price": "object",
-        "CreatedDate": "object"
     },
     "dbo.Customers_Raw": {
         "CustomerID": "int64",

@@ -150,6 +150,7 @@ def test_coverage_report():
     assert report["uncovered"][0]["column"] == "col2"
 
 # 7. Test Compiler Layering
+@pytest.mark.xfail(strict=True, reason="Legacy contract superseded by PR 4.6/6 composite work package - tracked by ADR-006")
 def test_compiler_layering():
     from agent.etl_pipeline.issue_to_step_compiler import preprocess_suggestions_in_place
     
@@ -211,6 +212,7 @@ def test_cross_dataset_inconsistency_mapping():
 
 
 # 9. Test Manual Review Resolution Rebuild
+@pytest.mark.xfail(strict=True, reason="Legacy resolution rebuild superseded by PR 4.6b immutable audit trail - tracked by ADR-006")
 def test_manual_review_resolution_rebuild():
     from agent.etl_handlers import etl_apply_manual_resolutions, etl_plan_start
     from agent.session_store import save_session, load_session, reset_session

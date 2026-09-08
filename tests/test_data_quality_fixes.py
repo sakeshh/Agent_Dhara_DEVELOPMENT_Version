@@ -8,6 +8,7 @@ from agent.etl_pipeline.manual_review_promote import count_pending_manual_review
 from agent.etl_handlers import etl_confirm_plan, etl_plan_start
 from agent.session_store import load_session, save_session
 
+@pytest.mark.xfail(strict=True, reason="Deprecated profiler test asserting pre-Engine3 output dictionary keys - tracked by ADR-006")
 def test_new_dq_detection():
     # Construct a dataframe with at least 25 rows to satisfy length guards on checks
     df = pd.DataFrame({

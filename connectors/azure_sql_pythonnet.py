@@ -265,12 +265,30 @@ class AzureSQLPythonNetConnector:
             return f"[{parts[0]}].[{parts[1]}]"
         return f"[{two_part}]"
 
+    @staticmethod
+    def _convert_clr_value(val: Any) -> Any:
+        if val is None:
+            return None
+        cls_name = getattr(val, "__class__", type(val)).__name__
+        if cls_name == "Decimal":
+            try:
+                f = float(str(val))
+                return int(f) if f.is_integer() else f
+            except Exception:
+                return float(str(val))
+        if cls_name == "DateTime":
+            try:
+                return str(val.ToString("yyyy-MM-dd HH:mm:ss"))
+            except Exception:
+                return str(val)
+        return val
+
     def _read_reader_to_df(self, reader) -> pd.DataFrame:
         columns = [reader.GetName(i) for i in range(reader.FieldCount)]
         rows = []
         while reader.Read():
             row = [
-                (None if reader.IsDBNull(i) else reader.GetValue(i))
+                (None if reader.IsDBNull(i) else self._convert_clr_value(reader.GetValue(i)))
                 for i in range(reader.FieldCount)
             ]
             rows.append(row)
@@ -312,7 +330,7 @@ class AzureSQLPythonNetConnector:
                     w.writerow(cols)
                 while reader.Read():
                     row: List[Optional[Any]] = [
-                        (None if reader.IsDBNull(i) else reader.GetValue(i))
+                        (None if reader.IsDBNull(i) else self._convert_clr_value(reader.GetValue(i)))
                         for i in range(reader.FieldCount)
                     ]
                     # Make sure values are CSV-writable

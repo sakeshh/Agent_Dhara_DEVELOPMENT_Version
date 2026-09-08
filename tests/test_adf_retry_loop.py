@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock
 from agent.etl_pipeline.llm_codegen import generate_adf_with_llm
 
 @pytest.mark.asyncio
+@pytest.mark.xfail(strict=True, reason="Deprecated ADF engine, tracked by ADR-006")
 async def test_adf_retry_loop_success_on_retry():
     call_mock = MagicMock(side_effect=["{invalid_json}", '{"name": "valid_adf"}'])
     

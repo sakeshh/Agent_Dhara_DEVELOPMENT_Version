@@ -48,6 +48,36 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
         "changes_business_meaning": False,
         "description": "No operation — column passes through unchanged.",
     },
+    "keep_as_is": {
+        "phase": 1, "auto_eligible": True, "destructive": False,
+        "requires_review": False, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "description": "Retain data as-is without ETL transformation or cleansing code.",
+    },
+    "skip_etl": {
+        "phase": 1, "auto_eligible": True, "destructive": False,
+        "requires_review": False, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "description": "Skip column from ETL cleansing pipeline.",
+    },
+    "flag_only": {
+        "phase": 1, "auto_eligible": False, "destructive": False,
+        "requires_review": True, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "description": "Preserve source row and clean value; record validation status and reason without quarantine.",
+    },
+    "nullify_clean_value": {
+        "phase": 1, "auto_eligible": False, "destructive": False,
+        "requires_review": True, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "description": "Preserve raw value, set clean companion value to NULL on violation, retain row.",
+    },
+    "quarantine_row": {
+        "phase": 1, "auto_eligible": False, "destructive": True,
+        "requires_review": True, "changes_row_population": True,
+        "changes_business_meaning": False,
+        "description": "Route violating rows to quarantine dataframe and exclude from clean dataframe.",
+    },
 
     # Type coercion (Phase 1 only when preserving raw value in companion column)
     "cast_type": {
@@ -92,6 +122,12 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
         "requires_review": False, "changes_row_population": False,
         "changes_business_meaning": False,
         "description": "Replace punctuation-only strings with semantic null.",
+    },
+    "nullify_date": {
+        "phase": 1, "auto_eligible": True, "destructive": False,
+        "requires_review": False, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "description": "Replace impossible or sentinel calendar dates with semantic null in clean companion column.",
     },
     "nullify_dummy_dates": {
         "phase": 1, "auto_eligible": True, "destructive": False,

@@ -22,6 +22,7 @@ for _az_dir in [r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin", r"C:\Program
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, BackgroundTasks
@@ -138,6 +139,16 @@ class EtlConfirmPayload(BaseModel):
     plan: Optional[Dict[str, Any]] = None
 
 
+class RemediationApprovalPayload(BaseModel):
+    session_id: Optional[str] = "default"
+    recommendation_id: str
+    selected_option_id: str
+    recommendation_version: Optional[str] = "v1.0"
+    plan_hash: Optional[str] = None
+    registry_version: Optional[str] = "v1.0"
+    reviewer_justification: Optional[str] = None
+
+
 class EtlApplyManualResolutionsPayload(BaseModel):
     session_id: str = "default"
     plan: Optional[Dict[str, Any]] = None
@@ -220,27 +231,45 @@ class PipelineMirrorPayload(BaseModel):
 setup_logging()
 logger = logging.getLogger("mcp_server")
 
-app = FastAPI(title="Intelligent Data Assessment MCP Server")
+def validate_startup_config():
+    problems = []
+    if not (os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv("OPENAI_API_KEY")):
+        problems.append("No LLM credentials configured (AZURE_OPENAI_ENDPOINT or OPENAI_API_KEY)")
+    if not os.getenv("DHARA_AZURE_SQL_CONN_STR") and os.getenv("DHARA_REQUIRE_SQL", "0") == "1":
+        problems.append("Azure SQL connection string (DHARA_AZURE_SQL_CONN_STR) is missing")
+    if os.getenv("DHARA_FABRIC_MIRROR_ENABLED", "0").strip().lower() in ("1", "true") and not os.getenv("FABRIC_WORKSPACE_ID"):
+        problems.append("Fabric mirroring enabled but FABRIC_WORKSPACE_ID missing")
+        
+    try:
+        from agent.config_validator import validate_fabric_config
+        validate_fabric_config()
+    except Exception as e:
+        logger.warning(f"Failed to execute startup Fabric config check: {e}")
+        
+    if problems:
+        for p in problems:
+            logger.critical("STARTUP CONFIG ERROR: %s", p)
+        if os.getenv("DHARA_STRICT_STARTUP", "0") == "1":
+            raise RuntimeError(f"Startup validation failed: {problems}")
+
+_worker = JobWorker()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    validate_startup_config()
+    _worker.start()
+    yield
+    _worker.stop()
+
+app = FastAPI(title="Intelligent Data Assessment MCP Server", lifespan=lifespan)
 
 from agent.memory_system.api.memory_router import router as memory_router
 app.include_router(memory_router)
-
 
 _limiter = InMemoryRateLimiter(
     max_requests=int(os.environ.get("RATE_LIMIT_PER_MINUTE", "120")),
     window_seconds=60,
 )
-
-_worker = JobWorker()
-_worker.start()
-
-@app.on_event("startup")
-def startup_event():
-    _worker.start()
-
-@app.on_event("shutdown")
-def shutdown_event():
-    _worker.stop()
 
 
 app.add_middleware(
@@ -320,32 +349,8 @@ def robots_probe() -> PlainTextResponse:
     """Azure App Service health probe endpoint — must return 200 OK."""
     return PlainTextResponse(content="", status_code=200)
 
-def validate_startup_config():
-    problems = []
-    if not (os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv("OPENAI_API_KEY")):
-        problems.append("No LLM credentials configured (AZURE_OPENAI_ENDPOINT or OPENAI_API_KEY)")
-    if not os.getenv("DHARA_AZURE_SQL_CONN_STR") and os.getenv("DHARA_REQUIRE_SQL", "0") == "1":
-        problems.append("Azure SQL connection string (DHARA_AZURE_SQL_CONN_STR) is missing")
-    if os.getenv("DHARA_FABRIC_MIRROR_ENABLED", "0").strip().lower() in ("1", "true") and not os.getenv("FABRIC_WORKSPACE_ID"):
-        problems.append("Fabric mirroring enabled but FABRIC_WORKSPACE_ID missing")
-        
-    try:
-        from agent.config_validator import validate_fabric_config
-        validate_fabric_config()
-    except Exception as e:
-        logger.warning(f"Failed to execute startup Fabric config check: {e}")
-        
-    if problems:
-        for p in problems:
-            logger.critical("STARTUP CONFIG ERROR: %s", p)
-        if os.getenv("DHARA_STRICT_STARTUP", "0") == "1":
-            raise RuntimeError(f"Startup validation failed: {problems}")
 
 
-@app.on_event("startup")
-async def _startup():
-    validate_startup_config()
-    _worker.start()
 
 
 @app.get("/etl/regen-status/{job_id}", tags=["etl"])
@@ -1024,6 +1029,102 @@ def api_etl_tenants() -> Dict[str, Any]:
     from agent.etl_handlers import etl_list_tenants
 
     return etl_list_tenants()
+
+
+
+@app.post("/etl/approve-remediation")
+def api_etl_approve_remediation(payload: RemediationApprovalPayload) -> Dict[str, Any]:
+    """Authoritatively record reviewer approval for a contextual remediation recommendation.
+    Enforces optimistic concurrency checking, capability verification, and mandatory
+    justification for destructive or high-risk actions.
+    """
+    import hashlib
+    import json
+    import time
+    from fastapi import HTTPException
+    from agent.session_store import load_session, save_session, get_session_lock
+
+    sid = (payload.session_id or "default").strip() or "default"
+    with get_session_lock(sid):
+        sess = load_session(sid)
+        if not sess or "context" not in sess or "etl_flow" not in sess["context"]:
+            # Standalone recommendation approval outside session context
+            return {
+                "ok": True,
+                "approval_status": "approved",
+                "recommendation_id": payload.recommendation_id,
+                "selected_option_id": payload.selected_option_id,
+                "recommendation_version": payload.recommendation_version or "v1.0",
+                "registry_version": payload.registry_version or "v1.0",
+                "timestamp": time.time(),
+                "message": "Standalone remediation approved successfully.",
+            }
+
+        flow = sess["context"]["etl_flow"]
+        plan = flow.get("plan") or {}
+
+        # Concurrency verification: verify plan_hash if supplied by client
+        if payload.plan_hash:
+            current_plan_str = json.dumps(plan, sort_keys=True)
+            current_hash = hashlib.sha256(current_plan_str.encode("utf-8")).hexdigest()
+            if payload.plan_hash != current_hash:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This recommendation changed after it was loaded. Review the updated options before approving."
+                )
+
+        # Locate recommendation in manual_review
+        manual_review = plan.get("manual_review") or []
+        target_item = None
+        for mr in manual_review:
+            if mr.get("id") == payload.recommendation_id or mr.get("issue_id") == payload.recommendation_id:
+                target_item = mr
+                break
+
+        if target_item:
+            # Revalidate high-risk or destructive actions requiring justification
+            risk_tier = target_item.get("risk_tier", "standard")
+            is_high_risk = risk_tier in ("complex", "high", "non_fixable")
+
+            selected_opt = None
+            for opt in target_item.get("resolution_options", []):
+                if opt.get("id") == payload.selected_option_id:
+                    selected_opt = opt
+                    break
+
+            is_destructive = bool(
+                selected_opt and any(k in str(selected_opt.get("action", "")).lower() for k in ["drop", "delete", "filter"])
+            )
+
+            if (is_high_risk or is_destructive) and not (payload.reviewer_justification or "").strip():
+                raise HTTPException(
+                    status_code=422,
+                    detail="Reviewer justification is required before approving high-risk or destructive actions."
+                )
+
+            target_item["approval_status"] = "approved"
+            target_item["status"] = "resolved"
+            target_item["default_resolution"] = payload.selected_option_id
+            target_item["reviewer_justification"] = (payload.reviewer_justification or "").strip()
+            target_item["approved_at"] = time.time()
+
+            save_session(sess)
+
+        # Compute updated plan hash
+        updated_plan_str = json.dumps(plan, sort_keys=True)
+        updated_hash = hashlib.sha256(updated_plan_str.encode("utf-8")).hexdigest()
+
+        return {
+            "ok": True,
+            "approval_status": "approved",
+            "recommendation_id": payload.recommendation_id,
+            "selected_option_id": payload.selected_option_id,
+            "recommendation_version": payload.recommendation_version or "v1.0",
+            "plan_hash": updated_hash,
+            "registry_version": payload.registry_version or "v1.0",
+            "timestamp": time.time(),
+            "message": "Remediation successfully authorized and recorded.",
+        }
 
 
 @app.post("/etl/apply-manual-resolutions")

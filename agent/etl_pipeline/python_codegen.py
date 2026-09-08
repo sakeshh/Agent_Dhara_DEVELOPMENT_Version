@@ -504,6 +504,8 @@ _ACTION_REGISTRY: Dict[str, Callable[[str, str, Dict[str, Any]], List[str]]] = {
     "coerce_numeric": _emit_coerce_numeric,
     "cast_type": _emit_cast_type,
     "parse_dates": _emit_parse_dates,
+    "nullify_date": _emit_parse_dates,
+    "nullify_dummy_dates": _emit_parse_dates,
     "sanitize_email": _emit_sanitize_email,
     "normalize_phone": _emit_normalize_phone,
     "hash_phone": _emit_hash_phone,

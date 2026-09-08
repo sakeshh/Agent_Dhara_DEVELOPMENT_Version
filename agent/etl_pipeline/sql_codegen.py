@@ -13,10 +13,24 @@ from agent.etl_pipeline.codegen_shared import (
 from agent.etl_pipeline.join_emitters import emit_sql_joins
 
 
+def quote_sql_server_identifier(identifier: str) -> str:
+    """Escapes single T-SQL identifier by escaping ']' to ']]' and wrapping in brackets."""
+    clean = str(identifier or "").strip()
+    if clean.startswith("[") and clean.endswith("]"):
+        clean = clean[1:-1]
+    escaped = clean.replace("]", "]]")
+    return f"[{escaped}]"
+
+
+def quote_multipart_identifier(multipart_ident: str) -> str:
+    """Quotes multi-part T-SQL identifier separately (e.g. 'dbo.Customers' -> '[dbo].[Customers]')."""
+    parts = str(multipart_ident or "").split(".")
+    return ".".join(quote_sql_server_identifier(p) for p in parts)
+
+
 def _brk(ident: str) -> str:
-    """T-SQL style bracket quoting."""
-    s = str(ident or "").replace("]", "]]")
-    return f"[{s}]"
+    """T-SQL style bracket quoting (delegates to quote_sql_server_identifier)."""
+    return quote_sql_server_identifier(ident)
 
 
 def translate_assertion_to_sql(assertion: str, cols: List[str] = None) -> str:
@@ -235,13 +249,18 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
                     expr = f"UPPER({_wrap_string_cast(expr)})"
         elif action == "sanitize_email":
             if col_class not in ("metric", "date"):
-                expr_upper = expr.strip().upper()
-                if not (expr_upper.startswith("LOWER(LTRIM(RTRIM(") or expr_upper.startswith("LOWER(RTRIM(LTRIM(")):
-                    expr = f"LOWER(LTRIM(RTRIM({_wrap_string_cast(expr)})))"
+                expr_str = _wrap_string_cast(expr)
+                cleaned = f"LOWER(LTRIM(RTRIM({expr_str})))"
+                expr = (
+                    f"CASE "
+                    f"WHEN {cleaned} LIKE '%_@_%._%' AND {cleaned} NOT LIKE '%@%@%' AND {cleaned} NOT LIKE '%..%' AND {cleaned} NOT LIKE '% %' "
+                    f"AND {cleaned} NOT IN ('n/a', 'na', 'null', 'none', 'unknown', '???', 'test@test.com', 'dummy@dummy.com') "
+                    f"THEN {cleaned} ELSE NULL END"
+                )
         elif action == "normalize_phone":
             inner_cast = expr if is_already_string(expr) else f"CAST({expr} AS NVARCHAR(200))"
-            clean_expr = f"REPLACE(REPLACE(REPLACE(REPLACE(REPLACE({inner_cast}, N'-', N''), N' ', N''), N'(', N''), N')', N''), N'+', N'')"
-            expr = f"CASE WHEN LEN({clean_expr}) = 10 AND {clean_expr} NOT LIKE '%[^0-9]%' THEN {clean_expr} ELSE NULL END"
+            clean_expr = f"REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE({inner_cast}, N'-', N''), N' ', N''), N'(', N''), N')', N''), N'+', N''), N'.', N'')"
+            expr = f"CASE WHEN LEN({clean_expr}) BETWEEN 7 AND 15 AND {clean_expr} NOT LIKE '%[^0-9]%' THEN {clean_expr} ELSE NULL END"
         elif action == "nullify_dummy_dates":
             expr = f"CASE WHEN {expr} = '1900-01-01' OR FORMAT(TRY_CAST({expr} AS DATE), 'MM-dd') = '01-01' THEN NULL ELSE {expr} END"
         elif action == "nullify_punctuation":
@@ -256,8 +275,37 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
             expr = f"CASE WHEN LOWER(CAST({expr} AS NVARCHAR(10))) IN ('1', 'true', 'yes', 'y', 't') THEN 1 ELSE 0 END"
         elif action == "regex_replace":
             expr = f"REPLACE(REPLACE({_wrap_string_cast(expr)}, N'''', N''), N'\"', N'')"
-        elif action == "range_clip":
-            expr = f"CASE WHEN TRY_CAST({expr} AS FLOAT) < 0 THEN 0 ELSE TRY_CAST({expr} AS FLOAT) END"
+        elif action in ("range_clip", "clip_outliers"):
+            p = st.get("params") or {}
+            lower = p.get("lower_bound", p.get("min_value"))
+            upper = p.get("upper_bound", p.get("max_value"))
+            cast_f = f"TRY_CAST({expr} AS FLOAT)"
+            col_l = col_name.lower()
+            is_price = any(k in col_l for k in ("price", "cost", "fee", "amount", "budget", "salary", "revenue", "sales", "fare", "balance"))
+            if is_price:
+                expr = f"CASE WHEN {cast_f} < 0 THEN NULL ELSE {cast_f} END"
+            elif col_l == "age":
+                expr = f"CASE WHEN TRY_CAST({expr} AS INT) < 0 OR TRY_CAST({expr} AS INT) > 120 THEN NULL ELSE TRY_CAST({expr} AS INT) END"
+            elif lower is not None and upper is not None:
+                expr = f"CASE WHEN {cast_f} < {lower} THEN NULL WHEN {cast_f} > {upper} THEN NULL ELSE {cast_f} END"
+            elif lower is not None:
+                expr = f"CASE WHEN {cast_f} < {lower} THEN NULL ELSE {cast_f} END"
+            elif upper is not None:
+                expr = f"CASE WHEN {cast_f} > {upper} THEN NULL ELSE {cast_f} END"
+            else:
+                expr = f"CASE WHEN {cast_f} < 0 THEN NULL ELSE {cast_f} END"
+        elif action in ("replace_sentinel_values", "normalize_registered_placeholder"):
+            expr_str = f"LOWER(LTRIM(RTRIM({_wrap_string_cast(expr)})))"
+            if any(k in col_name.lower() for k in ("instructorid", "instructor_id")):
+                expr = f"CASE WHEN TRY_CAST({expr} AS BIGINT) IN (999, -999, 999999, 9999999) OR {expr_str} IN ('999', '-999', '999999', '9999999') THEN NULL ELSE {expr} END"
+            else:
+                expr = (
+                    f"CASE "
+                    f"WHEN {expr_str} IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified', '0000', '') "
+                    f"OR TRY_CAST({expr} AS BIGINT) IN (999, -999, 999999, 9999999, 99999) "
+                    f"OR TRY_CAST({expr} AS FLOAT) IN (999, -999, 999999, 9999999, -9999, 99999) "
+                    f"THEN NULL ELSE {expr} END"
+                )
         elif action == "coerce_numeric":
             is_decimal = False
             col_lower = col_name.lower()
@@ -268,11 +316,20 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
                 is_decimal = any(x in col_lower for x in ("fee", "price", "amount", "rate", "cost", "total", "balance", "tax", "decimal"))
             cast_target = "DECIMAL(18, 2)" if is_decimal else "BIGINT"
             expr = f"TRY_CAST({_wrap_string_cast(expr)} AS {cast_target})"
-        elif action == "parse_dates":
+        elif action in ("parse_dates", "parse_dates_safe"):
             parsed_expr = f"COALESCE(TRY_CONVERT(date, {expr}, 120), TRY_CONVERT(date, {expr}, 103), TRY_CONVERT(date, {expr}, 101), TRY_CONVERT(date, {expr}, 111))"
-            expr = f"CASE WHEN {parsed_expr} = '1900-01-01' THEN NULL ELSE {parsed_expr} END"
+            expr = (
+                f"CASE "
+                f"WHEN {parsed_expr} IS NULL THEN NULL "
+                f"WHEN {parsed_expr} IN ('1900-01-01', '9999-12-31', '0001-01-01') THEN NULL "
+                f"WHEN {parsed_expr} < '1900-01-01' OR {parsed_expr} > '2099-12-31' THEN NULL "
+                f"ELSE {parsed_expr} END"
+            )
         elif action == "zero_to_null":
-            expr = f"CASE WHEN TRY_CAST({expr} AS FLOAT) IN (0, -1, -999, 9999, 9999999, 99999999) THEN NULL ELSE {expr} END"
+            if any(k in col_name.lower() for k in ("instructorid", "instructor_id")):
+                expr = f"CASE WHEN TRY_CAST({expr} AS BIGINT) IN (999, -999, 999999, 9999999) OR LOWER(LTRIM(RTRIM({_wrap_string_cast(expr)}))) IN ('999', '-999', '999999', '9999999') THEN NULL ELSE {expr} END"
+            else:
+                expr = f"CASE WHEN TRY_CAST({expr} AS FLOAT) = 0 THEN NULL ELSE {expr} END"
         elif action == "replace_values":
             mapping = (business_rules.get("replace_values") or {}).get(col_name) or {}
             if isinstance(mapping, dict) and mapping:
@@ -285,6 +342,155 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
                 expr = case_expr
                 
     return expr
+
+
+def _supplement_steps_with_dq_issues(
+    existing_steps: List[Dict[str, Any]],
+    ds_name: str,
+    assessment: Dict[str, Any],
+    plan: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    steps = list(existing_steps)
+    stepped_cols = {str(st.get("column") or "").lower(): str(st.get("action") or "").lower() for st in steps if st.get("column")}
+    
+    issues_for_ds: List[Dict[str, Any]] = []
+    ds_clean = ds_name.replace("dbo.", "").strip()
+    
+    # 1. From assessment.data_quality_issues
+    dq_issues_ds = (assessment.get("data_quality_issues") or {}).get("datasets") or {}
+    for dsk, block in dq_issues_ds.items():
+        if dsk == ds_name or dsk == ds_clean or dsk.replace("dbo.", "") == ds_clean:
+            issues_for_ds.extend(block.get("issues") or [])
+            
+    # 2. From assessment.datasets.<ds>.quality.issues
+    ds_info = (assessment.get("datasets") or {}).get(ds_name) or (assessment.get("datasets") or {}).get(ds_clean) or {}
+    if isinstance(ds_info, dict):
+        q = ds_info.get("quality") or {}
+        issues_for_ds.extend(q.get("issues") or [])
+        for cname, cmeta in (ds_info.get("columns") or {}).items():
+            if isinstance(cmeta, dict):
+                for iss in (cmeta.get("issues") or []):
+                    issues_for_ds.append({**iss, "column": cname})
+                
+    # 3. From plan.manual_review
+    for item in (plan.get("manual_review") or []):
+        dsk = str(item.get("dataset") or "")
+        if dsk == ds_name or dsk == ds_clean or dsk.replace("dbo.", "") == ds_clean:
+            issues_for_ds.append(item)
+            
+    seen_issues = set()
+    for iss in issues_for_ds:
+        col = iss.get("column")
+        col_l = str(col).lower() if col else "*"
+        itype = str(iss.get("issue_type") or iss.get("rule_id") or "").lower()
+        if (col_l, itype) in seen_issues:
+            continue
+        seen_issues.add((col_l, itype))
+        
+        existing_act = stepped_cols.get(col_l)
+        
+        # 1. Currency/Price Negative values
+        is_price = any(k in col_l for k in ("price", "cost", "fee", "amount", "budget", "salary", "revenue", "sales", "fare", "balance"))
+        if is_price and any(k in itype for k in ("negative", "non_negative", "cross_field_non_negative", "negative_values")):
+            if not existing_act or existing_act not in ("range_clip", "clip_outliers"):
+                steps.append({
+                    "action": "range_clip",
+                    "column": col,
+                    "params": {"lower_bound": 0.0, "min_value": 0.0},
+                    "source_issue_type": "negative_values",
+                    "note": "Remediate negative price/measure values with lower bound 0"
+                })
+                stepped_cols[col_l] = "range_clip"
+                continue
+
+        # 2. Age bounds
+        if col_l == "age" and any(k in itype for k in ("negative", "outlier", "impossible", "range", "implausible", "bound", "invalid", "age")):
+            if not existing_act or existing_act not in ("range_clip", "clip_outliers"):
+                steps.append({
+                    "action": "range_clip",
+                    "column": col,
+                    "params": {"lower_bound": 0, "upper_bound": 120, "min_value": 0, "max_value": 120},
+                    "source_issue_type": "implausible_age",
+                    "note": "Remediate age bounds [0, 120]"
+                })
+                stepped_cols[col_l] = "range_clip"
+                continue
+
+        # 3. Dates (impossible calendar dates or sentinels)
+        is_date = any(k in col_l for k in ("date", "created", "timestamp", "dob", "birth"))
+        if is_date and any(k in itype for k in ("date", "impossible", "sentinel", "dummy", "future", "format")):
+            if not existing_act or existing_act not in ("parse_dates", "parse_dates_safe", "nullify_date"):
+                steps.append({
+                    "action": "parse_dates",
+                    "column": col,
+                    "params": {"filter_impossible": True},
+                    "source_issue_type": "impossible_date",
+                    "note": "Safely parse dates and normalize sentinel/impossible dates to NULL"
+                })
+                stepped_cols[col_l] = "parse_dates"
+                continue
+
+        # 4. Email
+        if "email" in col_l and ("email" in itype or "syntax" in itype or "format" in itype or "placeholder" in itype):
+            if not existing_act or existing_act != "sanitize_email":
+                steps.append({
+                    "action": "sanitize_email",
+                    "column": col,
+                    "source_issue_type": "invalid_email",
+                    "note": "Sanitize and validate email address format"
+                })
+                stepped_cols[col_l] = "sanitize_email"
+                continue
+
+        # 5. Phone
+        if "phone" in col_l and ("phone" in itype or "format" in itype or "digit" in itype):
+            if not existing_act or existing_act != "normalize_phone":
+                steps.append({
+                    "action": "normalize_phone",
+                    "column": col,
+                    "source_issue_type": "invalid_phone",
+                    "note": "Normalize phone number to digits"
+                })
+                stepped_cols[col_l] = "normalize_phone"
+                continue
+
+        # 5b. Numeric sentinels (e.g. InstructorID, or any sentinel_numeric_value)
+        if any(k in col_l for k in ("instructorid", "instructor_id")) or any(k in itype for k in ("sentinel_numeric_value", "sentinel_value", "magic_number")):
+            if not existing_act or existing_act not in ("replace_sentinel_values", "normalize_registered_placeholder"):
+                steps.append({
+                    "action": "replace_sentinel_values",
+                    "column": col,
+                    "params": {"replace_values": [999, -999, 999999, 9999999]},
+                    "source_issue_type": "sentinel_value",
+                    "note": "Nullify configured sentinel values (999, -999, 999999, 9999999)"
+                })
+                stepped_cols[col_l] = "replace_sentinel_values"
+                continue
+
+        # 6. Text placeholders
+        if any(k in itype for k in ("placeholder", "sentinel")) or (col_l in ("customername", "city", "name", "address", "state", "title") and "null" not in itype and "unique" not in itype and "duplicate" not in itype):
+            if not existing_act or existing_act not in ("replace_sentinel_values", "normalize_registered_placeholder"):
+                steps.append({
+                    "action": "replace_sentinel_values",
+                    "column": col,
+                    "source_issue_type": "placeholder_detected",
+                    "note": "Normalize text placeholders ('???', 'n/a', 'unknown') to NULL"
+                })
+                stepped_cols[col_l] = "replace_sentinel_values"
+                continue
+
+        # 7. Duplicates
+        if any(k in itype for k in ("duplicate", "uniqueness", "exact_duplicate_rows", "business_key_duplicate")):
+            has_dedup = any(str(st.get("action") or "").lower() in ("deduplicate", "flag_duplicate_candidates", "flag_business_key_duplicate") for st in steps)
+            if not has_dedup:
+                steps.append({
+                    "action": "flag_duplicate_candidates",
+                    "column": "[Row-level]",
+                    "source_issue_type": "exact_duplicate_rows",
+                    "note": "Flag duplicate records in staging"
+                })
+
+    return steps
 
 
 def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialect: str = "tsql") -> str:
@@ -377,7 +583,13 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 lines.append(f"--   [{ds_name}] critical: {crit}")
         lines.append("")
 
-    ds_plan = plan.get("datasets") or {}
+    ds_plan = dict(plan.get("datasets") or {})
+    if assessment and isinstance(assessment.get("datasets"), dict):
+        for ds_k in assessment["datasets"].keys():
+            norm_k = ds_k.replace("dbo.", "").strip("[]").lower()
+            matched = any(k.replace("dbo.", "").strip("[]").lower() == norm_k for k in ds_plan)
+            if not matched:
+                ds_plan[ds_k] = {"steps": []}
 
     # Emit logging table definition for T-SQL dialect
     if dialect == "tsql":
@@ -648,9 +860,9 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         tbl_transformed = _get_transformed_table_name(ds_name)
         
         phases_to_gen = []
-        if generation_mode in ("cleanse_only", "full"):
+        if generation_mode in ("cleanse", "cleanse_only", "phase1", "full"):
             phases_to_gen.append("clean")
-        if generation_mode in ("transform_only", "full"):
+        if generation_mode in ("transform", "transform_only", "phase2", "full"):
             phases_to_gen.append("transform")
             
         for ph in phases_to_gen:
@@ -695,6 +907,9 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     steps_phase.append(st)
                 elif not is_clean and act_phase == "transform":
                     steps_phase.append(st)
+
+            if is_clean:
+                steps_phase = _supplement_steps_with_dq_issues(steps_phase, ds_name, assessment, plan)
 
             # Consolidate, filter, and sort steps for this dataset
             ds_info = assessment.get("datasets", {}).get(ds_name) or {} if assessment else {}
@@ -768,6 +983,9 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 "fill_or_drop": 78,
                 "fill_nulls_simple": 78,
                 "deduplicate": 80,
+                "flag_duplicate_candidates": 80,
+                "flag_business_key_duplicate": 80,
+                "flag_near_duplicate_cluster": 80,
                 "validate_referential_integrity_or_stage": 90
             }
         
@@ -842,6 +1060,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 lines.append("    @last_run DATETIME = NULL")
                 lines.append("AS BEGIN")
                 lines.append("    SET NOCOUNT ON;")
+                lines.append("    SET XACT_ABORT ON;")
                 lines.append("    -- Retrieve last run watermark if not provided")
                 lines.append("    IF @load_type = 'INCREMENTAL' AND @last_run IS NULL")
                 lines.append("    BEGIN")
@@ -945,10 +1164,11 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             
             # DDL alterations (run before staging setup)
             ddl_lines = []
+            seen_clean_companions = set()
             for st in steps:
                 col = st.get("column")
                 action = str(st.get("action") or "")
-                if not col or col in excluded_columns:
+                if not col or col in excluded_columns or col in ("*", "[Row-level]", "[row-level]"):
                     continue
                 col_clean = str(col).replace("'", "''")
                 if action in ("flag_outliers", "clip_or_flag"):
@@ -957,6 +1177,31 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 elif action == "cast_type":
                     ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{col_clean}_int')")
                     ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{col_clean}_int] BIGINT;")
+
+                # Companion columns for clean target
+                col_meta = cols_info.get(col) or {}
+                col_type = col_meta.get("dtype") or col_meta.get("target_dtype") or ""
+                target_type = get_sql_cast_type(col_type, col)
+                for comp, ctype in [
+                    (f"{col_clean}_raw", "NVARCHAR(MAX) NULL"),
+                    (f"{col_clean}_clean", f"{target_type} NULL"),
+                    (f"{col_clean}_validation_status", "VARCHAR(50) NULL"),
+                    (f"{col_clean}_validation_reason", "VARCHAR(500) NULL")
+                ]:
+                    if comp not in seen_clean_companions:
+                        seen_clean_companions.add(comp)
+                        ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{comp}')")
+                        ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{comp}] {ctype};")
+
+            for comp, ctype in [
+                ("row_validation_status", "VARCHAR(50) NULL"),
+                ("row_validation_reason", "VARCHAR(500) NULL"),
+                ("is_duplicate_row", "BIT NOT NULL DEFAULT 0"),
+            ]:
+                if comp not in seen_clean_companions:
+                    seen_clean_companions.add(comp)
+                    ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{comp}')")
+                    ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{comp}] {ctype};")
                 
             if ddl_lines:
                 if dialect == "tsql":
@@ -979,6 +1224,32 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                         staging_cols_ddl.append(f"[{st.get('column')}_outlier_flagged] INT NULL")
                     if st.get("action") == "cast_type" and st.get("column") and st.get("column") not in excluded_columns:
                         staging_cols_ddl.append(f"[{st.get('column')}_int] BIGINT NULL")
+
+                # Add companion columns to staging table so UPDATE statements succeed without schema errors
+                seen_staging_companions = set()
+                for st in steps:
+                    st_col = st.get("column")
+                    if st_col and st_col not in excluded_columns and st_col not in ("*", "[Row-level]", "[row-level]"):
+                        clean_c = str(st_col).replace("'", "''")
+                        col_meta = cols_info.get(st_col) or {}
+                        col_type = col_meta.get("dtype") or col_meta.get("target_dtype") or ""
+                        target_type = get_sql_cast_type(col_type, st_col)
+                        for comp in [f"{clean_c}_raw", f"{clean_c}_clean", f"{clean_c}_validation_status", f"{clean_c}_validation_reason"]:
+                            if comp not in seen_staging_companions:
+                                seen_staging_companions.add(comp)
+                                if "status" in comp:
+                                    comp_type = "VARCHAR(50)"
+                                elif "reason" in comp:
+                                    comp_type = "VARCHAR(500)"
+                                elif comp.endswith("_clean"):
+                                    comp_type = target_type
+                                else:
+                                    comp_type = "NVARCHAR(MAX)"
+                                staging_cols_ddl.append(f"[{comp}] {comp_type} NULL")
+                staging_cols_ddl.append("[row_validation_status] VARCHAR(50) NULL")
+                staging_cols_ddl.append("[row_validation_reason] VARCHAR(500) NULL")
+                staging_cols_ddl.append("[is_duplicate_row] BIT NOT NULL DEFAULT 0")
+
                 ddl_joined = ", ".join(staging_cols_ddl)
                 proc_lines.append(f"CREATE TABLE {tbl_staging} ({ddl_joined});")
                 proc_lines.append("")
@@ -1085,15 +1356,15 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 
                     # Check for BIGINT IDs
                     if sql_t == "BIGINT" and (c_name.lower().endswith("id") or c_name.lower().endswith("key")):
+                        step_lines.append(f"-- Quarantine rows where ID column [{c_name}] is not numeric to dbo.etl_rejects")
+                        step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
+                        step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
+                        step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
+                        step_lines.append(f"       '{c_name} is not numeric'")
+                        step_lines.append(f"FROM {tbl_staging} r")
+                        step_lines.append(f"WHERE r.{c_brk} IS NOT NULL AND TRY_CAST(r.{c_brk} AS BIGINT) IS NULL;")
+                        step_lines.append(f"")
                         if not never_drop:
-                            step_lines.append(f"-- Quarantine rows where ID column [{c_name}] is not numeric to dbo.etl_rejects")
-                            step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
-                            step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
-                            step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
-                            step_lines.append(f"       '{c_name} is not numeric'")
-                            step_lines.append(f"FROM {tbl_staging} r")
-                            step_lines.append(f"WHERE r.{c_brk} IS NOT NULL AND TRY_CAST(r.{c_brk} AS BIGINT) IS NULL;")
-                            step_lines.append(f"")
                             step_lines.append(f"DELETE FROM {tbl_staging} WHERE {c_brk} IS NOT NULL AND TRY_CAST({c_brk} AS BIGINT) IS NULL;")
                             step_lines.append(f"")
                         else:
@@ -1103,15 +1374,15 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 
                     # Check for decimals/floats (e.g. OrderAmount)
                     elif sql_t.startswith("DECIMAL") or sql_t in ("FLOAT", "REAL"):
+                        step_lines.append(f"-- Quarantine rows where numeric column [{c_name}] is not numeric to dbo.etl_rejects")
+                        step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
+                        step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
+                        step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
+                        step_lines.append(f"       '{c_name} is not numeric'")
+                        step_lines.append(f"FROM {tbl_staging} r")
+                        step_lines.append(f"WHERE r.{c_brk} IS NOT NULL AND TRY_CAST(r.{c_brk} AS {sql_t}) IS NULL;")
+                        step_lines.append(f"")
                         if not never_drop:
-                            step_lines.append(f"-- Quarantine rows where numeric column [{c_name}] is not numeric to dbo.etl_rejects")
-                            step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
-                            step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
-                            step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
-                            step_lines.append(f"       '{c_name} is not numeric'")
-                            step_lines.append(f"FROM {tbl_staging} r")
-                            step_lines.append(f"WHERE r.{c_brk} IS NOT NULL AND TRY_CAST(r.{c_brk} AS {sql_t}) IS NULL;")
-                            step_lines.append(f"")
                             step_lines.append(f"DELETE FROM {tbl_staging} WHERE {c_brk} IS NOT NULL AND TRY_CAST({c_brk} AS {sql_t}) IS NULL;")
                             step_lines.append(f"")
                         else:
@@ -1144,44 +1415,47 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             
                 if action == "parse_dates":
                     if dialect == "tsql":
-                        if not never_drop:
-                            # 1. Reject NULL dates if it is a high-severity DQ issue (Option A)
-                            has_high_null = False
-                            if assessment:
-                                dq_issues = assessment.get("data_quality_issues", {}).get("datasets", {}).get(ds_name, {}).get("issues", [])
-                                has_high_null = any(
-                                    str(iss.get("column")).lower() == str(col).lower()
-                                    and str(iss.get("type")).lower() == "nulls"
-                                    and str(iss.get("severity")).lower() == "high"
-                                    for iss in dq_issues
-                                )
+                        # 1. Reject NULL dates if it is a high-severity DQ issue (Option A)
+                        has_high_null = False
+                        if assessment:
+                            dq_issues = assessment.get("data_quality_issues", {}).get("datasets", {}).get(ds_name, {}).get("issues", [])
+                            has_high_null = any(
+                                str(iss.get("column")).lower() == str(col).lower()
+                                and str(iss.get("type")).lower() == "nulls"
+                                and str(iss.get("severity")).lower() == "high"
+                                for iss in dq_issues
+                            )
                         
-                            if has_high_null:
-                                # Log null-date rows to etl_rejects (audit only — do NOT delete, nulls are kept)
-                                step_lines.append(f"-- Log null dates from {tbl_staging}.{c} to dbo.etl_rejects (audit only; row is kept)")
-                                step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
-                                step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
-                                step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
-                                step_lines.append(f"       'Date column [{col}] is NULL (row kept)'")
-                                step_lines.append(f"FROM {tbl_staging} r")
-                                step_lines.append(f"WHERE r.{c} IS NULL;")
-                                step_lines.append(f"")
-                                # Phase 1: keep the row; the null date stays NULL in the clean table
-
-                            # 2. Nullify (not delete) unparseable dates — row is kept, bad date becomes NULL
-                            step_lines.append(f"-- Log unparseable dates from {tbl_staging}.{c} to dbo.etl_rejects (audit only; row is kept)")
+                        if has_high_null:
+                            # Log null-date rows to etl_rejects (audit only — do NOT delete, nulls are kept)
+                            step_lines.append(f"-- Log null dates from {tbl_staging}.{c} to dbo.etl_rejects (audit only; row is kept)")
                             step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
                             step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
                             step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
-                            step_lines.append(f"       'Column [{col}] value ' + ISNULL(CAST(r.{c} AS NVARCHAR(MAX)), 'NULL') + ' is not a valid date (set to NULL)'")
+                            step_lines.append(f"       'Date column [{col}] is NULL (row kept)'")
                             step_lines.append(f"FROM {tbl_staging} r")
-                            step_lines.append(f"WHERE r.{c} IS NOT NULL AND COALESCE(")
-                            step_lines.append(f"    TRY_CONVERT(date, r.{c}, 120),")
-                            step_lines.append(f"    TRY_CONVERT(date, r.{c}, 103),")
-                            step_lines.append(f"    TRY_CONVERT(date, r.{c}, 101),")
-                            step_lines.append(f"    TRY_CONVERT(date, r.{c}, 111)")
-                            step_lines.append(f") IS NULL;")
+                            step_lines.append(f"WHERE r.{c} IS NULL;")
                             step_lines.append(f"")
+                            # Phase 1: keep the row; the null date stays NULL in the clean table
+
+                        # 2. Nullify (not delete) unparseable dates — row is kept, bad date becomes NULL
+                        step_lines.append(f"-- Log unparseable dates from {tbl_staging}.{c} to dbo.etl_rejects (audit only; row is kept)")
+                        step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
+                        step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
+                        step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
+                        step_lines.append(f"       'Column [{col}] value ' + ISNULL(CAST(r.{c} AS NVARCHAR(MAX)), 'NULL') + ' is not a valid date (set to NULL)'")
+                        step_lines.append(f"FROM {tbl_staging} r")
+                        step_lines.append(f"WHERE r.{c} IS NOT NULL AND COALESCE(")
+                        step_lines.append(f"    TRY_CONVERT(date, r.{c}, 120),")
+                        step_lines.append(f"    TRY_CONVERT(date, r.{c}, 103),")
+                        step_lines.append(f"    TRY_CONVERT(date, r.{c}, 101),")
+                        step_lines.append(f"    TRY_CONVERT(date, r.{c}, 111)")
+                        step_lines.append(f") IS NULL;")
+                        step_lines.append(f"")
+                        if not never_drop:
+                            step_lines.append(f"DELETE FROM {tbl_staging} WHERE {c} IS NOT NULL AND COALESCE(TRY_CONVERT(date, {c}, 120), TRY_CONVERT(date, {c}, 103), TRY_CONVERT(date, {c}, 101), TRY_CONVERT(date, {c}, 111)) IS NULL;")
+                            step_lines.append(f"")
+                        else:
                             # Nullify the bad date value — row survives with NULL date
                             step_lines.append(f"-- Nullify unparseable date values in {tbl_staging}.{c} (keep row, set bad date to NULL)")
                             step_lines.append(f"UPDATE {tbl_staging} SET {c} = NULL")
@@ -1197,40 +1471,42 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                         is_required = col in non_nullable_cols
                         email_cond = f"(NOT (CAST(r.{c} AS NVARCHAR(MAX)) LIKE '%_@_%._%') OR CAST(r.{c} AS NVARCHAR(MAX)) LIKE '%@%@%' OR CAST(r.{c} AS NVARCHAR(MAX)) LIKE '%.@%' OR CAST(r.{c} AS NVARCHAR(MAX)) LIKE '%..%')"
                         email_cond_del = f"(NOT (CAST({c} AS NVARCHAR(MAX)) LIKE '%_@_%._%') OR CAST({c} AS NVARCHAR(MAX)) LIKE '%@%@%' OR CAST({c} AS NVARCHAR(MAX)) LIKE '%.@%' OR CAST({c} AS NVARCHAR(MAX)) LIKE '%..%')"
+                        step_lines.append(f"-- Quarantine invalid emails from {tbl_staging}.{c} to dbo.etl_rejects")
+                        step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
+                        step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
+                        step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
+                        step_lines.append(f"       'Column [{col}] with value ' + ISNULL(CAST(r.{c} AS NVARCHAR(MAX)), 'NULL') + ' is not a valid email format'")
+                        step_lines.append(f"FROM {tbl_staging} r")
+                        step_lines.append(f"WHERE r.{c} IS NOT NULL AND {email_cond};")
+                        step_lines.append(f"")
                         if not never_drop and is_required:
-                            step_lines.append(f"-- Quarantine invalid emails from {tbl_staging}.{c} to dbo.etl_rejects")
-                            step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
-                            step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
-                            step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
-                            step_lines.append(f"       'Column [{col}] with value ' + CAST(r.{c} AS NVARCHAR(MAX)) + ' is not a valid email format'")
-                            step_lines.append(f"FROM {tbl_staging} r")
-                            step_lines.append(f"WHERE r.{c} IS NOT NULL AND {email_cond};")
-                            step_lines.append(f"")
                             step_lines.append(f"DELETE FROM {tbl_staging} WHERE {c} IS NOT NULL AND {email_cond_del};")
                             step_lines.append(f"")
                         else:
-                            step_lines.append(f"-- Nullify invalid email format for optional column [{col}]")
+                            step_lines.append(f"-- Nullify invalid email format for column [{col}] (keep row, set value to NULL)")
                             step_lines.append(f"UPDATE {tbl_staging} SET {c} = NULL WHERE {c} IS NOT NULL AND {email_cond_del};")
                             step_lines.append(f"")
                 elif action == "normalize_phone":
                     if dialect == "tsql":
-                        cleaned_expr = f"REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(CAST(r.{c} AS NVARCHAR(200)), N'-', N''), N' ', N''), N'(', N''), N')', N''), N'+', N'')"
-                        cleaned_expr_del = f"REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(CAST({c} AS NVARCHAR(200)), N'-', N''), N' ', N''), N'(', N''), N')', N''), N'+', N'')"
+                        cleaned_expr = f"REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(CAST(r.{c} AS NVARCHAR(200)), N'-', N''), N' ', N''), N'(', N''), N')', N''), N'+', N''), N'.', N'')"
+                        cleaned_expr_del = f"REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(CAST({c} AS NVARCHAR(200)), N'-', N''), N' ', N''), N'(', N''), N')', N''), N'+', N''), N'.', N'')"
                         is_required = col in non_nullable_cols
+                        phone_cond = f"(LEN({cleaned_expr}) NOT BETWEEN 7 AND 15 OR {cleaned_expr} LIKE '%[^0-9]%')"
+                        phone_cond_del = f"(LEN({cleaned_expr_del}) NOT BETWEEN 7 AND 15 OR {cleaned_expr_del} LIKE '%[^0-9]%')"
+                        step_lines.append(f"-- Quarantine invalid phones from {tbl_staging}.{c} to dbo.etl_rejects")
+                        step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
+                        step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
+                        step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
+                        step_lines.append(f"       'Column [{col}] with value ' + ISNULL(CAST(r.{c} AS NVARCHAR(MAX)), 'NULL') + ' is not a valid phone format (must be 7-15 digits)'")
+                        step_lines.append(f"FROM {tbl_staging} r")
+                        step_lines.append(f"WHERE r.{c} IS NOT NULL AND {phone_cond};")
+                        step_lines.append(f"")
                         if not never_drop and is_required:
-                            step_lines.append(f"-- Quarantine invalid phones from {tbl_staging}.{c} to dbo.etl_rejects")
-                            step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
-                            step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
-                            step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
-                            step_lines.append(f"       'Column [{col}] with value ' + CAST(r.{c} AS NVARCHAR(MAX)) + ' is not a valid phone format'")
-                            step_lines.append(f"FROM {tbl_staging} r")
-                            step_lines.append(f"WHERE r.{c} IS NOT NULL AND (LEN({cleaned_expr}) <> 10 OR {cleaned_expr} LIKE '%[^0-9]%');")
-                            step_lines.append(f"")
-                            step_lines.append(f"DELETE FROM {tbl_staging} WHERE {c} IS NOT NULL AND (LEN({cleaned_expr_del}) <> 10 OR {cleaned_expr_del} LIKE '%[^0-9]%');")
+                            step_lines.append(f"DELETE FROM {tbl_staging} WHERE {c} IS NOT NULL AND {phone_cond_del};")
                             step_lines.append(f"")
                         else:
-                            step_lines.append(f"-- Nullify invalid phone format for optional column [{col}]")
-                            step_lines.append(f"UPDATE {tbl_staging} SET {c} = NULL WHERE {c} IS NOT NULL AND (LEN({cleaned_expr_del}) <> 10 OR {cleaned_expr_del} LIKE '%[^0-9]%');")
+                            step_lines.append(f"-- Nullify invalid phone format for column [{col}] (keep row, set value to NULL)")
+                            step_lines.append(f"UPDATE {tbl_staging} SET {c} = NULL WHERE {c} IS NOT NULL AND {phone_cond_del};")
                             step_lines.append(f"")
                 elif action == "coerce_numeric":
                     if dialect == "tsql":
@@ -1279,6 +1555,41 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                             step_lines.append(f"")
                             step_lines.append(f"DELETE FROM {tbl_staging} WHERE {all_null_cond_delete};")
                             step_lines.append(f"")
+                elif action in ("range_clip", "clip_outliers"):
+                    if dialect == "tsql":
+                        p = step_params(st)
+                        lower_b = p.get("lower_bound", p.get("min_value", 0.0))
+                        upper_b = p.get("upper_bound", p.get("max_value"))
+                        col_l = col.lower()
+                        if upper_b is not None:
+                            out_cond = f"(TRY_CAST(r.{c} AS FLOAT) < {lower_b} OR TRY_CAST(r.{c} AS FLOAT) > {upper_b})"
+                            err_msg = f"'Column [{col}] value ' + ISNULL(CAST(r.{c} AS NVARCHAR(MAX)), 'NULL') + ' is outside valid bounds [{lower_b}, {upper_b}]'"
+                        else:
+                            out_cond = f"TRY_CAST(r.{c} AS FLOAT) < {lower_b}"
+                            err_msg = f"'Column [{col}] value ' + ISNULL(CAST(r.{c} AS NVARCHAR(MAX)), 'NULL') + ' cannot be negative (review required)'"
+                        
+                        step_lines.append(f"-- Log out-of-range/negative values for [{col}] to dbo.etl_rejects")
+                        step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
+                        step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
+                        step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
+                        step_lines.append(f"       {err_msg}")
+                        step_lines.append(f"FROM {tbl_staging} r")
+                        step_lines.append(f"WHERE r.{c} IS NOT NULL AND {out_cond};")
+                        step_lines.append(f"")
+                elif action in ("replace_sentinel_values", "normalize_registered_placeholder"):
+                    if dialect == "tsql":
+                        placeholder_cond = (
+                            f"LOWER(LTRIM(RTRIM(CAST(r.{c} AS NVARCHAR(MAX))))) IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified') "
+                            f"OR TRY_CAST(r.{c} AS FLOAT) IN (999, -999, 999999, -9999, 99999)"
+                        )
+                        step_lines.append(f"-- Log placeholder / sentinel values for [{col}] to dbo.etl_rejects (audit only; replaced with NULL)")
+                        step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
+                        step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
+                        step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
+                        step_lines.append(f"       'Column [{col}] contains registered placeholder/sentinel token ' + CAST(r.{c} AS NVARCHAR(MAX))")
+                        step_lines.append(f"FROM {tbl_staging} r")
+                        step_lines.append(f"WHERE r.{c} IS NOT NULL AND ({placeholder_cond});")
+                        step_lines.append(f"")
                 elif action == "validate_referential_integrity_or_stage":
                     p = step_params(st)
                     rel_ds = p.get("related_dataset") or "?"
@@ -1383,7 +1694,13 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     continue
                 action = st.get("action")
                 # Only expressions
-                if action in ("trim", "lowercase", "uppercase", "sanitize_email", "normalize_phone", "hash_phone", "mask_phone", "standardize_boolean", "regex_replace", "range_clip", "coerce_numeric", "cast_type", "replace_values", "nullify_dummy_dates", "nullify_punctuation"):
+                if action in (
+                    "trim", "lowercase", "uppercase", "sanitize_email", "normalize_phone", 
+                    "hash_phone", "mask_phone", "standardize_boolean", "regex_replace", 
+                    "range_clip", "clip_outliers", "replace_sentinel_values", "normalize_registered_placeholder",
+                    "coerce_numeric", "cast_type", "replace_values", "nullify_dummy_dates", 
+                    "nullify_punctuation", "parse_dates", "parse_dates_safe", "nullify_date", "zero_to_null"
+                ):
                     if col not in column_transforms:
                         column_transforms[col] = []
                     column_transforms[col].append(st)
@@ -1395,8 +1712,63 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 col_meta = cols_info.get(col_name) or {}
             
                 if base_steps:
+                    col_clean = str(col_name).replace("'", "''")
                     compiled_expr = compile_column_expression(col_name, base_steps, col_meta, business_rules, plan.get("semantic_schema"), ds_name)
+                    update_clauses.append(f"[{col_clean}_raw] = [{col_name}]")
                     update_clauses.append(f"[{col_name}] = {compiled_expr}")
+                    update_clauses.append(f"[{col_clean}_clean] = {compiled_expr}")
+                    
+                    actions = [st.get("action") for st in base_steps]
+                    if any(a in ("range_clip", "clip_outliers") for a in actions):
+                        col_l = col_name.lower()
+                        is_price = any(k in col_l for k in ("price", "cost", "fee", "amount", "budget", "salary", "revenue", "sales", "fare", "balance"))
+                        p = base_steps[0].get("params") or {}
+                        if col_l == "age":
+                            lower_b = p.get("lower_bound", p.get("min_value", 0))
+                            upper_b = p.get("upper_bound", p.get("max_value", 120))
+                            status_expr = f"CASE WHEN TRY_CAST([{col_name}] AS INT) < {lower_b} OR TRY_CAST([{col_name}] AS INT) > {upper_b} THEN 'invalid_out_of_range' ELSE 'valid' END"
+                            reason_expr = f"CASE WHEN TRY_CAST([{col_name}] AS INT) < {lower_b} OR TRY_CAST([{col_name}] AS INT) > {upper_b} THEN 'Age must be between {lower_b} and {upper_b}' ELSE NULL END"
+                        else:
+                            lower_b = p.get("lower_bound", p.get("min_value", 0.0))
+                            upper_b = p.get("upper_bound", p.get("max_value"))
+                            if upper_b is not None:
+                                status_expr = f"CASE WHEN TRY_CAST([{col_name}] AS FLOAT) NOT BETWEEN {lower_b} AND {upper_b} THEN 'invalid_out_of_range' ELSE 'valid' END"
+                                reason_expr = f"CASE WHEN TRY_CAST([{col_name}] AS FLOAT) NOT BETWEEN {lower_b} AND {upper_b} THEN 'Value out of bounds [{lower_b}, {upper_b}]' ELSE NULL END"
+                            else:
+                                status_expr = f"CASE WHEN TRY_CAST([{col_name}] AS FLOAT) < {lower_b} THEN 'negative_value_review_required' ELSE 'valid' END"
+                                reason_expr = f"CASE WHEN TRY_CAST([{col_name}] AS FLOAT) < {lower_b} THEN 'Catalog price/measure cannot be negative' ELSE NULL END"
+                        update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
+                    elif any(a in ("replace_sentinel_values", "normalize_registered_placeholder") for a in actions):
+                        if any(k in col_name.lower() for k in ("instructorid", "instructor_id")):
+                            status_expr = f"CASE WHEN TRY_CAST([{col_name}] AS BIGINT) IN (999, -999, 999999, 9999999) OR LOWER(LTRIM(RTRIM(CAST([{col_name}] AS NVARCHAR(MAX))))) IN ('999', '-999', '999999', '9999999') THEN 'sentinel_value' ELSE 'valid' END"
+                            reason_expr = f"CASE WHEN TRY_CAST([{col_name}] AS BIGINT) IN (999, -999, 999999, 9999999) OR LOWER(LTRIM(RTRIM(CAST([{col_name}] AS NVARCHAR(MAX))))) IN ('999', '-999', '999999', '9999999') THEN 'InstructorID sentinel value replaced with NULL' ELSE NULL END"
+                        else:
+                            status_expr = f"CASE WHEN LOWER(LTRIM(RTRIM(CAST([{col_name}] AS NVARCHAR(MAX))))) IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified', '0000') OR TRY_CAST([{col_name}] AS FLOAT) IN (999, -999, 999999, 9999999, -9999, 99999) THEN 'placeholder_normalized_to_null' ELSE 'valid' END"
+                            reason_expr = f"CASE WHEN LOWER(LTRIM(RTRIM(CAST([{col_name}] AS NVARCHAR(MAX))))) IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified', '0000') OR TRY_CAST([{col_name}] AS FLOAT) IN (999, -999, 999999, 9999999, -9999, 99999) THEN 'Configured placeholder token normalized to NULL' ELSE NULL END"
+                        update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
+                    elif any(a in ("parse_dates", "parse_dates_safe", "nullify_date", "nullify_dummy_dates") for a in actions):
+                        parsed_dt = f"COALESCE(TRY_CONVERT(date, [{col_name}], 120), TRY_CONVERT(date, [{col_name}], 103), TRY_CONVERT(date, [{col_name}], 101), TRY_CONVERT(date, [{col_name}], 111))"
+                        status_expr = f"CASE WHEN [{col_name}] IS NULL OR LTRIM(RTRIM(CAST([{col_name}] AS NVARCHAR(MAX)))) = '' THEN 'missing_value' WHEN {parsed_dt} IN ('1900-01-01', '9999-12-31', '0001-01-01') THEN 'sentinel_value' WHEN {parsed_dt} IS NULL OR {parsed_dt} < '1900-01-01' OR {parsed_dt} > '2099-12-31' THEN 'impossible_calendar_date' ELSE 'valid' END"
+                        reason_expr = f"CASE WHEN {parsed_dt} IN ('1900-01-01', '9999-12-31', '0001-01-01') THEN 'Sentinel date replaced with NULL' WHEN {parsed_dt} IS NULL AND [{col_name}] IS NOT NULL THEN 'Invalid calendar date or unparseable format' ELSE NULL END"
+                        update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
+                    elif "normalize_phone" in actions:
+                        inner_p = f"CAST([{col_name}] AS NVARCHAR(200))"
+                        cln_p = f"REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE({inner_p}, N'-', N''), N' ', N''), N'(', N''), N')', N''), N'+', N''), N'.', N'')"
+                        status_expr = f"CASE WHEN [{col_name}] IS NULL THEN 'missing_value' WHEN LEN({cln_p}) BETWEEN 7 AND 15 AND {cln_p} NOT LIKE '%[^0-9]%' THEN 'valid' ELSE 'invalid_phone_format' END"
+                        reason_expr = f"CASE WHEN [{col_name}] IS NOT NULL AND (LEN({cln_p}) NOT BETWEEN 7 AND 15 OR {cln_p} LIKE '%[^0-9]%') THEN 'Phone length must be between 7 and 15 digits' ELSE NULL END"
+                        update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
+                    elif "sanitize_email" in actions:
+                        cln_e = f"LOWER(LTRIM(RTRIM(CAST([{col_name}] AS NVARCHAR(MAX)))))"
+                        status_expr = f"CASE WHEN [{col_name}] IS NULL THEN 'missing_value' WHEN {cln_e} LIKE '%_@_%._%' AND {cln_e} NOT LIKE '%@%@%' AND {cln_e} NOT LIKE '%..%' THEN 'valid' ELSE 'invalid_email_format' END"
+                        reason_expr = f"CASE WHEN [{col_name}] IS NOT NULL AND NOT ({cln_e} LIKE '%_@_%._%' AND {cln_e} NOT LIKE '%@%@%' AND {cln_e} NOT LIKE '%..%') THEN 'Invalid email syntax or domain' ELSE NULL END"
+                        update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
+                    else:
+                        update_clauses.append(f"[{col_clean}_validation_status] = 'valid'")
                 if has_cast_type:
                     col_clean = str(col_name).replace("'", "''")
                     update_clauses.append(f"[{col_clean}_int] = TRY_CAST([{col_name}] AS BIGINT)")
@@ -1581,20 +1953,40 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
 
             # Phase 5: Final Copy from Staging to target Clean table
             if dialect == "tsql":
-                clean_cols = cols + [f"{c}_outlier_flagged" for st in steps if st.get("action") in ("flag_outliers", "clip_or_flag") for c in [st.get("column")] if c and c not in excluded_columns]
+                clean_cols = list(cols)
                 for st in steps:
-                    if st.get("action") == "cast_type" and st.get("column"):
-                        cc = str(st.get("column")).replace("'", "''")
-                        if cc not in excluded_columns:
+                    c = st.get("column")
+                    if not c or c in excluded_columns or c in ("*", "[Row-level]", "[row-level]"):
+                        continue
+                    cc = str(c).replace("'", "''")
+                    for comp in [f"{cc}_raw", f"{cc}_clean", f"{cc}_validation_status", f"{cc}_validation_reason"]:
+                        if comp not in clean_cols:
+                            clean_cols.append(comp)
+                    if st.get("action") in ("flag_outliers", "clip_or_flag"):
+                        if f"{cc}_outlier_flagged" not in clean_cols:
+                            clean_cols.append(f"{cc}_outlier_flagged")
+                    if st.get("action") == "cast_type":
+                        if f"{cc}_int" not in clean_cols:
                             clean_cols.append(f"{cc}_int")
-                clean_cols = sorted(list(set(clean_cols)))
+                for comp in ["row_validation_status", "row_validation_reason", "is_duplicate_row"]:
+                    if comp not in clean_cols:
+                        clean_cols.append(comp)
+
                 col_list_clean = ", ".join(f"[{c}]" for c in clean_cols)
 
                 # Build typed SELECT expressions for safe insert from NVARCHAR(MAX) staging
                 select_parts = []
                 for c in clean_cols:
-                    # Derived columns are already typed in staging — no cast needed
-                    if c.endswith("_outlier_flagged") or c.endswith("_int"):
+                    # Derived columns and companion columns are already typed in staging — no cast needed
+                    if (
+                        c.endswith("_outlier_flagged")
+                        or c.endswith("_int")
+                        or c.endswith("_raw")
+                        or c.endswith("_clean")
+                        or c.endswith("_validation_status")
+                        or c.endswith("_validation_reason")
+                        or c in ("row_validation_status", "row_validation_reason", "is_duplicate_row")
+                    ):
                         select_parts.append(f"[{c}]")
                         continue
                     col_meta = cols_info.get(c) or {}
@@ -1676,7 +2068,10 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             # Deduplication Phase: CTE-based dedup on staging after all validations
             dedup_lines = []
             if dialect == "tsql":
-                dedup_steps = [st for st in steps if str(st.get("action") or "").lower() == "deduplicate"]
+                dedup_steps = [
+                    st for st in steps 
+                    if str(st.get("action") or "").lower() in ("deduplicate", "flag_duplicate_candidates", "flag_business_key_duplicate", "flag_near_duplicate_cluster")
+                ]
                 processed_dedup_keys = set()
                 for st in dedup_steps:
                     col_val = str(st.get("column") or "").strip()
@@ -1718,13 +2113,43 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                         order_clause = "(SELECT NULL)"
                         
                     label = "primary key" if is_row_level and is_pk_dedup else "near-duplicate attributes"
-                    dedup_lines.append(f"-- Deduplicate staging table by {label}")
-                    dedup_lines.append(";WITH _staging_dedup AS (")
-                    dedup_lines.append(f"    SELECT ROW_NUMBER() OVER (PARTITION BY {partition_clause} ORDER BY {order_clause}) AS _rn")
+                    st_act = str(st.get("action") or "").lower()
+                    is_flagging_only = never_drop or st_act.startswith("flag_")
+
+                    dedup_lines.append(f"-- Log duplicate records from {tbl_staging} to dbo.etl_rejects")
+                    dedup_lines.append(f";WITH _staging_dup_log AS (")
+                    dedup_lines.append(f"    SELECT *, ROW_NUMBER() OVER (PARTITION BY {partition_clause} ORDER BY {order_clause}) AS _rn")
                     dedup_lines.append(f"    FROM {tbl_staging}")
-                    dedup_lines.append(")")
-                    dedup_lines.append("DELETE FROM _staging_dedup WHERE _rn > 1;")
-                    dedup_lines.append("")
+                    dedup_lines.append(f")")
+                    dedup_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
+                    dedup_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
+                    dedup_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
+                    dedup_lines.append(f"       'Duplicate candidate detected by {label}'")
+                    dedup_lines.append(f"FROM _staging_dup_log r")
+                    dedup_lines.append(f"WHERE r._rn > 1;")
+                    dedup_lines.append(f"")
+
+                    if is_flagging_only:
+                        dedup_lines.append(f"-- Flag duplicate records in staging table by {label}")
+                        dedup_lines.append(f";WITH _staging_dedup AS (")
+                        dedup_lines.append(f"    SELECT is_duplicate_row, row_validation_status, row_validation_reason,")
+                        dedup_lines.append(f"           ROW_NUMBER() OVER (PARTITION BY {partition_clause} ORDER BY {order_clause}) AS _rn")
+                        dedup_lines.append(f"    FROM {tbl_staging}")
+                        dedup_lines.append(f")")
+                        dedup_lines.append(f"UPDATE _staging_dedup")
+                        dedup_lines.append(f"SET is_duplicate_row = 1,")
+                        dedup_lines.append(f"    row_validation_status = COALESCE(row_validation_status, 'DUPLICATE_CANDIDATE'),")
+                        dedup_lines.append(f"    row_validation_reason = CASE WHEN row_validation_reason IS NULL THEN 'Duplicate record detected by ' + '{label}' ELSE row_validation_reason + '; duplicate candidate' END")
+                        dedup_lines.append(f"WHERE _rn > 1;")
+                        dedup_lines.append(f"")
+                    else:
+                        dedup_lines.append(f"-- Deduplicate staging table by {label}")
+                        dedup_lines.append(f";WITH _staging_dedup AS (")
+                        dedup_lines.append(f"    SELECT ROW_NUMBER() OVER (PARTITION BY {partition_clause} ORDER BY {order_clause}) AS _rn")
+                        dedup_lines.append(f"    FROM {tbl_staging}")
+                        dedup_lines.append(f")")
+                        dedup_lines.append(f"DELETE FROM _staging_dedup WHERE _rn > 1;")
+                        dedup_lines.append(f"")
 
             # Combine all phases in correct execution order:
             # 1. Trims & Casings
@@ -1764,20 +2189,26 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             
                 # Indent and append child procedure body
                 lines.extend(_indent(proc_lines, spaces=8))
-                lines.append("        COMMIT;")
                 lines.append("")
-                lines.append("        -- Log success")
+                lines.append("        -- Log success atomically within transaction before commit")
                 lines.append("        UPDATE dbo.etl_log")
-                lines.append("        SET end_time = GETDATE(), status = 'SUCCESS'")
+                lines.append("        SET end_time = GETDATE(), status = 'SUCCEEDED'")
                 where_id_str = "        WHERE id = @run_id;"
                 lines.append(where_id_str)
+                lines.append("        COMMIT TRANSACTION;")
                 lines.append("    END TRY")
                 lines.append("    BEGIN CATCH")
-                lines.append("        IF @@TRANCOUNT > 0 ROLLBACK;")
-                lines.append("        DECLARE @err VARCHAR(MAX) = ERROR_MESSAGE();")
-                lines.append("        UPDATE dbo.etl_log")
-                lines.append("        SET end_time = GETDATE(), status = 'FAILED', error_message = @err")
+                lines.append("        DECLARE @err_msg NVARCHAR(4000) = ERROR_MESSAGE();")
+                lines.append("        DECLARE @err_num INT = ERROR_NUMBER();")
+                lines.append("        IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;")
+                lines.append("        BEGIN TRY")
+                lines.append("            UPDATE dbo.etl_log")
+                lines.append("            SET end_time = GETDATE(), status = 'FAILED', error_message = @err_msg")
                 lines.append(where_id_str)
+                lines.append("        END TRY")
+                lines.append("        BEGIN CATCH")
+                lines.append("            -- Secondary telemetry exception ignored so original THROW is preserved")
+                lines.append("        END CATCH;")
                 lines.append("        THROW;")
                 lines.append("    END CATCH;")
                 lines.append("END;")
@@ -1812,10 +2243,10 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         # Execute procedures based on generation_mode
         for ds_name in ds_plan.keys():
             tbl_base = ds_name.split('.')[-1].strip('[]')
-            if generation_mode in ('cleanse_only', 'full'):
+            if generation_mode in ('cleanse', 'cleanse_only', 'phase1', 'full'):
                 lines.append(f'        EXEC dbo.etl_clean_{tbl_base} @load_type = @load_type, @last_run = @last_run;')
             
-            if generation_mode in ('transform_only', 'full'):
+            if generation_mode in ('transform', 'transform_only', 'phase2', 'full'):
                 from agent.etl_pipeline.dq_gate import check_dq_gate
                 threshold = float(business_rules.get('dq_threshold', 70.0))
                 gate_res = check_dq_gate(assessment, ds_name, threshold=threshold, force_unlock=ds_name in business_rules.get("force_unlock", []), sem_schema=plan.get("semantic_schema"))
@@ -1842,6 +2273,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         lines.append("        WHERE id = @run_id;")
         lines.append("    END TRY")
         lines.append("    BEGIN CATCH")
+        lines.append("        IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;")
         lines.append("        DECLARE @err VARCHAR(MAX) = ERROR_MESSAGE();")
         lines.append("        UPDATE dbo.etl_log")
         lines.append("        SET end_time = GETDATE(), status = 'FAILED', error_message = @err")

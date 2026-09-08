@@ -322,4 +322,29 @@ def discover_inferred_relationships(
                             "recommendation": "Review and promote to declared relationship if valid.",
                             "eligible_for_discovery": True,
                         })
-    return discovered
+
+    # Deduplicate and rank bidirectional pairs to prevent redundant reverse inferences
+    pair_map = {}
+    for d in discovered:
+        p_key = (d["parent_dataset"], d["parent_column"], d["child_dataset"], d["child_column"])
+        r_key = (d["child_dataset"], d["child_column"], d["parent_dataset"], d["parent_column"])
+
+        if r_key in pair_map:
+            other = pair_map[r_key]
+            # Direction with fewer child orphans indicates child is a proper subset of parent
+            orphans_this = d["child_orphan_distinct_keys"]
+            orphans_other = other["child_orphan_distinct_keys"]
+
+            raw_penalty_this = 1 if any(x in d["parent_dataset"].lower() for x in ("_raw", "raw_", "staging", "temp")) else 0
+            raw_penalty_other = 1 if any(x in other["parent_dataset"].lower() for x in ("_raw", "raw_", "staging", "temp")) else 0
+
+            score_this = (1000 - orphans_this) - (raw_penalty_this * 500)
+            score_other = (1000 - orphans_other) - (raw_penalty_other * 500)
+
+            if score_this > score_other:
+                del pair_map[r_key]
+                pair_map[p_key] = d
+        else:
+            pair_map[p_key] = d
+
+    return list(pair_map.values())

@@ -183,6 +183,47 @@ def validate_etl_plan(
     return ok, errs
 
 
+def validate_issue_registration(raw_issue_type: str) -> Dict[str, Any]:
+    """Validates an issue type against the canonical capability registry and governance catalog."""
+    from agent.etl_pipeline.issue_registry import canonicalize_issue_type
+    from agent.etl_pipeline.remediation_capability_registry import (
+        REMEDIATION_CAPABILITY_REGISTRY,
+        get_capability_entry,
+    )
+    from agent.etl_pipeline.manual_review_catalog import _CATALOG
+
+    canonical_type = canonicalize_issue_type(raw_issue_type)
+    is_registered = canonical_type in REMEDIATION_CAPABILITY_REGISTRY
+    capability = get_capability_entry(canonical_type)
+
+    scope = getattr(capability, "execution_scope", "field_transform")
+    if scope == "configuration_change":
+        exec_scope = "configuration"
+    elif scope in ("validation_only", "no_op"):
+        exec_scope = "validation_only"
+    else:
+        exec_scope = "data"
+
+    generator_required = bool(capability.generator_ids)
+    requires_manual_review = capability.approval_required or (canonical_type in _CATALOG)
+
+    registration_status = "registered" if (
+        is_registered
+        or canonical_type in _CATALOG
+        or canonical_type in ("dq_gate_warning", "missing_required_column")
+        or str(canonical_type).startswith("proactive_")
+    ) else "unknown"
+
+    return {
+        "original_issue_type": raw_issue_type,
+        "canonical_issue_type": canonical_type,
+        "registration_status": registration_status,
+        "execution_scope": exec_scope,
+        "generator_required": generator_required,
+        "requires_manual_review": requires_manual_review,
+    }
+
+
 def validate_phase1_plan(
     plan: Dict[str, Any],
     assessment: Dict[str, Any],
@@ -239,15 +280,13 @@ def validate_phase1_plan(
         if j.get("assessment_status") == "EVIDENCE_NOT_FOUND" and j.get("required", True):
             errs.append(f"Phase 1 error: Relationship evidence missing for required relationship between {j.get('left_dataset')} and {j.get('right_dataset')}.")
 
-    # Manual review issue type checks
-    from agent.etl_pipeline.manual_review_catalog import _CATALOG
+    # Manual review issue type checks via canonical capability registry
     for mr in (plan.get("manual_review") or []):
         if not isinstance(mr, dict):
             continue
         it = mr.get("issue_type")
-        from agent.etl_pipeline.issue_registry import canonicalize_issue_type
-        norm_it = canonicalize_issue_type(it)
-        if norm_it and norm_it not in _CATALOG and norm_it not in ("dq_gate_warning", "missing_required_column") and not str(norm_it).startswith("proactive_"):
+        reg = validate_issue_registration(str(it or ""))
+        if reg["registration_status"] == "unknown":
             errs.append(f"Validation error: Manual review item has unknown/unmapped issue_type: '{it}'")
 
     return errs
@@ -387,6 +426,17 @@ def validate_promoted_plan(
             else:
                 seen_step_ids.add(step_id)
 
+            # Intercept configuration actions (they belong to configuration_changes, not column ETL)
+            if action in ("update_manifest", "ignore_mismatch", "acknowledge_mismatch", "reconcile_schema"):
+                plan.setdefault("configuration_changes", []).append({
+                    "patch_id": f"patch-{ds_name}-{col or 'manifest'}".lower(),
+                    "dataset_id": ds_name,
+                    "field_name": col or "manifest",
+                    "action_type": action,
+                    "lifecycle_status": "proposed",
+                })
+                continue
+
             # 2. Unknown or legacy actions check
             meta = get_action_meta(action)
             if meta.get("_unknown"):
@@ -419,6 +469,13 @@ def validate_promoted_plan(
                 ))
 
             # 4. Required parameters check
+            if action in ("range_clip", "clip_outliers"):
+                if "lower_bound" in params and "min_value" not in params:
+                    params["min_value"] = params["lower_bound"]
+                elif "min_value" in params and "lower_bound" not in params:
+                    params["lower_bound"] = params["min_value"]
+                params.setdefault("min_value", 0.0)
+
             req_params = meta.get("required_params") or []
             for rp in req_params:
                 if rp not in params:
@@ -506,8 +563,13 @@ def validate_promoted_plan(
 
             # 8. Provenance and resolution/action mismatches
             mr_prov = st.get("manual_resolution")
-            is_manual = st.get("classification") == "review" or st.get("requires_user_choice") is True or mr_prov
-            if is_manual:
+            is_promoted_manual = (
+                st.get("bucket") == "approved_manual"
+                or st.get("execution_bucket") == "approved_manual"
+                or st.get("execution_mode") == "APPROVED_MANUAL"
+                or mr_prov is not None
+            )
+            if is_promoted_manual:
                 if not mr_prov or not isinstance(mr_prov, dict):
                     issues.append(PlanValidationIssue(
                         code="MISSING_PROVENANCE",

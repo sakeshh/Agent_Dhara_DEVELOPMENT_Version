@@ -23,6 +23,7 @@ def test_dimension_scoring_calculation():
         dataset="users",
         column="email",
         dimension="validity",
+        severity="LOW",
         evaluated_count=100,
         failed_count=20
     )

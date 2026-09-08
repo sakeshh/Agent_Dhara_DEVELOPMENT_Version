@@ -67,3 +67,4 @@ output/
 *.pyo
 venv/
 .venv/
+scratch/

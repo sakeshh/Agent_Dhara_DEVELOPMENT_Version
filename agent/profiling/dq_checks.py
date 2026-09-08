@@ -413,6 +413,18 @@ def analyze_dataset_quality(
         gx_res = {}
         
     ds_res = gx_res.get(name) or {}
+    if ds_res.get("error"):
+        issues.append({
+            "severity": "high",
+            "type": "execution_error",
+            "column": "[Dataset-level]",
+            "count": 1,
+            "row_indexes": [],
+            "sample_values": [ds_res.get("error")],
+            "message": f"Validation execution failure in {name}: {ds_res.get('error')}",
+            "fixability": "COMPLEX",
+            "gating": True,
+        })
     results = ds_res.get("results") or []
     
     # Non-nullable set for severity mapping
@@ -625,10 +637,27 @@ def analyze_dataset_quality(
                 issue_type = "custom_regex"
                 severity = "medium"
                 msg = f"{unexp_cnt} value(s) failed regex check"
-        elif "dateutil parseable" in exp:
+        elif "dateutil parseable" in exp or exp == "invalid_date_format":
             issue_type = "invalid_date_format"
             severity = "medium"
-            msg = f"{unexp_cnt} bad date(s) (failed parsing)"
+            msg = details or f"{unexp_cnt} bad date(s) (failed parsing)"
+        elif exp in ("impossible_date", "invalid_calendar_date"):
+            issue_type = "impossible_date"
+            severity = "high"
+            gating = True
+            msg = details or f"{unexp_cnt} impossible calendar date(s)"
+        elif exp == "sentinel_date":
+            issue_type = "sentinel_date"
+            severity = "medium"
+            msg = details or f"{unexp_cnt} sentinel/placeholder date(s)"
+        elif exp == "numeric_parse_failure":
+            issue_type = "numeric_parse_failure"
+            severity = "medium"
+            msg = details or f"{unexp_cnt} non-numeric value(s) in numeric column"
+        elif exp == "integer_stored_as_float":
+            issue_type = "integer_stored_as_float"
+            severity = "low"
+            msg = details or f"{unexp_cnt} integer value(s) stored as floating-point"
         elif exp == "negative_values":
             col_lower = str(col).lower()
             sem_type  = profile.get("columns", {}).get(col, {}).get("semantic_type", "")
@@ -643,6 +672,11 @@ def analyze_dataset_quality(
                 severity = configured_non_negative_severity
                 gating = True
                 msg = f"{unexp_cnt} negative value(s) violating declared non-negative rule in '{col}'"
+            elif any(k in col_lower for k in ("price", "cost", "fee")):
+                issue_type = "negative_values_in_non_negative_measure"
+                severity = "high"
+                gating = True
+                msg = f"{unexp_cnt} negative price/fee value(s) in '{col}' — catalog prices cannot be negative"
             elif sem_type in BIPOLAR_SEMANTICS:
                 issue_type = "negative_values_review_required"
                 severity = "low"
@@ -1173,14 +1207,15 @@ def analyze_dataset_quality(
             }
 
 
-        # 5. Timeliness
+        # 5. Timeliness - evaluate freshness, latency, SLA, or prohibited future/ancient dates (NOT format parse errors)
         date_cols = [c for c in df.columns if "date" in str(c).lower() or "time" in str(c).lower()]
-        if date_cols:
+        timeliness_issues_cnt = sum(int(i.get("count") or 1) for i in issues if i.get("type") in {
+            "future_dates", "ancient_dates", "date_range_violation", "staleness_sla", "latency_violation"
+        })
+        has_timeliness_rules = any(r in (thresholds or {}) for r in ("future_dates", "ancient_dates", "date_range", "staleness_sla")) or timeliness_issues_cnt > 0
+        if has_timeliness_rules and date_cols:
             evaluated_date_cells = n * len(date_cols)
-            date_issues_cnt = sum(int(i.get("count") or 1) for i in issues if i.get("type") in {
-                "invalid_date_format", "mixed_date_formats", "future_dates", "ancient_dates", "impossible_date"
-            })
-            passed_date_cells = max(0, evaluated_date_cells - date_issues_cnt)
+            passed_date_cells = max(0, evaluated_date_cells - timeliness_issues_cnt)
             timeliness = {
                 "score": round((passed_date_cells / max(1, evaluated_date_cells)) * 100.0, 1),
                 "valid_date_cells": passed_date_cells,
@@ -1206,16 +1241,20 @@ def analyze_dataset_quality(
 
             "format_invalid": {
                 "invalid_numeric", "mixed_scalar_types", "invalid_date_format",
-                "mixed_date_formats", "impossible_date", "invalid_email", "invalid_uuid"
+                "mixed_date_formats", "impossible_date", "invalid_calendar_date", "invalid_email", "invalid_uuid",
+                "numeric_parse_failure"
             },
             "content_anomaly": {
                 "punctuation_only_value", "string_with_only_digits_in_text_column",
-                "sentinel_numeric_value", "negative_values", "negative_values_review_required",
-                "negative_values_in_non_negative_measure"
+                "sentinel_numeric_value", "sentinel_date", "negative_values", "negative_values_review_required",
+                "negative_values_in_non_negative_measure", "declared_non_negative_rule_violation"
             },
             "uniqueness": {
                 "exact_duplicate_rows", "declared_key_violation", "candidate_key_violation",
-                "duplicate_primary_key", "duplicate_rows", "near_duplicate_rows"
+                "duplicate_primary_key", "duplicate_rows"
+            },
+            "record_consistency": {
+                "near_duplicate_rows", "entity_similarity_cluster"
             },
             "referential": {
                 "orphan_foreign_key_rows", "orphan_foreign_key"

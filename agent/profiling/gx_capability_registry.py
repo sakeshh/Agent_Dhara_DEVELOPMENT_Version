@@ -67,6 +67,20 @@ RULE_OWNERSHIP: Dict[str, Dict[str, Any]] = {
         "score_family": "quality",
         "dimension":    "validity",
     },
+    "column.type_numeric": {
+        "primary":      "great_expectations",
+        "fallback":     "dhara_native",
+        "backends":     ["pandas", "spark", "sql"],
+        "score_family": "quality",
+        "dimension":    "validity",
+    },
+    "column.type_cast": {
+        "primary":      "dhara_native",
+        "fallback":     "great_expectations",
+        "backends":     ["pandas", "spark", "sql"],
+        "score_family": "quality",
+        "dimension":    "conformity",
+    },
     "column.length": {
         "primary":      "great_expectations",
         "fallback":     "dhara_native",
@@ -199,9 +213,12 @@ ISSUE_TYPE_TO_RULE_ID: Dict[str, str] = {
     "invalid_phone":                   "column.regex",
     "invalid_uuid":                    "column.regex",
     "invalid_url":                     "column.regex",
-    "invalid_numeric":                 "column.numeric_range",
+    "invalid_numeric":                 "column.type_numeric",
+    "invalid_numeric_values":          "column.type_numeric",
+    "numeric_parse_failure":           "column.type_numeric",
     "negative_values":                 "column.numeric_range",
     "negative_values_in_non_negative_measure": "column.numeric_range",
+    "negative_values_review_required": "column.numeric_range",
     "out_of_range":                    "column.numeric_range",
     "custom_one_of":                   "column.allowed_values",
     "invalid_lookup_value":            "column.allowed_values",
@@ -214,6 +231,7 @@ ISSUE_TYPE_TO_RULE_ID: Dict[str, str] = {
     "pii_email":                       "privacy.email",
     "pii_phone":                       "privacy.phone",
     "pii_sensitive":                   "privacy.pii_sensitive",
+    "integer_stored_as_float":         "column.type_cast",
 }
 
 # Issue types that belong to the PRIVACY pipeline and must NOT contribute to DQ scores

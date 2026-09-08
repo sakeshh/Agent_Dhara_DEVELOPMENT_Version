@@ -50,7 +50,18 @@ RESOLUTION_TO_ACTION_MAP: Dict[str, str] = {
     "accept_risk":       "noop",
     "force_unlock":      "force_unlock",
     "skip_requirement":  "skip_requirement",
-    "keep_as_is":        "noop",
+    "keep_as_is":        "keep_as_is",
+    "skip_etl":          "skip_etl",
+    "flag_only":         "flag_only",
+    "nullify_clean_value": "nullify_clean_value",
+    "quarantine_row":    "quarantine_row",
+    "cast_to_integer":   "cast_type",
+    "nullify_date":      "nullify_date",
+    "map_to_null":       "map_to_null",
+    "update_manifest":   "update_manifest",
+    "ignore_mismatch":   "noop",
+    "range_clip":        "range_clip",
+    "flag_range_violation": "flag_range_violation",
 }
 
 # Legacy resolution IDs that are ambiguous and must not silently map to any action.
@@ -311,6 +322,26 @@ _CATALOG: Dict[str, List[ResolutionOption]] = {
     "missing_required_column": [
         _opt("skip_requirement", "Skip requirement (remove from rules)", "skip_requirement", recommended=True, description="Remove this column from the list of required columns for this ingestion."),
         _opt("keep_as_is", "Keep as-is (requires external fix)", "noop", description="Accept the requirement without resolving it in the pipeline (will fail validation)."),
+    ],
+    "integer_stored_as_float": [
+        _opt("cast_to_integer", "Cast float values to integer", "cast_type", recommended=True, description="Cast floating-point representation to integer (Int64 nullable)."),
+        _opt("flag_only", "Flag precision anomaly without altering data", "flag_only", description="Add validation status column without casting."),
+        _opt("keep_as_is", "Keep as-is", "noop", description="Retain float data type."),
+    ],
+    "impossible_date": [
+        _opt("nullify_date", "Nullify impossible dates", "nullify_date", recommended=True, description="Replace calendar impossible dates with NULL and record validation reason."),
+        _opt("quarantine_row", "Quarantine rows with impossible dates", "quarantine_row", description="Route rows with impossible dates to quarantine table."),
+        _opt("flag_only", "Flag impossible dates for review", "flag_only", description="Add validation flag without nullifying."),
+        _opt("keep_as_is", "Keep as-is", "noop", description="Do not modify date values."),
+    ],
+    "sentinel_date": [
+        _opt("map_to_null", "Map sentinel dates to NULL", "map_to_null", recommended=True, description="Map sentinel/placeholder dates (e.g. 9999-12-31, 1900-01-01) to NULL."),
+        _opt("flag_only", "Flag sentinel dates", "flag_only", description="Flag sentinel dates without modifying values."),
+        _opt("keep_as_is", "Keep as-is", "noop", description="Retain sentinel dates."),
+    ],
+    "metadata_manifest_mismatch": [
+        _opt("update_manifest", "Update metadata manifest configuration", "update_manifest", recommended=True, description="Synchronize config/metadata_manifest.yaml with current database schema."),
+        _opt("ignore_mismatch", "Acknowledge and ignore mismatch", "noop", description="Acknowledge schema difference without modifying manifest."),
     ],
     "business_key_duplicate": [
         _opt("deduplicate_last", "Deduplicate — keep latest record", 
@@ -1024,8 +1055,26 @@ def action_for_resolution(issue_type: str, resolution_id: str, options: Optional
                 if o.get("action") in ("noop", "keep_as_is") or o.get("id") in ("keep_as_is", "skip_requirement"):
                     return str(o.get("action") or "noop")
         return "noop"
+
+    # "recommended" alias → find first recommended option in options or catalog
+    if rid in ("recommended", "recommended_option"):
+        for pool in search_pools:
+            for o in pool:
+                if o.get("recommended") and not o.get("disabled") and o.get("action"):
+                    return str(o.get("action"))
+        for pool in search_pools:
+            for o in pool:
+                if not o.get("disabled") and o.get("action") and o.get("action") != "noop":
+                    return str(o.get("action"))
+
     if rid in RESOLUTION_TO_ACTION_MAP:
         return RESOLUTION_TO_ACTION_MAP[rid]
+
+    # If rid is already a valid action name registered in ACTION_REGISTRY, accept it directly
+    from agent.etl_pipeline.action_registry import ACTION_REGISTRY
+    if rid in ACTION_REGISTRY:
+        return rid
+
     return None
 def is_skip_action(action: str) -> bool:
     return (action or "").strip().lower() in _SKIP_ACTIONS

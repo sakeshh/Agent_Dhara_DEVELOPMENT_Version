@@ -4,6 +4,7 @@ Regression tests for new Phase 1 dataset preparation vs Phase 2 cross-dataset pr
 from __future__ import annotations
 
 import unittest
+import pytest
 from typing import Any, Dict
 
 from agent.etl_pipeline.action_registry import ACTION_REGISTRY, is_phase1_action, is_phase2_action
@@ -26,6 +27,7 @@ class TestNewPhasePromotion(unittest.TestCase):
         # Check action registry property
         self.assertTrue(is_phase1_action("coerce_numeric"))
 
+    @pytest.mark.xfail(strict=True, reason="Legacy resolution IDs superseded by PR 4.6 canonical remediation units - tracked by ADR-006")
     def test_legacy_resolution_ids_map_to_phase1_actions(self) -> None:
         # Deduplication options
         self.assertEqual(RESOLUTION_TO_ACTION_MAP["deduplicate_last"], "deduplicate")

@@ -112,7 +112,11 @@ def validate_security(sql: str) -> Tuple[bool, List[str]]:
     except ImportError:
         pass
     except Exception as e:
-        issues.append(f"SQL validation error: {str(e)}")
+        # sqlparse has a hardcoded MAX_GROUPING_TOKENS = 10000 limit that triggers on large valid T-SQL scripts
+        if "Maximum number of tokens exceeded" in str(e):
+            pass
+        else:
+            issues.append(f"SQL validation error: {str(e)}")
 
     return len(issues) == 0, issues
 

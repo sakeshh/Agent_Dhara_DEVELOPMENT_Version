@@ -23,7 +23,9 @@ def map_llm_recommendation_to_action(rec: Any) -> Optional[str]:
             "trim", "fill_nulls_simple", "cast_type", "regex_replace",
             "deduplicate", "parse_dates", "sanitize_email", "normalize_phone",
             "clip_or_flag", "flag_outliers", "zero_to_null", "lowercase",
-            "uppercase", "exclude_column", "drop_column", "noop"
+            "uppercase", "exclude_column", "drop_column", "range_clip",
+            "replace_sentinel_values", "flag_duplicate_candidates",
+            "flag_near_duplicate_cluster", "normalize_registered_placeholder", "noop"
         }
         if action in known_actions:
             return action
@@ -38,20 +40,27 @@ def map_llm_recommendation_to_action(rec: Any) -> Optional[str]:
     if "uppercase" in fix_text or "upper case" in fix_text:
         return "uppercase"
 
-    if "trim" in fix_text or "whitespace" in fix_text or "strip" in fix_text:
-        return "trim"
-    if "fill" in fix_text or "impute" in fix_text or "null" in fix_text:
-        return "fill_nulls_simple"
-    if re.search(r"\bdate\b", fix_text) or "parse" in fix_text or "format" in fix_text:
+    # Specific defect remediation matches (must precede generic "null" check)
+    if any(k in fix_text for k in ("negative", "non-negative", "non_negative", "out-of-range", "out of range", "range_clip", "bounds")):
+        return "range_clip"
+    if "sentinel" in fix_text or "magic number" in fix_text:
+        return "replace_sentinel_values"
+    if "placeholder" in fix_text:
+        return "replace_sentinel_values"
+    if ("impossible" in fix_text and "date" in fix_text) or re.search(r"\bdate\b", fix_text) or "parse" in fix_text:
         return "parse_dates"
     if "email" in fix_text:
         return "sanitize_email"
     if "phone" in fix_text or "mobile" in fix_text:
         return "normalize_phone"
-    if "duplicate" in fix_text:
-        return "deduplicate"
+    if "duplicate" in fix_text or "redundant" in fix_text:
+        return "flag_duplicate_candidates"
+    if "trim" in fix_text or "whitespace" in fix_text or "strip" in fix_text:
+        return "trim"
     if "outlier" in fix_text or "skew" in fix_text:
-        return "flag_outliers"
+        return "range_clip"
+    if "fill" in fix_text or "impute" in fix_text:
+        return "fill_nulls_simple"
     if "cast" in fix_text or "convert" in fix_text:
         return "cast_type"
     if "drop" in fix_text or "remove" in fix_text:

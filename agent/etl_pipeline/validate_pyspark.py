@@ -713,20 +713,21 @@ def validate_pyspark_source(
 
 def _check_literal_identity_comparison(tree: ast.AST) -> List[str]:
     errs: List[str] = []
+    literal_types = (ast.Constant, ast.List, ast.Dict, ast.Tuple)
     for node in ast.walk(tree):
         if isinstance(node, ast.Compare):
             has_identity_op = any(isinstance(op, (ast.Is, ast.IsNot)) for op in node.ops)
             if has_identity_op:
-                is_left_literal = isinstance(node.left, (ast.Constant, ast.Num, ast.Str, ast.Bytes, ast.List, ast.Dict, ast.Tuple))
-                is_right_literal = any(isinstance(c, (ast.Constant, ast.Num, ast.Str, ast.Bytes, ast.List, ast.Dict, ast.Tuple)) for c in node.comparators)
+                is_left_literal = isinstance(node.left, literal_types)
+                is_right_literal = any(isinstance(c, literal_types) for c in node.comparators)
                 if is_left_literal:
-                    val = getattr(node.left, "value", getattr(node.left, "n", getattr(node.left, "s", None)))
+                    val = getattr(node.left, "value", None)
                     if val is not None:
                         errs.append(f"Syntax warning: Identity operator 'is' / 'is not' used with literal value '{val}' (use '==' or '!=' instead)")
                 if is_right_literal:
                     for c in node.comparators:
-                        if isinstance(c, (ast.Constant, ast.Num, ast.Str, ast.Bytes, ast.List, ast.Dict, ast.Tuple)):
-                            val = getattr(c, "value", getattr(c, "n", getattr(c, "s", None)))
+                        if isinstance(c, literal_types):
+                            val = getattr(c, "value", None)
                             if val is not None:
                                 errs.append(f"Syntax warning: Identity operator 'is' / 'is not' used with literal value '{val}' (use '==' or '!=' instead)")
     return errs

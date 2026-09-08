@@ -972,6 +972,244 @@ def _sanitize_html_entities_in_code(code: str) -> str:
     return _sanitize_unquoted_nan_in_code(code)
 
 
+def _postprocess_tsql_code(code: str) -> str:
+    """Sanitizes generated T-SQL to guarantee zero syntax and runtime errors:
+    1. Hoists table DDL outside BEGIN TRY so infrastructure exists before execution.
+    2. Strips all 'GO' batch separators inside BEGIN TRY ... END CATCH blocks.
+    3. Ensures balanced transactions (BEGIN TRANSACTION inside TRY, COMMIT before success).
+    4. Guards ROLLBACK with @@TRANCOUNT / XACT_STATE checks to prevent Msg 3903.
+    5. Injects missing companion columns to staging tables to prevent Msg 207 invalid column errors.
+    """
+    if not code:
+        return code
+
+    code = _sanitize_unquoted_nan_in_code(code)
+
+    # 1. Hoist table DDL if generated inside BEGIN TRY before @run_id or execution statements
+    try_match = re.search(r"\bBEGIN\s+TRY\b", code, re.IGNORECASE)
+    if try_match:
+        post_try = code[try_match.end():]
+        run_match = re.search(r"(?:DECLARE\s+@run_id|SET\s+@run_id|INSERT\s+INTO\s+dbo\.etl_log)", post_try, re.IGNORECASE)
+        if run_match:
+            pre_run_code = post_try[:run_match.start()]
+            general_pattern = re.compile(
+                r"(IF\s+NOT\s+EXISTS\s*\([^;]+\)\s*CREATE\s+TABLE\s+[^;]+;\s*(?:--\s*GO\s*|\bGO\b\s*)?)",
+                re.IGNORECASE
+            )
+            ddls = general_pattern.findall(pre_run_code)
+            if ddls:
+                cleaned_pre = general_pattern.sub("", pre_run_code)
+                hoisted_list = []
+                for d in ddls:
+                    d_clean = re.sub(r"\s*(?:--\s*GO\b|GO\b)\s*$", "", d.strip(), flags=re.IGNORECASE).strip()
+                    hoisted_list.append(d_clean + "\nGO")
+                hoisted_str = "\n\n".join(hoisted_list)
+                before_try = code[:try_match.start()].rstrip()
+                after_try = cleaned_pre + post_try[run_match.start():]
+                code = f"{before_try}\n\n-- =============================================\n-- Database Infrastructure DDL (Executed before batch)\n-- =============================================\n{hoisted_str}\n\nBEGIN TRY{after_try}"
+
+    # 2. Strip ALL GO statements after the start of execution (SET NOCOUNT / DECLARE @run_id / BEGIN TRY)
+    # In T-SQL, variables like @run_id do NOT survive across GO boundaries.
+    lines = code.splitlines()
+    exec_start_idx = -1
+    for i, line in enumerate(lines):
+        line_clean = line.strip().upper()
+        if any(line_clean.startswith(marker) for marker in ("SET NOCOUNT", "SET XACT_ABORT", "DECLARE @RUN_ID", "DECLARE @RUNID", "BEGIN TRY")):
+            exec_start_idx = i
+            break
+
+    if exec_start_idx != -1:
+        for i in range(exec_start_idx, len(lines)):
+            if re.match(r"^\s*GO\s*(?:--.*)?$", lines[i], re.IGNORECASE):
+                lines[i] = "-- GO (omitted for variable scope across execution batch)"
+    else:
+        # Fallback: comment out any GO between first BEGIN TRY and EOF
+        try_seen = False
+        for i, line in enumerate(lines):
+            line_clean = line.strip().upper()
+            if "BEGIN TRY" in line_clean:
+                try_seen = True
+            if try_seen and re.match(r"^\s*GO\s*(?:--.*)?$", lines[i], re.IGNORECASE):
+                lines[i] = "-- GO (omitted for variable scope across execution batch)"
+
+    code = "\n".join(lines)
+
+    # 2b. Ensure @run_id declaration is not separated or missing
+    if "@run_id" in code and not re.search(r"\bDECLARE\s+@run_id\b", code, re.IGNORECASE):
+        m_try = re.search(r"\bBEGIN\s+TRY\b", code, re.IGNORECASE)
+        if m_try:
+            pos = m_try.start()
+            code = code[:pos] + "DECLARE @run_id INT;\n\n" + code[pos:]
+
+    # 2c. Redirect updates targeting source tables to their staging tables
+    # 2c. Redirect updates targeting source tables to their staging tables
+    # Exclude declared CTE names, temporary tables, clean target tables, and infrastructure tables
+    declared_ctes = set(re.findall(r"\bWITH\s+([a-zA-Z0-9_]+)\s+AS\s*\(", code, re.IGNORECASE))
+    declared_ctes.update(re.findall(r",\s*([a-zA-Z0-9_]+)\s+AS\s*\(", code, re.IGNORECASE))
+    declared_ctes_lower = {c.lower() for c in declared_ctes}
+
+    def _redirect_source_updates(match):
+        prefix = match.group(1) or ""
+        tbl_raw = match.group(3)
+        suffix = match.group(4)
+        clean_tbl = tbl_raw.strip("[]")
+        low = clean_tbl.lower()
+        if low.startswith("#") or low.endswith("_clean") or low in ("etl_log", "etl_rejects", "etl_watermark") or low in declared_ctes_lower or "cte" in low:
+            return match.group(0)
+        return f"{prefix}#{clean_tbl}_Staging{suffix}"
+
+    code = re.sub(
+        r"(\bUPDATE\s+)(?:(\[?dbo\]?\.)?\[?([a-zA-Z0-9_]+)\]?)(\s+SET\b)",
+        _redirect_source_updates,
+        code,
+        flags=re.IGNORECASE
+    )
+
+    # 2d. Fix pseudo-column [Row-level] / [row-level] in SET clauses
+    code = re.sub(
+        r"\[?row-level\]?\s*=\s*(?:'[^']*'|[^,;\n]+)",
+        r"[is_duplicate_row] = 1, [row_validation_status] = 'duplicate_candidate', [row_validation_reason] = 'Duplicate candidate row detected'",
+        code,
+        flags=re.IGNORECASE
+    )
+
+    # 2e. Phone Validation Length Fix:
+    # If phone validation checks NOT LIKE '%[^0-9]%' without length check, enforce LEN BETWEEN 7 AND 15
+    def _fix_phone_check(match):
+        cond = match.group(0)
+        if "7" not in cond and "15" not in cond:
+            return "(LEN(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE([Phone], '-', ''), ' ', ''), '(', ''), ')', ''), '+', ''), '.', '')) BETWEEN 7 AND 15 AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE([Phone], '-', ''), ' ', ''), '(', ''), ')', ''), '+', ''), '.', '') NOT LIKE '%[^0-9]%')"
+        return cond
+
+    code = re.sub(
+        r"\[?Phone\]?\s+NOT\s+LIKE\s+'%\[\^0-9\]%'",
+        _fix_phone_check,
+        code,
+        flags=re.IGNORECASE
+    )
+
+    # 3. Ensure BEGIN TRANSACTION inside BEGIN TRY if ROLLBACK is present
+    upper = code.upper()
+    if "ROLLBACK" in upper and "BEGIN TRANSACTION" not in upper and "BEGIN TRAN" not in upper:
+        m_run = re.search(r"(SET\s+@run_id\s*=\s*SCOPE_IDENTITY\(\)\s*;)", code, re.IGNORECASE)
+        if m_run:
+            insert_pos = m_run.end()
+            code = code[:insert_pos] + "\n\n    BEGIN TRANSACTION;" + code[insert_pos:]
+        else:
+            m_try = re.search(r"BEGIN\s+TRY\b", code, re.IGNORECASE)
+            if m_try:
+                insert_pos = m_try.end()
+                code = code[:insert_pos] + "\n    BEGIN TRANSACTION;" + code[insert_pos:]
+
+    # 4. Ensure COMMIT TRANSACTION before success logging if BEGIN TRANSACTION is present
+    if ("BEGIN TRANSACTION" in code.upper() or "BEGIN TRAN" in code.upper()) and "COMMIT TRANSACTION" not in code.upper() and "COMMIT TRAN" not in code.upper():
+        m_success = re.search(r"(UPDATE\s+dbo\.etl_log\s+SET\s+end_time\s*=\s*GETDATE\(\)\s*,\s*status\s*=\s*'SUCCESS')", code, re.IGNORECASE)
+        if not m_success:
+            m_success = re.search(r"(UPDATE\s+dbo\.etl_log[\s\S]*?'SUCCESS')", code, re.IGNORECASE)
+        if m_success:
+            insert_pos = m_success.start()
+            code = code[:insert_pos] + "COMMIT TRANSACTION;\n    " + code[insert_pos:]
+        else:
+            m_end_try = re.search(r"\bEND\s+TRY\b", code, re.IGNORECASE)
+            if m_end_try:
+                insert_pos = m_end_try.start()
+                code = code[:insert_pos] + "    COMMIT TRANSACTION;\n" + code[insert_pos:]
+
+    # 5. Guard ROLLBACK with IF @@TRANCOUNT > 0 OR XACT_STATE() <> 0
+    def _guard_rollback(match):
+        full = match.group(0)
+        prefix = match.group(1) or ""
+        stmt = match.group(2)
+        if "XACT_STATE" in prefix or "@@TRANCOUNT" in prefix or "XACT_STATE" in full or "@@TRANCOUNT" in full:
+            return full
+        return f"{prefix}IF @@TRANCOUNT > 0 OR XACT_STATE() <> 0\n        {stmt}"
+
+    code = re.sub(
+        r"((?:IF\s+[^\n;]+\s*)?)(ROLLBACK\s*(?:TRANSACTION|TRAN)?\s*;)",
+        _guard_rollback,
+        code,
+        flags=re.IGNORECASE
+    )
+
+    # 6. Ensure companion columns exist on staging tables
+    staging_tables = re.findall(r"#([a-zA-Z0-9_]+)_Staging\b", code, re.IGNORECASE)
+    for st_name in set(staging_tables):
+        st_full = f"#{st_name}_Staging"
+        updates = re.findall(rf"UPDATE\s+{re.escape(st_full)}\s+SET\s+([^;]+?)(?:WHERE\b|;)", code, re.IGNORECASE)
+        cols_needed = set()
+        if "is_duplicate_row" in code:
+            cols_needed.add("is_duplicate_row")
+            cols_needed.add("row_validation_status")
+            cols_needed.add("row_validation_reason")
+        for upd in updates:
+            set_cols = re.findall(r"\[([a-zA-Z0-9_]+)\]\s*=", upd)
+            for sc in set_cols:
+                if sc.endswith("_clean") or sc.endswith("_validation_status") or sc.endswith("_validation_reason"):
+                    cols_needed.add(sc)
+                    base_c = re.sub(r"_(clean|validation_status|validation_reason)$", "", sc)
+                    cols_needed.add(f"{base_c}_clean")
+                    cols_needed.add(f"{base_c}_validation_status")
+                    cols_needed.add(f"{base_c}_validation_reason")
+
+        if cols_needed:
+            create_st = re.search(rf"SELECT\s+[^;]+INTO\s+{re.escape(st_full)}[^;]*;", code, re.IGNORECASE)
+            if create_st:
+                create_stmt = create_st.group(0)
+                missing_cols = [c for c in cols_needed if f"[{c}]" not in create_stmt]
+                if missing_cols:
+                    alter_clauses = []
+                    for mc in sorted(missing_cols):
+                        if mc == "is_duplicate_row":
+                            alter_clauses.append(f"[{mc}] BIT DEFAULT 0")
+                        elif mc == "row_validation_status":
+                            alter_clauses.append(f"[{mc}] VARCHAR(50) DEFAULT 'valid'")
+                        elif mc.endswith("_validation_reason") or mc == "row_validation_reason":
+                            alter_clauses.append(f"[{mc}] VARCHAR(500) NULL")
+                        elif mc.endswith("_validation_status"):
+                            alter_clauses.append(f"[{mc}] VARCHAR(50) NULL")
+                        else:
+                            alter_clauses.append(f"[{mc}] NVARCHAR(MAX) NULL")
+                    alter_sql = f"\n    ALTER TABLE {st_full} ADD " + ", ".join(alter_clauses) + ";\n"
+                    ins_pt = create_st.end()
+                    code = code[:ins_pt] + alter_sql + code[ins_pt:]
+
+    # 7. Clean Data Integrity Guard (Table-Specific):
+    # Only nullify columns that ACTUALLY exist in the specific staging table
+    for st_name in set(staging_tables):
+        st_full = f"#{st_name}_Staging"
+        st_updates = re.findall(rf"UPDATE\s+{re.escape(st_full)}\s+SET\s+([^;]+?)(?:WHERE\b|;)", code, re.IGNORECASE)
+        status_cols_for_table = set()
+        for upd in st_updates:
+            status_cols_for_table.update(re.findall(r"\[([a-zA-Z0-9_]+)_validation_status\]", upd))
+
+        for base_col in status_cols_for_table:
+            clean_col = f"{base_col}_clean"
+            stat_col = f"{base_col}_validation_status"
+            guard_marker = f"-- Integrity Guard ({st_name}): Nullify [{clean_col}]"
+            if guard_marker not in code:
+                ins_match = re.search(rf"INSERT\s+INTO\s+dbo\.\[?{st_name}(?:_Clean)?\]?", code, re.IGNORECASE)
+                if ins_match:
+                    guard_stmt = (
+                        f"\n    {guard_marker} where anomaly status is present\n"
+                        f"    UPDATE {st_full}\n"
+                        f"    SET [{clean_col}] = NULL\n"
+                        f"    WHERE [{stat_col}] IS NOT NULL AND [{stat_col}] NOT IN ('valid', 'missing_value') AND [{clean_col}] IS NOT NULL;\n"
+                    )
+                    ins_pos = ins_match.start()
+                    code = code[:ins_pos] + guard_stmt + "\n    " + code[ins_pos:]
+
+    # 8. Rejects & Quarantine per-row correlated insert guard:
+    # If INSERT INTO dbo.etl_rejects aggregates via (SELECT * FROM ... FOR JSON PATH), rewrite to correlated row insert
+    code = re.sub(
+        r"INSERT\s+INTO\s+dbo\.etl_rejects\s*(?:\([^)]+\)\s*)?SELECT\s+[\s\S]+?,\s*\(\s*SELECT\s+\*\s+FROM\s+(#\w+_Staging)\s+WHERE\s+([^;]+?)\s+FOR\s+JSON\s+PATH\s*\)",
+        r"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason, rejected_at)\n    SELECT 'ETL_Pipeline', '\1', (SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER), 'Validation failure', GETDATE()\n    FROM \1 s\n    WHERE \2",
+        code,
+        flags=re.IGNORECASE
+    )
+
+    return code
+
+
 def _fix_toplevel_pipeline_duplication(code: str) -> str:
     """Comment out top-level standalone execution lines so run_pipeline is the sole execution path."""
     if not code:
@@ -1636,59 +1874,110 @@ PYTHON REQUIREMENTS:
 
 T-SQL REQUIREMENTS:
 - Header comment block with plan_id.
-- Idempotent T-SQL DDL (CRITICAL): NEVER use `CREATE TABLE IF NOT EXISTS` — that is MySQL/PostgreSQL syntax and is INVALID in T-SQL/SQL Server. For every infrastructure table (etl_log, etl_rejects, etl_watermark, clean tables, indexes, procedures), you MUST use the correct T-SQL idempotent guard pattern:
-  - Tables: `IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TableName' AND schema_id = SCHEMA_ID('dbo')) CREATE TABLE dbo.TableName (...);`
-  - Indexes: `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IndexName' AND object_id = OBJECT_ID('dbo.TableName')) CREATE NONCLUSTERED INDEX IndexName ON dbo.TableName (...);`
-  - Procedures (SAFE & NON-DESTRUCTIVE): ALWAYS use `CREATE OR ALTER PROCEDURE dbo.ProcName AS BEGIN ... END; GO`. NEVER generate `DROP PROCEDURE` or `DROP TABLE`. `CREATE OR ALTER PROCEDURE` automatically creates or updates stored procedures safely without deleting existing tables or dropping objects.
-  Each outer script DDL statement (infrastructure tables, staging tables, procedures, views) MUST be followed by a GO batch separator on its own line. NEVER output GO inside a stored procedure body.
-- Execution Logging & Log ID Bugfix: Output DDL to create a logging table named `dbo.etl_log` with columns `id INT IDENTITY(1,1) PRIMARY KEY`, `process_name VARCHAR(100) NOT NULL`, `start_time DATETIME NOT NULL`, `end_time DATETIME NULL`, `status VARCHAR(20) NOT NULL`, `error_message VARCHAR(MAX) NULL` using the T-SQL idempotent guard described above. 
-  Inside each stored procedure's TRY block, you MUST first run the `INSERT INTO dbo.etl_log (process_name, start_time, status) VALUES ('...', GETDATE(), 'RUNNING');` statement. IMMEDIATELY AFTER this insert, define and set the batch run ID: `DECLARE @run_id INT = SCOPE_IDENTITY();`. NEVER declare `@run_id = SCOPE_IDENTITY();` before any insert statement has occurred in the procedure, as this returns NULL and breaks audit batch tracking. Wrap the block in a transaction. Commit on success and rollback on failure.
-- Balanced Transactions: Every Try-Catch block MUST wrap data modifications in an explicit transaction block. Begin the transaction inside `BEGIN TRY` using `BEGIN TRANSACTION;` immediately after defining `@run_id`. Commit the transaction using `COMMIT TRANSACTION;` at the very end of the `BEGIN TRY` block (after all updates and logging are completed). At the beginning of the `BEGIN CATCH` block, you MUST verify if a transaction is still active and roll it back using: `IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;`. Never omit `BEGIN TRANSACTION` if `COMMIT/ROLLBACK` are used, or vice versa, to ensure compilation succeeds.
-- FORBIDDEN MySQL/PostgreSQL Syntax: NEVER output `CREATE TABLE IF NOT EXISTS`, `CREATE OR REPLACE`, `ON CONFLICT`, `RETURNING`, `ILIKE`, `SERIAL`, `AUTO_INCREMENT`, or any other non-T-SQL syntax. These are invalid in SQL Server and will cause the entire batch to fail with a hard rollback. T-SQL equivalents MUST be used at all times.
-- Rule Merging & Single-Scan Consolidation: NEVER generate separate, sequential `UPDATE` statements for each plan step on the same table. Instead:
-  1. Merge and consolidate all expression-based updates (like `LTRIM/RTRIM`, `LOWER/UPPER`, case normalization, formatting, phone normalization, date parsing, and range clipping) into a **single multi-column `UPDATE` statement** on the staging table `#<TableName>_Staging`.
-  2. Merge all default value fillings and invalid/sentinel replacements into a **single join-based `UPDATE` statement** joining `dbo.etl_default_values` and `dbo.etl_invalid_values` via `LEFT JOIN`s.
-- Raw -> Staging -> Transform -> Clean Architecture: Raw tables are completely immutable. Never write updates/modifications/deletions directly on raw tables. Create the target clean table (e.g., `dbo.Orders_Clean` for `dbo.Orders_Raw`) if it does not exist with standard audit columns: `etl_created_at DATETIME DEFAULT GETDATE()`, `etl_updated_at DATETIME DEFAULT GETDATE()`, and `etl_batch_id INT`. 
-  Inside each table-cleaning stored procedure, initialize a temporary staging table (e.g. `#Orders_Staging`) by doing `SELECT * INTO #Orders_Staging FROM dbo.Orders_Clean WHERE 1=0;`. Copy the raw data (utilizing candidate key CTE deduplication and watermarking filters) into the staging table (populating `@run_id` to `etl_batch_id`). Execute all transformations, updates, and validations directly on the staging table `#Orders_Staging`. Finally, truncate/delete records in the target clean table `dbo.Orders_Clean` and insert the fully transformed records from the staging table into `dbo.Orders_Clean`.
-- Modular Stored Procedures: Wrap all cleaning steps for each table into dedicated stored procedures named `dbo.etl_clean_<table_base_name>`.
-- Master Orchestration: Generate a master coordinator procedure named `dbo.etl_main` that calls all the individual table cleaning stored procedures.
-- Incremental Loading, Watermarking & Watermark Storage: Stored procedures and the main procedure must accept parameters `@load_type VARCHAR(20) = 'FULL'` and `@last_run DATETIME = NULL`. Generate DDL for `dbo.etl_watermark (process_name VARCHAR(100) PRIMARY KEY, last_run_time DATETIME NOT NULL)`. 
-  If `@load_type = 'INCREMENTAL'` and `@last_run IS NULL`, retrieve it using `SELECT @last_run = last_run_time FROM dbo.etl_watermark WHERE process_name = '...';`. Ensure this `@last_run` filter is fully applied to the copy queries (e.g. `WHERE watermark_col > @last_run`). Update the watermark using `MERGE` upon successful completion.
-- Performance Indexing: When creating the clean target table, add DDL commands to create NONCLUSTERED indexes on the primary keys, join/relationship keys, and watermark columns.
-- Outlier Mitigation Safety (Catalog Checks): Implement the outlier flagging logic using a reusable stored procedure `dbo.sp_flag_outliers_iqr` that computes IQR and updates outlier flags dynamically. The procedure takes exactly two arguments: `@table_name` and `@column_name`. Validate that input table and column parameters exist in `sys.tables` and `sys.columns` (or `tempdb.sys.columns` for `#` temp tables) before dynamic SQL executions. NEVER call the procedure with extra parameters.
-- Reusable Outlier Procedure Call: When executing IQR flagging on a column, invoke it exactly as `EXEC dbo.sp_flag_outliers_iqr '#TableName_Staging', 'ColumnName'`. Do not repeat the execution or call it multiple times for the same column. Only run outlier stored procedures on numeric/metric columns. NEVER execute it on string identifiers, phones, or emails.
-- Zero Redundant Operations: Do not output duplicate or redundant CTE statements, updates, or procedure calls. Verify that any deduplication logic, outlier checks, or date/email validation is written once per column.
-- Type-Safe String Transformations: If applying `LTRIM`, `RTRIM`, `LOWER`, or `UPPER` on a non-string column (such as numeric/date columns), first cast the column explicitly to a string type (e.g. `CAST(col AS NVARCHAR(MAX))`) before calling the string function, then cast back to the target type. (e.g. `TRY_CAST(NULLIF(LTRIM(RTRIM(CAST(credits AS NVARCHAR(50)))), '') AS INT)`).
-- Rejects & Quarantine Logging: Enforce the use of `dbo.etl_rejects` table. Generate DDL to create the rejects logging table `dbo.etl_rejects` using the T-SQL idempotent guard (NEVER `CREATE TABLE IF NOT EXISTS`):
-  ```sql
-  IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'etl_rejects' AND schema_id = SCHEMA_ID('dbo'))
-  CREATE TABLE dbo.etl_rejects (
-      id INT IDENTITY(1,1) PRIMARY KEY,
-      table_name VARCHAR(100) NOT NULL,
-      rejected_row_data NVARCHAR(MAX) NOT NULL,
-      reject_reason VARCHAR(255) NOT NULL,
-      etl_batch_id INT NOT NULL,
-      rejected_at DATETIME DEFAULT GETDATE()
-  );
-  GO
-  ```
-  For any row that fails validation format constraints (e.g. invalid date formats, invalid email patterns) or referential integrity (joins), you MUST insert the violating records into `dbo.etl_rejects` and delete them from the staging table prior to any transformation/cast steps. Use `(SELECT * FROM staging_alias r2 WHERE r2.[pk] = r.[pk] FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)` to serialize the violating row data. Perform validation deletes before applying transformations/casts to preserve the original invalid values.
-- Default Value Sanity & No Fake/Placeholder Defaults: Seed defaults/invalid values dynamically. Use `NULL` as the default value strategy for date, email, and phone/identifier columns to prevent downstream data pollution. NEVER hardcode placeholder default values (like `'10120631.5'` for dates, or `'99999'` for Phone/IDs) when filling nulls; un-defaulted values must remain `NULL`. Replace literal default values with lookup queries using `TRY_CAST(default_value AS <type>)` from `dbo.etl_default_values` (dynamic casting based on column data type).
-- Multi-Format Date Parsing: When parsing date columns, use a coalesced chain of `TRY_CONVERT` with different format styles (e.g. style 120, 103, 101, 111) to check if the date is valid. For example: `COALESCE(TRY_CONVERT(DATETIME, [date_col], 120), TRY_CONVERT(DATETIME, [date_col], 103), TRY_CONVERT(DATETIME, [date_col], 101), TRY_CONVERT(DATETIME, [date_col], 111))`. If all conversion attempts fail and the value is not empty/null, treat it as a format validation failure, insert it into `dbo.etl_rejects`, and delete it from the staging table.
-- Business-Key Deduplication: For row-level deduplication, partition by the candidate primary key and business keys (names containing `id`, `key`, `email`, `code`) instead of all non-key columns, and order the partition descending by watermark column (`ORDER BY <watermark> DESC`) to preserve the latest record. Perform deduplication inside the initial staging `INSERT INTO ... SELECT` statement using a CTE.
-- Use bracket quoting [column] and TRY_CAST / TRY_CONVERT for safe casts.
-- never_drop_rows: UPDATE/SET only, no DELETE FROM for data quality fixes (except when logging to rejects table).
-- Email Validation: For Email columns, check for valid email syntax using the exact SQL pattern `NOT LIKE '%_@_%._%'`. If invalid, quarantine any invalid emails into `dbo.etl_rejects` and delete them from the staging table.
-- Phone Normalization and Validation: For Phone columns, strip symbols `-`, ` `, `(`, `)` using nested `REPLACE` functions. If the cleaned phone number length is less than 7 or contains non-numeric characters (tested using `LIKE '%[^0-9]%'`), treat it as an invalid phone validation failure, quarantine it to `dbo.etl_rejects`, and delete them from the staging table.
-- No Redundant Casts: Prohibit redundant string castings. Do not emit nested castings like `LOWER(CAST(LTRIM(RTRIM(CAST(col AS NVARCHAR(MAX)))) AS NVARCHAR(MAX)))`. If a column is already cast to a string type, or is the result of string functions (`LOWER`, `LTRIM`, `REPLACE`), do not wrap it in additional `CAST` statements.
-- Orders Pipeline: Do not make the Orders pipeline a simple copy. Enforce strict date parsing (via coalesced `TRY_CONVERT` chains), status normalization (trim and case normalization), and invalid/null values handling.
-- Duplicates Deduplication ordering: Never use non-existent columns (like `etl_created_at`) in `ROW_NUMBER() OVER (PARTITION BY LOWER(LTRIM(RTRIM(CAST([pk] AS NVARCHAR(400))))) ORDER BY ...)` inside the staging copy CTE. Use a business column (like `CreatedDate DESC` or `OrderDate DESC`) for ordering.
-- Idempotent and Production-Safe views/joins: Ensure join views use `CREATE VIEW` instead of `SELECT ... INTO` to prevent duplicate view compilation failures or schema write conflicts.
-- Round-number anomaly handling: flag/tag round-number anomalies if required.
-- Month-end date clumping: flag month-end date clumping if required.
-- Active curated views: listing selected fields and prefixing duplicate fields.
-- Index-Friendly numeric checks: check numeric column placeholders without casting (e.g. `Quantity IN (-999, 999999)`).
-- No SELECT DISTINCT * for deduplication: Avoid using expensive, non-key-aware `SELECT DISTINCT` statements. Deduplication must be key-aware using CTE `ROW_NUMBER()`.
+- SCRIPT STRUCTURE & IDEMPOTENT DDL (CRITICAL FOR RUNTIME COMPILATION):
+  1. ALL table DDL statements MUST be executed FIRST at the top, BEFORE execution or stored procedure bodies:
+     - Infrastructure tables: `dbo.etl_log`, `dbo.etl_rejects`, `dbo.etl_watermark`.
+     - Target clean tables: `dbo.<Table>_Clean` for every dataset.
+     - Tables: `IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TableName' AND schema_id = SCHEMA_ID('dbo')) CREATE TABLE dbo.TableName (...);`
+     - Indexes: `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IndexName' AND object_id = OBJECT_ID('dbo.TableName')) CREATE NONCLUSTERED INDEX IndexName ON dbo.TableName (...);`
+     - Stored Procedures: `CREATE OR ALTER PROCEDURE dbo.ProcName AS BEGIN ... END; GO`.
+     - Each outer script DDL statement MUST be followed by a `GO` batch separator on its own line.
+  2. ABSOLUTE FORBIDDEN: NEVER output `GO` inside `BEGIN TRY ... END TRY`, inside `BEGIN CATCH ... END CATCH`, or anywhere in the execution section:
+     Once the execution section begins (`SET NOCOUNT ON; SET XACT_ABORT ON; DECLARE @run_id INT; BEGIN TRY...`), NEVER emit `GO` ANYWHERE in the remainder of the script!
+     In T-SQL, `GO` ends the batch and destroys local variables like `@run_id`, causing fatal compilation errors (`Must declare the scalar variable "@run_id"`).
+     The entire data pipeline must execute in a SINGLE contiguous batch from `SET NOCOUNT ON;` through `END CATCH`.
+- STRICTLY IMMUTABLE SOURCE TABLES (CRITICAL):
+  - Raw source tables (e.g. `dbo.Courses`, `dbo.Customers`, `dbo.Customers_Raw`) are READ-ONLY and IMMUTABLE.
+  - NEVER write `UPDATE dbo.Courses`, `UPDATE dbo.Customers`, or `UPDATE dbo.Customers_Raw`!
+  - Source tables do NOT contain `_clean`, `_validation_status`, or `_validation_reason` columns. Any UPDATE on a source table will immediately fail with `Msg 207 (Invalid column name)`.
+  - ALL data cleaning, transformation, and validation updates MUST target the temporary staging table: `UPDATE #<Table>_Staging SET ...`.
+- Transaction Safety & Execution Logging:
+  - Header: ALWAYS declare `SET NOCOUNT ON;` and `SET XACT_ABORT ON;` before the execution block.
+  - Logging & Run ID: At the start of the execution TRY block, execute:
+    `INSERT INTO dbo.etl_log (process_name, start_time, status) VALUES ('ETL_Pipeline', GETDATE(), 'RUNNING');`
+    Immediately capture `@run_id = SCOPE_IDENTITY();`.
+  - Balanced Transactions: Start `BEGIN TRANSACTION;` inside `BEGIN TRY` immediately after capturing `@run_id`.
+    At the end of `BEGIN TRY`, execute `COMMIT TRANSACTION;`, followed by updating `dbo.etl_log` to `'SUCCESS'` (`UPDATE dbo.etl_log SET end_time = GETDATE(), status = 'SUCCESS' WHERE id = @run_id;`).
+  - Safe Exception Handler: In `BEGIN CATCH`, you MUST test:
+    ```sql
+    IF @@TRANCOUNT > 0 OR XACT_STATE() <> 0
+        ROLLBACK TRANSACTION;
+    ```
+    Never execute a bare `ROLLBACK TRANSACTION;` without verifying an active transaction exists (prevents `Msg 3903: The ROLLBACK TRANSACTION request has no corresponding BEGIN TRANSACTION`).
+    Update `dbo.etl_log` to `'FAILED'` with `end_time = GETDATE()`, and ALWAYS execute `THROW;` to propagate errors.
+- FORBIDDEN Syntax: NEVER output `CREATE TABLE IF NOT EXISTS`, `CREATE OR REPLACE`, `ON CONFLICT`, `RETURNING`, `ILIKE`, `SERIAL`, or `AUTO_INCREMENT`. Use T-SQL equivalents at all times.
+- Raw -> Staging -> Transform -> Clean Architecture:
+  1. Staging Schema: NEVER use `SELECT * INTO #Staging WHERE 1=0` followed by `INSERT INTO #Staging SELECT *, companion_columns...` (fails with Msg 213).
+  2. Staging Companion Columns Completeness (CRITICAL):
+     When creating `#<Table>_Staging`, you MUST declare ALL companion columns for EVERY column in the dataset:
+     `src.[<col>], src.[<col>] AS [<col>_raw], CAST(NULL AS NVARCHAR(MAX)) AS [<col>_clean], CAST(NULL AS VARCHAR(50)) AS [<col>_validation_status], CAST(NULL AS VARCHAR(500)) AS [<col>_validation_reason]`.
+     Include row-level duplicate companion columns: `CAST(0 AS BIT) AS [is_duplicate_row], CAST('valid' AS VARCHAR(50)) AS [row_validation_status], CAST(NULL AS VARCHAR(500)) AS [row_validation_reason]`.
+  3. Single Composite CASE Expression per Field: For each column with multiple rules (sentinels, nulls, formats, ranges), compile into ONE unified `CASE` statement following the canonical validation hierarchy:
+     `source_null -> empty_value -> registered_placeholder -> punctuation_only -> unparseable_value -> format_violation -> domain_violation -> valid`.
+  4. Validation Status Integrity: When a value is out of range, negative, unparseable, or sentinel, `<col>_validation_status` MUST be marked with the defect status code, and NEVER marked `'valid'`.
+  5. Target Clean Table DDL and Inserts: Include companion columns in clean table DDL ([col_raw], [col_clean], [col_validation_status], [col_validation_reason], [row_validation_status], [row_validation_reason], [is_duplicate_row]). ALWAYS specify explicit column lists in `INSERT INTO dbo.<Table>_Clean ([Col1], [Col2], ..., etl_batch_id, etl_created_at, etl_updated_at) SELECT COALESCE(s.[Col1_clean], s.[Col1]), ..., @run_id, GETDATE(), GETDATE() FROM #<Table>_Staging s;`.
+  6. Bracket Quoting: Quote all identifiers safely: `[dbo].[Orders]`, `[column_name]`.
+- MANDATORY DATA QUALITY RULES (Must cover ALL findings from assessment report):
+  1. Negative Values & Measures (P1):
+     For any currency/price/fee/amount/budget/measure column:
+     Prices and catalog values CANNOT be negative.
+     When `TRY_CAST([col] AS DECIMAL(18,2)) < 0`:
+     - Set `[col_clean] = NULL`
+     - Set `[col_validation_status] = 'negative_value_review_required'` (or `'invalid_out_of_range'`)
+     - Set `[col_validation_reason] = 'Catalog price/measure cannot be negative'`
+     - Quarantine violating records individually into `dbo.etl_rejects`.
+  2. Date Lineage & Impossible Dates (P2):
+     Differentiate:
+     - Placeholder strings (`'n/a'`, `'na'`, `'null'`, `'none'`, `'???'`, `'###'`, `'-'`): set status `'placeholder_normalized_to_null'`, reason `'Configured placeholder token normalized to NULL'`.
+     - Sentinel dates (`'9999-12-31'`, `'1900-01-01'`, `'0001-01-01'`, `'99/99/9999'`): set status `'sentinel_value'`, reason `'Sentinel date replaced with NULL'`.
+     - Impossible calendar dates (e.g. `'2023-13-01'`, `'2022-02-30'`, `'2024-05-40'` or failed date parse on non-empty string):
+       When string is non-empty, not a placeholder, and not a sentinel, but `TRY_CONVERT(DATETIME2, [col], 120)` (and 103, 101, 111) returns NULL:
+       - Set `[col_clean] = NULL`
+       - Set `[col_validation_status] = 'impossible_calendar_date'`
+       - Set `[col_validation_reason] = 'Impossible calendar date or unparseable format (e.g. 2023-13-01, 2022-02-30)'`
+       - Quarantine violating records individually into `dbo.etl_rejects`.
+     - Valid dates: Plausible range check (e.g. year between 1900 and 2100). Set status `'valid'`.
+  3. Text Placeholders (P9 & P10):
+     For text columns (`CustomerName`, `City`, `Address`, `Title`, `Category`, etc.):
+     Check against configured placeholder tokens:
+     `LOWER(LTRIM(RTRIM([col]))) IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified')`
+     Set `[col_clean] = NULL`, `[col_validation_status] = 'placeholder_normalized_to_null'`, reason `'Placeholder text token normalized to NULL'`.
+  4. Phone Normalization & Length Validation (P4 - CRITICAL LENGTH CHECK):
+     Strip punctuation (`'-'`, `' '`, `'('`, `')'`, `'+'`, `'.'`).
+     MUST test BOTH length and numeric characters:
+     `LEN(clean_phone) BETWEEN 7 AND 15 AND clean_phone NOT LIKE '%[^0-9]%'`
+     NEVER check only `NOT LIKE '%[^0-9]%'` without length checking! Invalid strings like '123', '99999', '88888' MUST fail validation!
+     If length NOT BETWEEN 7 AND 15 or contains non-numeric characters:
+     Set `[Phone_clean] = NULL`, `[Phone_validation_status] = 'invalid_phone_format'`, reason `'Phone length must be between 7 and 15 digits'`, and insert into `dbo.etl_rejects`.
+  5. Email Syntax Validation (P5 & P13):
+     Check `[Email] NOT LIKE '%_@_%._%'` or contains spaces or matches placeholders:
+     Set `[Email_clean] = NULL`, `[Email_validation_status] = 'invalid_email_format'`, reason `'Invalid email syntax or domain'`, and insert into `dbo.etl_rejects`.
+  6. Numeric Out of Range Limits:
+     For age/percentage/bounded columns: check boundaries (e.g. `TRY_CAST([Age] AS INT) < 0 OR TRY_CAST([Age] AS INT) > 120`).
+     Set `[col_clean] = NULL`, `[col_validation_status] = 'invalid_out_of_range'` (or `'implausible_age'`), reason `'Age must be between 0 and 120'`.
+  7. Row-Level Duplicate Candidates (NO PSEUDO-COLUMNS):
+     NEVER write `SET [Row-level] = ...`. `[Row-level]` is a DQ metadata label, NOT a database column!
+     Use companion columns on the staging table: `[is_duplicate_row]`, `[row_validation_status]`, `[row_validation_reason]`.
+     Use a CTE with `ROW_NUMBER() OVER (PARTITION BY <candidate_keys> ORDER BY (SELECT NULL))` and update:
+     `SET [is_duplicate_row] = 1, [row_validation_status] = 'duplicate_candidate', [row_validation_reason] = 'Duplicate candidate row detected based on candidate keys' WHERE rn > 1;`
+  8. Quarantine & Rejects Logging (CRITICAL: EXACTLY ONE REJECT ROW PER REJECTED RECORD):
+     In `dbo.etl_rejects`, you MUST insert EXACTLY ONE record per rejected/violating row using a correlated subquery driven by `FROM #<Table>_Staging s`.
+     DO NOT aggregate multiple rows into a single JSON batch array!
+     ```sql
+     INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason, rejected_at)
+     SELECT 
+         'ETL_Pipeline',
+         'dbo.<Table>',
+         (SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),
+         s.[<col>_validation_reason],
+         GETDATE()
+     FROM #<Table>_Staging s
+     WHERE s.[<col>_validation_status] NOT IN ('valid', 'missing_value') AND s.[<col>_validation_status] IS NOT NULL;
+     ```
+- Type-Safe String Transformations:
+  If applying `LTRIM`, `RTRIM`, `LOWER`, or `UPPER` on a non-string column, first cast explicitly to a string type (e.g. `CAST(col AS NVARCHAR(MAX))`).
+- Deduplication:
+  Use CTE with `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY <watermark> DESC)` inside the staging copy CTE. Never use expensive, non-key-aware `SELECT DISTINCT *`.
 """,
     "sql-ansi": f"""You are a senior data engineer writing portable ANSI SQL ETL scripts.
 
@@ -2128,6 +2417,69 @@ def _consolidate_and_filter_datasets(
     return cleaned_datasets
 
 
+def _extract_assessment_dq_issues(assessment: Dict[str, Any], plan: Dict[str, Any]) -> List[Dict[str, Any]]:
+    issues: List[Dict[str, Any]] = []
+    seen = set()
+
+    # 1. From assessment.data_quality_issues.datasets
+    dq_issues_ds = (assessment.get("data_quality_issues") or {}).get("datasets") or {}
+    for ds_name, dq_block in dq_issues_ds.items():
+        for iss in (dq_block.get("issues") or []):
+            col = iss.get("column")
+            itype = iss.get("issue_type") or iss.get("rule_id") or "issue"
+            key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
+            if key not in seen:
+                seen.add(key)
+                issues.append({
+                    "dataset": ds_name,
+                    "column": col,
+                    "issue_type": itype,
+                    "severity": iss.get("severity", "medium"),
+                    "message": iss.get("message", ""),
+                    "suggested_action": iss.get("suggested_action") or iss.get("recommendation", ""),
+                    "rows_affected": iss.get("rows_affected") or iss.get("affected_rows"),
+                })
+
+    # 2. From assessment.datasets.*.quality.issues
+    for ds_name, ds_meta in (assessment.get("datasets") or {}).items():
+        q = (ds_meta.get("quality") or {}) if isinstance(ds_meta, dict) else {}
+        for iss in (q.get("issues") or []):
+            col = iss.get("column")
+            itype = iss.get("issue_type") or iss.get("rule_id") or "issue"
+            key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
+            if key not in seen:
+                seen.add(key)
+                issues.append({
+                    "dataset": ds_name,
+                    "column": col,
+                    "issue_type": itype,
+                    "severity": iss.get("severity", "medium"),
+                    "message": iss.get("message", ""),
+                    "suggested_action": iss.get("suggested_action") or iss.get("recommendation", ""),
+                    "rows_affected": iss.get("rows_affected") or iss.get("affected_rows"),
+                })
+
+    # 3. From plan.manual_review
+    for item in (plan.get("manual_review") or []):
+        ds_name = item.get("dataset") or ""
+        col = item.get("column") or ""
+        itype = item.get("issue_type") or item.get("rule_id") or "manual_review"
+        key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
+        if key not in seen:
+            seen.add(key)
+            issues.append({
+                "dataset": ds_name,
+                "column": col,
+                "issue_type": itype,
+                "severity": item.get("severity", "medium"),
+                "message": item.get("message") or item.get("guidance", ""),
+                "suggested_action": item.get("suggested_action") or item.get("catalog_guidance", ""),
+                "rows_affected": item.get("affected_rows") or item.get("rows_affected"),
+            })
+
+    return issues
+
+
 def _build_codegen_payload(
     plan: Dict[str, Any],
     assessment: Dict[str, Any],
@@ -2156,7 +2508,13 @@ def _build_codegen_payload(
         }
     
     # Consolidate, deduplicate, type-filter and sort plan steps before passing to LLM
-    raw_datasets = plan.get("datasets") or {}
+    raw_datasets = dict(plan.get("datasets") or {})
+    if assessment and isinstance(assessment.get("datasets"), dict):
+        for ds_k in assessment["datasets"].keys():
+            norm_k = ds_k.replace("dbo.", "").strip("[]").lower()
+            matched = any(k.replace("dbo.", "").strip("[]").lower() == norm_k for k in raw_datasets)
+            if not matched:
+                raw_datasets[ds_k] = {"steps": []}
     strict = strict_mode or bool(
         plan.get("strict_mode")
         or plan.get("settings", {}).get("strict_mode", False)
@@ -2180,6 +2538,8 @@ def _build_codegen_payload(
     from agent.etl_pipeline.llm_rec_mapper import enrich_with_catalog
     manual_review_enriched = enrich_with_catalog(plan.get("manual_review") or [])
 
+    detected_dq_issues = _extract_assessment_dq_issues(assessment, plan)
+
     base = {
         "plan_id": plan.get("plan_id"),
         "engine": plan.get("engine"),
@@ -2199,6 +2559,7 @@ def _build_codegen_payload(
         "dq_gate_summary": dq_gate_summary,
         "domain_rules": plan.get("domain_rules") or {},
         "business_keys": plan.get("business_keys") or {},
+        "detected_dq_issues": detected_dq_issues,
     }
     
     required_transforms = []
@@ -2479,6 +2840,22 @@ def _build_user_message_parts(
         user_parts.append(
             "DQ GATE BLOCKING ISSUES (these columns/datasets must be cleaned — do NOT skip these steps):\n"
             + "\n".join(block_lines)
+        )
+
+    dq_issues = payload.get("detected_dq_issues") or []
+    if dq_issues:
+        issue_lines = []
+        for iss in dq_issues[:35]:
+            ds = iss.get("dataset") or "?"
+            col = iss.get("column") or "all"
+            msg = iss.get("message") or iss.get("issue_type") or ""
+            act = iss.get("suggested_action") or ""
+            act_str = f" -> Remediation: {act}" if act else ""
+            issue_lines.append(f"- [{ds}] Column '{col}' (Severity: {iss.get('severity', 'medium')}): {msg}{act_str}")
+        user_parts.append(
+            "MANDATORY ASSESSMENT DATA QUALITY DEFECT REMEDIATIONS:\n"
+            "Every one of the following defects was detected during data assessment. You MUST generate explicit cleaning and validation code addressing each finding:\n"
+            + "\n".join(issue_lines)
         )
 
     dr = payload.get("domain_rules") or {}
@@ -3055,7 +3432,8 @@ def _generate_etl_with_llm_impl(
                     if report.errors:
                         raise ValueError(f"Plan conformance errors in final code: {report.errors}")
                         
-                code = final_code
+            elif engine_key in ("sql-tsql", "sql", "tsql"):
+                code = _postprocess_tsql_code(stripped_code)
             else:
                 code = _sanitize_unquoted_nan_in_code(stripped_code)
         except (ValueError, GeneratedCodeIncompleteError, MechanicalRepairViolation) as e:

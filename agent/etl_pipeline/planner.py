@@ -641,13 +641,16 @@ class PlanBuilder:
                     "auto_fixable": True,
                 })
 
-        # Merge LLM recommendations
+        # Merge LLM recommendations / findings
+        if not dq_recommendations:
+            dq_recommendations = assessment.get("dq_recommendations") or assessment.get("findings")
+
         if dq_recommendations:
             try:
                 from agent.etl_pipeline.llm_rec_mapper import map_llm_recommendation_to_action, compute_llm_confidence
                 recs_list = []
                 if isinstance(dq_recommendations, dict):
-                    recs_list = dq_recommendations.get("recommendations") or []
+                    recs_list = dq_recommendations.get("recommendations") or dq_recommendations.get("findings") or []
                 elif isinstance(dq_recommendations, list):
                     recs_list = dq_recommendations
 
@@ -659,15 +662,29 @@ class PlanBuilder:
                     k = (_norm(sug.get("dataset")), _norm(sug.get("column")), _norm(sug.get("issue_type")))
                     sug_map[k] = sug
 
+                safe_remediation_actions = {
+                    "range_clip", "replace_sentinel_values", "parse_dates",
+                    "parse_dates_safe", "normalize_phone", "sanitize_email",
+                    "flag_duplicate_candidates", "trim", "trim_preserve_case",
+                    "lowercase", "uppercase", "regex_replace"
+                }
+
                 for rec in recs_list:
                     if not isinstance(rec, dict):
                         continue
                     ds = rec.get("dataset")
                     col = rec.get("column")
-                    it = rec.get("issue_type")
+                    it = rec.get("issue_type") or rec.get("type")
 
                     mapped_action = map_llm_recommendation_to_action(rec)
                     confidence = compute_llm_confidence(rec)
+
+                    is_approved = bool(
+                        rec.get("approved")
+                        or rec.get("approval_status") == "approved"
+                        or str(rec.get("status", "")).lower() == "approved"
+                        or rec.get("selected_option_id")
+                    )
 
                     matched_sug = None
                     key = (_norm(ds), _norm(col), _norm(it))
@@ -690,28 +707,35 @@ class PlanBuilder:
                             if not matched_sug:
                                 matched_sug = candidates[0]
 
+                    action_is_safe = (mapped_action in safe_remediation_actions)
+                    should_auto_fix = is_approved or (action_is_safe and generation_mode in ("cleanse_only", "cleanse", "full"))
+
                     if matched_sug:
                         matched_sug["llm_recommendation"] = rec
                         matched_sug["llm_confidence"] = confidence
                         if mapped_action and mapped_action != "noop":
                             matched_sug["suggested_action"] = mapped_action
-                            matched_sug["auto_fixable"] = False
-                            matched_sug["authority_source"] = "LLM_ADVISORY"
+                            matched_sug["auto_fixable"] = should_auto_fix
+                            matched_sug["authority_source"] = "HUMAN_APPROVED" if is_approved else ("SYSTEM_REMEDIATION" if should_auto_fix else "LLM_ADVISORY")
+                            if is_approved:
+                                matched_sug["approval_status"] = "approved"
                     else:
                         new_sug = {
                             "dataset": ds,
                             "column": col,
                             "issue_type": it or "llm_inferred_issue",
                             "severity": rec.get("severity") or "medium",
-                            "message": rec.get("why_it_matters") or rec.get("suggested_fix") or "LLM Inferred Issue",
+                            "message": rec.get("why_it_matters") or rec.get("suggested_fix") or rec.get("message") or "Remediation finding",
                             "suggested_action": mapped_action or "noop",
                             "manual_guidance": rec.get("suggested_fix") or "",
-                            "row_count_affected": None,
-                            "auto_fixable": False,
-                            "authority_source": "LLM_ADVISORY",
+                            "row_count_affected": rec.get("row_count_affected") or rec.get("affected_rows") or rec.get("count"),
+                            "auto_fixable": should_auto_fix,
+                            "authority_source": "HUMAN_APPROVED" if is_approved else ("SYSTEM_REMEDIATION" if should_auto_fix else "LLM_ADVISORY"),
                             "llm_recommendation": rec,
                             "llm_confidence": confidence,
                         }
+                        if is_approved:
+                            new_sug["approval_status"] = "approved"
                         suggestions.append(new_sug)
                         new_key = (_norm(ds), _norm(col), _norm(it or "llm_inferred_issue"))
                         sug_map[new_key] = new_sug

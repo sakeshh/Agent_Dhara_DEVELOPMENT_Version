@@ -243,6 +243,31 @@ def _orchestrate_sql_execution_impl(
         if cached_res.get("ok"):
             return cached_res
 
+    # 3.4 Dry-Run Isolation Guard: Dry-run execution cannot target production
+    if dry_run:
+        target_env = os.getenv("DHARA_TARGET_ENVIRONMENT", "staging_isolated").lower()
+        if target_env == "production":
+            return {
+                "ok": False,
+                "stage": "environment_gate",
+                "failure_class": "blocked_production_mutation",
+                "run_id": rid,
+                "session_id": session_id,
+                "approved": approved,
+                "dry_run": dry_run,
+                "validation_errors": [
+                    "Security invariant violation: Dry-run execution is prohibited against production environments."
+                ],
+                "requires_approval": False,
+                "ops_found": [],
+                "execution": {},
+                "post_execution_summary": {
+                    "transaction_committed": False,
+                    "total_rows_affected": 0,
+                    "rollback_reason": "Prohibited dry-run target: production",
+                },
+                "timestamp_utc": now_str,
+            }
 
     # 1. Validate SQL with validate_sql_basic
     valid, hard_errors, advisory_warnings = validate_sql_basic(sql)
@@ -495,6 +520,19 @@ def _orchestrate_sql_execution_impl(
         "regen_patch_job_id": regen_patch_job_id,
     }
 
+    authorization_manifest = None
+    if dry_run:
+        authorization_manifest = {
+            "authorization_scope": "DRY_RUN_VALIDATED" if exec_res.get("ok") else "FAILED",
+            "environment": "staging_isolated",
+            "authorized_target_environment": "production",
+            "overall_promotion_eligible": bool(exec_res.get("ok")),
+            "production_execution_status": "not_authorized",
+            "requires_production_preflight": True,
+            "signature_status": "not_signed",
+            "remediation_units": {},
+        }
+
     final_res = {
         "ok": exec_res.get("ok", False),
         "stage": "execution",
@@ -507,6 +545,7 @@ def _orchestrate_sql_execution_impl(
         "ops_found": app_check["ops_found"],
         "execution": exec_res,
         "post_execution_summary": post_execution_summary,
+        "authorization_manifest": authorization_manifest,
         "timestamp_utc": now_str,
     }
 

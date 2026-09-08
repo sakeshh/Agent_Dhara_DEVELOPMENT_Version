@@ -120,27 +120,34 @@ class TestAuditFixes(unittest.TestCase):
     def test_claim_next_job_concurrency(self):
         import threading
         import time
-        from agent.jobs_store import create_job, claim_next_job
+        import tempfile
+        import agent.jobs_store as js
         
-        # Create a job to claim
-        job_id = create_job(kind="etl_execute", input={"session_id": "test_concurrency"})
-        
-        results = []
-        def worker():
-            job = claim_next_job(kinds=["etl_execute"])
-            if job:
-                results.append(job["job_id"])
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            old_path = js._RESOLVED_DB_PATH
+            try:
+                js._RESOLVED_DB_PATH = os.path.join(tmp_dir, "concurrency_jobs.sqlite3")
+                test_kind = "etl_execute"
+                job_id = js.create_job(kind=test_kind, input={"session_id": "test_concurrency"})
                 
-        # Start multiple threads trying to claim the same job
-        threads = [threading.Thread(target=worker) for _ in range(5)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-            
-        # Only one thread should have successfully claimed the job
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0], job_id)
+                results = []
+                def worker():
+                    job = js.claim_next_job(kinds=[test_kind])
+                    if job:
+                        results.append(job["job_id"])
+                        
+                # Start multiple threads trying to claim the same job
+                threads = [threading.Thread(target=worker) for _ in range(5)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+                    
+                # Only one thread should have successfully claimed the job
+                self.assertEqual(len(results), 1)
+                self.assertEqual(results[0], job_id)
+            finally:
+                js._RESOLVED_DB_PATH = old_path
 
     def test_save_session_payload_size_guard(self):
         from agent.session_store import save_session, load_session

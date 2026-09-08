@@ -207,23 +207,47 @@ def _apply_three_pass_overrides(
     pii_level = str(sem_desc.get("pii_level") or "").lower().strip()
     sem_confidence = float(sem_desc.get("confidence", 1.0))
 
-    if sem_type == "date" and action in ("cast_type", "noop", "review_manually"):
+    col_l = str(col).lower().strip()
+    is_currency_or_price = (sub_type == "currency") or any(k in col_l for k in ("price", "cost", "fee", "amount", "budget", "salary", "revenue", "sales", "fare", "balance"))
+    is_age = (col_l == "age") or "age" in it
+    is_date = (sem_type == "date") or any(k in col_l for k in ("date", "created", "timestamp", "time", "dob", "birth"))
+    is_phone = (sem_type == "phone") or "phone" in col_l or "phone" in it
+    is_email = (sem_type == "email") or "email" in col_l or "email" in it
+
+    if is_currency_or_price and (it in ("negative_values", "impossible_values") or action in ("flag_range_violation", "clip_or_flag", "clip_outliers", "review_manually", "noop")):
+        action = "range_clip"
+        params["lower_bound"] = 0.0
+        params["min_value"] = 0.0
+        note = "Semantic refinement: range_clip (lower_bound=0) for price/currency column"
+    elif is_age and (it in ("negative_values", "impossible_values", "outliers", "numeric_outliers") or action in ("flag_range_violation", "flag_outliers", "clip_or_flag", "review_manually", "noop")):
+        action = "range_clip"
+        params["lower_bound"] = 0
+        params["upper_bound"] = 120
+        params["min_value"] = 0
+        params["max_value"] = 120
+        note = "Semantic refinement: range_clip (0-120) for age column"
+    elif is_date and (it in ("invalid_date_format", "dummy_dates", "future_dates", "date_range_violation", "impossible_date", "sentinel_date") or action in ("cast_type", "parse_dates_safe", "nullify_future_dates", "nullify_dummy_dates", "noop", "review_manually")):
         action = "parse_dates"
-        note = "Semantic refinement: parse_dates for date semantic_type"
-    elif sem_type == "email" and action in ("trim", "lowercase", "noop", "review_manually"):
+        params["filter_impossible"] = True
+        params["sentinel_values"] = ["9999-12-31", "1900-01-01", "0001-01-01", "N/A", "NA", "???", "NULL"]
+        note = "Semantic refinement: parse_dates with sentinel/impossible date handling for date column"
+    elif is_email and action in ("trim", "lowercase", "noop", "review_manually", "flag_domain_violation"):
         action = "sanitize_email"
+        params["regex"] = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
         note = "Semantic refinement: sanitize_email for email semantic_type"
-    elif sem_type == "phone" and action in ("trim", "noop", "review_manually"):
+    elif is_phone and action in ("trim", "noop", "review_manually", "flag_domain_violation"):
         if pii_level in ("high", "medium"):
             action = "hash_phone"
             note = "Semantic refinement: hash_phone for high/medium PII phone number"
         else:
             action = "normalize_phone"
+            params["min_digits"] = 7
+            params["max_digits"] = 15
             note = "Semantic refinement: normalize_phone for phone semantic_type"
-    elif sub_type == "currency" and action in ("clip_or_flag", "clip_outliers", "review_manually"):
-        action = "range_clip"
-        params["lower_bound"] = 0.0
-        note = "Semantic refinement: range_clip (lower_bound=0) for currency sub_type"
+    elif (it in ("placeholder_detected", "sentinel_value", "sentinel_string") or (action in ("nullify_punctuation", "review_manually", "noop") and col_l in ("customername", "city", "name", "address", "state", "country", "title", "description"))) and not _is_business_key(col):
+        action = "replace_sentinel_values"
+        params["sentinel_values"] = ["???", "n/a", "na", "null", "none", "unknown", "dummy", "temp", "test", "###", "-", "unspecified"]
+        note = "Semantic refinement: replace_sentinel_values for text placeholders"
     elif sub_type == "boolean_int" and action in ("coerce_numeric", "review_manually"):
         action = "standardize_boolean"
         note = "Semantic refinement: standardize_boolean for boolean_int sub_type"
@@ -274,11 +298,64 @@ def _apply_three_pass_overrides(
 
     # Check LLM confidence if inferred suggestion
     from agent.etl_pipeline.rule_provenance import RuleProvenance
+    is_approved = bool(
+        sug.get("approved")
+        or sug.get("approval_status") == "approved"
+        or str(sug.get("status", "")).lower() == "approved"
+        or sug.get("authority_source") == "HUMAN_APPROVED"
+    )
     is_llm_inferred = sug.get("llm_recommendation") is not None and sug.get("provenance") != RuleProvenance.AUTO_DETECTED
-    if is_llm_inferred:
-        # LLM suggestions are always advisory and require review (Patch 5)
+
+    safe_remediation_actions = {
+        "range_clip", "replace_sentinel_values", "parse_dates",
+        "parse_dates_safe", "normalize_phone", "sanitize_email",
+        "flag_duplicate_candidates", "trim", "trim_preserve_case",
+        "lowercase", "uppercase", "regex_replace"
+    }
+
+    if is_approved:
+        auto_fixable = True
+        sug["authority_source"] = "HUMAN_APPROVED"
+        sug["approval_status"] = "approved"
+    elif is_llm_inferred and not (sug.get("auto_fixable") and action in safe_remediation_actions):
+        # LLM suggestions are advisory unless explicitly approved or safe field remediation
         auto_fixable = False
         sug["authority_source"] = "LLM_ADVISORY"
+
+    # ── PR 4 Objective Safety & Complete Authorization Gates ──────────────────
+    from agent.etl_pipeline.remediation_router import route_finding
+    routing = route_finding(sug, dataset=sug.get("dataset"))
+    sug["routing_result"] = routing
+    sug["lifecycle"] = routing.lifecycle
+    sug["reason_codes"] = routing.reason_codes
+    sug["recommendation_category"] = routing.recommendation_category
+
+    cap = routing.capability
+    # Complete Authorization Formula:
+    # 1. Capability auto-fix eligible
+    # 2. Risk level is strictly low
+    # 3. Remediation certainty is strictly high
+    # 4. Action is supported in capability registry
+    # 5. Non-destructive (row_destructive is False)
+    # 6. Generator is available
+    # 7. Impact within action-specific limits (both % and row count)
+    # 8. No key/relationship impact or business rule conflict
+    generator_available = bool(cap.generator_ids and any(g for g in cap.generator_ids.values() if g != "noop"))
+    action_supported = action in cap.supported_actions or (action in ("trim_preserve_case", "trim") and "trim" in cap.supported_actions)
+    is_key_col = _is_business_key(col) or _is_name_field(col)
+
+    if not is_approved:
+        if (
+            not routing.auto_fix_eligible
+            or cap.risk_level != "low"
+            or cap.remediation_certainty != "high"
+            or cap.row_destructive
+            or not generator_available
+            or not action_supported
+            or (is_key_col and action in ("drop_column", "exclude_column", "fill_or_drop", "review_manually"))
+        ):
+            if not (sug.get("auto_fixable") and action in safe_remediation_actions):
+                auto_fixable = False
 
     # Populate required action params with safe Phase 1 defaults
     if action == "cast_type":
@@ -289,6 +366,14 @@ def _apply_three_pass_overrides(
         params.setdefault("preserve_raw", True)
     elif action in ("parse_dates", "parse_dates_safe"):
         params.setdefault("accepted_formats", ["yyyy-MM-dd", "yyyy/MM/dd", "MM/dd/yyyy", "dd-MM-yyyy"])
+        params.setdefault("preserve_raw", True)
+    elif action in ("range_clip", "clip_outliers"):
+        params.setdefault("min_value", 0.0)
+        params.setdefault("lower_bound", 0.0)
+        params.setdefault("preserve_raw", True)
+    elif action == "replace_sentinel_values":
+        params.setdefault("sentinel_values", [-999.0, -9999.0, 999.0, 9999.0, 99999.0, 999999.0, "N/A", "NA", "NULL", "UNKNOWN", "UNSPECIFIED", "??", "---"])
+        params.setdefault("preserve_raw", True)
 
     return action, auto_fixable, note, params
 
@@ -333,6 +418,17 @@ def compile_issues_to_steps(
                 "note": f"{sug.get('message') or note} ({note})",
                 "source": "issue_to_step_compiler",
                 "auto_fixable": True,
+                "capability_auto_fix_eligible": True,
+                "planning_gate_passed": True,
+                "runtime_auto_fix_authorized": False,  # Dry-run validation required before runtime execution (PR 6)
+                "validation_status": "not_started",
+                "lifecycle": {
+                    "recommendation_status": "standard_available",
+                    "approval_status": "not_required",
+                    "codegen_status": "generated",
+                    "validation_status": "not_started",
+                    "execution_status": "not_started",
+                },
                 "source_issue_type": it,
                 "severity": sug.get("severity") or "medium",
                 "estimated_affected_rows": sug.get("row_count_affected"),
@@ -373,6 +469,19 @@ def compile_issues_to_steps(
                 "guidance": sug.get("manual_guidance") or f"Configure action for {col}",
                 "suggested_action": action,
                 "auto_fixable": False,
+                "capability_auto_fix_eligible": bool(sug.get("routing_result") and sug["routing_result"].auto_fix_eligible),
+                "planning_gate_passed": False,
+                "runtime_auto_fix_authorized": False,
+                "validation_status": "not_started",
+                "lifecycle": sug.get("lifecycle") or {
+                    "recommendation_status": "ai_options_available",
+                    "approval_status": "pending",
+                    "codegen_status": "not_started",
+                    "validation_status": "not_started",
+                    "execution_status": "not_started",
+                },
+                "reason_codes": sug.get("reason_codes", []),
+                "recommendation_category": sug.get("recommendation_category", "decision_required"),
             }
             if "llm_recommendation" in sug:
                 mr_item["llm_recommendation"] = sug["llm_recommendation"]
@@ -385,12 +494,14 @@ def compile_issues_to_steps(
                 llm_recommendation=mr_item.get("llm_recommendation")
             ))
             
-    # Deduplicate steps by (action, column) to avoid redundant operations
+    # Deduplicate and sort steps by priority to avoid redundant operations and ensure correct execution order
+    from agent.etl_pipeline.planner import _ACTION_PRIORITY
     deduplicated_datasets_steps = {}
     for ds, steps in datasets_steps.items():
+        sorted_steps = sorted(steps, key=lambda s: (_ACTION_PRIORITY.get(str(s.get("action") or ""), 80), str(s.get("column") or "")))
         seen = set()
         deduped = []
-        for step in steps:
+        for step in sorted_steps:
             key = (step.get("action"), step.get("column"))
             if key not in seen:
                 seen.add(key)

@@ -684,6 +684,11 @@ def recompute_readiness_scorecard(
         readiness_scorecard[ds_name] = {
             "score": score,
             "score_type": "PROJECTED_POST_PHASE1",
+            "projection_status": "estimated_pending_validation",
+            "projected_score": score,
+            "observed_post_etl_score": None,
+            "validation_status": "not_started",
+            "runtime_auto_fix_authorized": False,
             "methodology_version": "dq-score-v1",
             "plan_hash": plan_hash,
             "computed_at": datetime.datetime.now().isoformat(),
@@ -718,6 +723,11 @@ def recompute_readiness_scorecard(
     readiness_scorecard["Overall"] = {
         "score": overall_score,
         "score_type": "PROJECTED_POST_PHASE1",
+        "projection_status": "estimated_pending_validation",
+        "projected_score": overall_score,
+        "observed_post_etl_score": None,
+        "validation_status": "not_started",
+        "runtime_auto_fix_authorized": False,
         "methodology_version": "dq-score-v1",
         "plan_hash": plan_hash,
         "computed_at": datetime.datetime.now().isoformat(),

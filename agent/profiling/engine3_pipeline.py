@@ -67,6 +67,10 @@ _ISSUE_TYPE_TO_DIMENSION: Dict[str, str] = {
     "negative_values_review_required": "validity",
     "cross_field_non_negative":        "validity",
     "punctuation_only_value":          "validity",
+    "numeric_parse_failure":           "validity",
+    "sentinel_date":                   "validity",
+    "declared_non_negative_rule_violation": "validity",
+    "execution_error":                 "validity",
     # Accuracy (real-world correctness, plausibility, anomaly detection)
     "implausible_age":                 "accuracy",
     "implausible_percentage":          "accuracy",
@@ -85,6 +89,7 @@ _ISSUE_TYPE_TO_DIMENSION: Dict[str, str] = {
     "custom_one_of":                   "conformity",
     "string_with_only_digits_in_text_column": "conformity",
     "dtype_drift":                     "conformity",
+    "integer_stored_as_float":         "conformity",
     # Consistency
     "formula_rule_violation":          "consistency",
     "custom_rule_violation":           "consistency",
@@ -279,9 +284,9 @@ def build_rule_results_from_issues(
         except Exception as e:
             logger.warning("[DQ3-GX] GX result translation failed: %s", e)
 
-    # Baseline PASS rules for clean dimensions to ensure fair coverage and 100% scores on clean datasets
-    # Guardrail: only record baseline PASS when dataset has rows and check executed cleanly
-    if n_rows > 0:
+    # Guardrail: only record baseline PASS when dataset has rows and validation executed without unhandled errors
+    has_exec_error = any((i.get("type") or "") == "execution_error" for i in quality_issues)
+    if n_rows > 0 and not has_exec_error:
         eval_units = n_rows
         existing_dims = {r.dimension.lower() for r in rule_results if r.status in (RuleStatus.PASS, RuleStatus.FAIL)}
 
@@ -511,6 +516,7 @@ def run_engine3_pipeline(
             custom_weights=custom_weights,
         )
         dq_score = quality_score_obj.quality_score
+        gating_adjusted_score = quality_score_obj.gating_adjusted_score
         readiness = quality_score_obj.readiness
         gating_blockers = quality_score_obj.gating_blockers
         score_coverage = quality_score_obj.score_coverage
@@ -525,16 +531,20 @@ def run_engine3_pipeline(
                 "evaluated_rules_count": bd.evaluated_rules_count,
                 "passed_rules_count": bd.passed_rules_count,
                 "failed_rules_count": bd.failed_rules_count,
+                "total_eligible_units": bd.total_eligible_units,
+                "passed_units": bd.passed_units,
+                "failed_units": bd.failed_units,
             }
             for dim_name, bd in quality_score_obj.dimension_scores.items()
         }
         assessment_confidence = quality_score_obj.assessment_confidence
 
-        logger.info("[DQ3-Score] DimensionScorer: score=%s coverage=%.2f readiness=%s confidence=%.1f",
-                    str(dq_score), score_coverage, readiness, assessment_confidence)
+        logger.info("[DQ3-Score] DimensionScorer: score=%s gating_adj=%s coverage=%.2f readiness=%s confidence=%.1f",
+                    str(dq_score), str(gating_adjusted_score), score_coverage, readiness, assessment_confidence)
     else:
         # Fallback: use legacy score from the raw issues
         dq_score = None
+        gating_adjusted_score = None
         score_coverage = 0.0
         readiness = "UNKNOWN"
         gating_blockers = []
@@ -570,6 +580,9 @@ def run_engine3_pipeline(
 
         # Engine 3.0 scoring
         "dq_score_v3":           dq_score,
+        "dq_score_0_100":        dq_score,
+        "dq_score":              dq_score,
+        "gating_adjusted_score": gating_adjusted_score,
         "score_coverage":        score_coverage,
         "readiness":             readiness,
         "gating_blockers":       gating_blockers,

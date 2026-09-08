@@ -7,6 +7,7 @@ ISSUE_TYPE_ALIASES: Dict[str, str] = {
     "orphan_foreign_keys": "orphan_foreign_key_rows",
     "referential_integrity_violation": "orphan_foreign_key_rows",
     # Null variants
+    "missing_values": "nulls",
     "null_values": "nulls",
     "high_null_percentage": "suspected_key_high_null_ratio",
     "high_null_ratio": "suspected_key_high_null_ratio",
@@ -25,6 +26,9 @@ ISSUE_TYPE_ALIASES: Dict[str, str] = {
     # Declared key variants
     "declared_key_null": "declared_key_null_violation",
     "key_null_violation": "declared_key_null_violation",
+    # Proactive hygiene variants
+    "proactive_trim": "whitespace",
+    "proactive_lowercase": "case_inconsistency",
 }
 
 ISSUE_REGISTRY: Dict[str, Dict[str, str]] = {
@@ -160,6 +164,26 @@ ISSUE_REGISTRY: Dict[str, Dict[str, str]] = {
         "canonical_type": "column_name_whitespace",
         "policy_group": "POLICY_WHITESPACE_NORMALIZATION",
         "phase1_action": "trim_preserve_case",
+    },
+    "integer_stored_as_float": {
+        "canonical_type": "integer_stored_as_float",
+        "policy_group": "POLICY_NUMERIC_PRECISION",
+        "phase1_action": "cast_type",
+    },
+    "impossible_date": {
+        "canonical_type": "impossible_date",
+        "policy_group": "POLICY_DATE_PARSING",
+        "phase1_action": "nullify_date",
+    },
+    "sentinel_date": {
+        "canonical_type": "sentinel_date",
+        "policy_group": "POLICY_DATE_PARSING",
+        "phase1_action": "map_to_null",
+    },
+    "metadata_manifest_mismatch": {
+        "canonical_type": "metadata_manifest_mismatch",
+        "policy_group": "POLICY_METADATA_MISMATCH",
+        "phase1_action": "update_manifest",
     },
 }
 

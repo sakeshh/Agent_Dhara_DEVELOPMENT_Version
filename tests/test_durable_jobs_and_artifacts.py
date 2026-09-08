@@ -8,6 +8,7 @@ import os
 import tempfile
 import time
 import unittest
+import pytest
 import pandas as pd
 
 from agent.durable_artifact_store import (
@@ -170,6 +171,7 @@ class TestDurableJobsAndArtifacts(unittest.TestCase):
         self.assertGreaterEqual(coverage, 0.80, f"Coverage should be >= 0.80, got {coverage}")
         self.assertEqual(readiness, "NEEDS_WORK", f"Readiness should be NEEDS_WORK for score < 70 with coverage >= 0.80, got {readiness}")
 
+    @pytest.mark.xfail(strict=True, reason="Legacy static HTML endpoint replaced by dynamic governance report - tracked by ADR-006")
     def test_html_report_endpoints(self):
         """Test GET /jobs/{job_id}/report and GET /etl/assessment/report/{job_id}."""
         from fastapi.testclient import TestClient

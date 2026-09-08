@@ -359,7 +359,7 @@ def claim_next_job(*, kinds: Optional[List[str]] = None, max_retries: int = 10) 
                 return None
             job_id = row[0]
             conn.execute("UPDATE jobs SET status='running', updated_at=? WHERE job_id=?", (time.time(), job_id))
-            conn.commit()
+            conn.execute("COMMIT")
             add_event(job_id=job_id, level="info", message="running")
             return fetch_job(job_id)
         except sqlite3.OperationalError:

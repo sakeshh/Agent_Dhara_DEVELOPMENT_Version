@@ -401,7 +401,7 @@ def _emit_spark(
             res.append(f"{df} = {df}.withColumn({neg_flag}, (F.col({repr(clean_col)}).isNotNull() & (F.col({repr(clean_col)}) < 0)).cast('boolean'))")
         return res
 
-    if act == "parse_dates":
+    if act in ("parse_dates", "nullify_date", "nullify_dummy_dates"):
         # Portable date parsing (native PySpark -- no SQL expression or try_cast dependency)
         col_safe = _safe(col or "date")
         flag_col = repr(f"is_invalid_{col_safe}")

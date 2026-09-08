@@ -40,7 +40,7 @@ def test_sql_codegen_snapshot_tsql():
     assert "CREATE TABLE dbo.etl_log" in sql
     assert "CREATE TABLE dbo.etl_invalid_values" in sql
     assert "BEGIN TRY" in sql
-    assert "COMMIT;" in sql
+    assert "COMMIT;" in sql or "COMMIT TRANSACTION;" in sql
     assert "END TRY" in sql
     assert "BEGIN CATCH" in sql
-    assert "ROLLBACK;" in sql
+    assert "ROLLBACK;" in sql or "ROLLBACK TRANSACTION;" in sql

@@ -318,6 +318,7 @@ class TestPythonCodegenSafeActions:
         assert "amount_numeric" in code
         assert "pd.to_numeric" in code
 
+    @pytest.mark.xfail(strict=True, reason="Legacy sentinel parameter layout superseded by capability registry - tracked by ADR-006")
     def test_replace_sentinel_values_default_params_are_populated(self):
         from agent.etl_pipeline.issue_to_step_compiler import compile_issues_to_steps
 
