@@ -2124,15 +2124,22 @@ def _get_llm_client():
     cfg = load_llm_config(purpose="etl_codegen")
     if not cfg:
         return None, None
+    timeout_val = float(os.getenv("LLM_REQUEST_TIMEOUT", "180"))
     if cfg.provider == "azure_openai" and AzureOpenAI and cfg.endpoint:
         client = AzureOpenAI(
             azure_endpoint=cfg.endpoint,
             api_key=cfg.api_key,
             api_version=cfg.api_version or "2024-02-01",
+            max_retries=1,
+            timeout=timeout_val,
         )
         return client, cfg.model
     if cfg.provider == "openai" and OpenAI:
-        return OpenAI(api_key=cfg.api_key), cfg.model
+        return OpenAI(
+            api_key=cfg.api_key,
+            max_retries=1,
+            timeout=timeout_val,
+        ), cfg.model
     return None, None
 
 
@@ -2787,6 +2794,95 @@ def _build_dynamic_sql_prompt(payload: dict, base_prompt: str) -> str:
     return "\n".join(result)
 
 
+def _slim_payload_for_prompt(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Produce a compact, non-redundant version of payload specifically for LLM prompt serialization.
+    Strips internal execution/audit structures, repetitive metadata, and redundant catalog options
+    so the prompt fits efficiently in LLM context without latency blowups or timeouts.
+    """
+    slim: Dict[str, Any] = {}
+    
+    # Core scalar / configuration fields
+    for k in (
+        "plan_id", "engine", "output_mode", "output_path", "business_rules",
+        "domain_rules", "business_keys", "relationships", "source_context",
+        "connector_manifest", "generation_mode", "policy", "required_transform_functions"
+    ):
+        if k in payload:
+            slim[k] = payload[k]
+
+    # Slim source_metadata: columns, dtypes, semantic_type only
+    sm = payload.get("source_metadata") or {}
+    slim_sm = {}
+    for ds_name, smeta in sm.items():
+        if not isinstance(smeta, dict):
+            continue
+        cols = {}
+        for cname, cmeta in (smeta.get("columns") or {}).items():
+            if isinstance(cmeta, dict):
+                cols[cname] = {
+                    "dtype": cmeta.get("dtype") or cmeta.get("inferred_type"),
+                    "semantic_type": cmeta.get("semantic_type"),
+                }
+            else:
+                cols[cname] = cmeta
+        slim_sm[ds_name] = {
+            "row_count": smeta.get("row_count"),
+            "columns": cols,
+        }
+    if slim_sm:
+        slim["source_metadata"] = slim_sm
+
+    # Slim datasets: keep step action, column, params, step_id, source_issue_ids
+    # Strip bulky evidence.col_stats, histograms, lifecycle
+    ds = payload.get("datasets") or {}
+    slim_ds = {}
+    for ds_name, block in ds.items():
+        if not isinstance(block, dict):
+            continue
+        steps = []
+        for s in (block.get("steps") or []):
+            if not isinstance(s, dict):
+                continue
+            step_dict = {
+                "step_id": s.get("step_id"),
+                "order": s.get("order"),
+                "column": s.get("column"),
+                "action": s.get("action"),
+                "params": s.get("params") or {},
+                "source_issue_types": s.get("source_issue_types") or ([s["source_issue_type"]] if s.get("source_issue_type") else []),
+                "source_issue_ids": s.get("source_issue_ids") or [],
+                "severity": s.get("severity", "medium"),
+            }
+            if s.get("note"):
+                step_dict["note"] = s["note"]
+            steps.append(step_dict)
+        slim_ds[ds_name] = {"steps": steps}
+    slim["datasets"] = slim_ds
+
+    # Slim manual_review: omit catalog resolution_options, events, reason_codes
+    mr = payload.get("manual_review") or []
+    slim_mr = []
+    for item in mr:
+        if not isinstance(item, dict):
+            continue
+        slim_mr.append({
+            "dataset": item.get("dataset"),
+            "column": item.get("column"),
+            "issue_type": item.get("issue_type"),
+            "severity": item.get("severity", "medium"),
+            "action": item.get("suggested_action") or item.get("selected_resolution") or item.get("action"),
+        })
+    if slim_mr:
+        slim["manual_review"] = slim_mr
+
+    # Notice: detected_dq_issues and issue_coverage_manifest are NOT serialized in json.dumps(payload)
+    # because detected_dq_issues is already formatted in the prompt's dedicated defect section,
+    # and issue_coverage_manifest is retained on the outer payload for post-codegen coverage validation.
+
+    return slim
+
+
 def _build_user_message_parts(
     engine_key: str,
     payload: Dict[str, Any],
@@ -2794,10 +2890,11 @@ def _build_user_message_parts(
     previous_output: Optional[str] = None,
 ) -> List[str]:
     br = payload.get("business_rules") or {}
+    prompt_payload = _slim_payload_for_prompt(payload)
     user_parts = [
         f"Target engine: {engine_key}",
         f"ETL policy (must follow):\n{payload.get('policy') or ''}",
-        f"Generate complete ETL for this approved plan:\n{json.dumps(payload, separators=(',', ':'), default=str)}",
+        f"Generate complete ETL for this approved plan:\n{json.dumps(prompt_payload, separators=(',', ':'), default=str)}",
     ]
     
     if payload.get("required_transform_functions"):
@@ -3080,7 +3177,7 @@ def _call_llm(
                 ],
                 temperature=0,
                 max_tokens=max_tokens,
-                timeout=LLM_REQUEST_TIMEOUT or 120,
+                timeout=float(os.getenv("LLM_REQUEST_TIMEOUT", "180")),
             )
             break
         except (RateLimitError, APITimeoutError) as e:
