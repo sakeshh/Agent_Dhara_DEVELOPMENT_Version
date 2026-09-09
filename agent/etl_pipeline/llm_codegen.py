@@ -1215,6 +1215,47 @@ def _postprocess_tsql_code(code: str) -> str:
         code,
         flags=re.IGNORECASE
     )
+    # 9. T-SQL Syntax and Reserved Keyword Sanitization (Prevents Msg 156 near keyword 'OR'):
+    # 9a. Sanitize 'CREATE OR REPLACE' -> invalid in T-SQL
+    code = re.sub(r"\bCREATE\s+OR\s+REPLACE\s+TABLE\b", "CREATE TABLE", code, flags=re.IGNORECASE)
+    code = re.sub(r"\bCREATE\s+OR\s+REPLACE\s+PROCEDURE\b", "CREATE OR ALTER PROCEDURE", code, flags=re.IGNORECASE)
+    code = re.sub(r"\bCREATE\s+OR\s+REPLACE\s+PROC\b", "CREATE OR ALTER PROCEDURE", code, flags=re.IGNORECASE)
+    code = re.sub(r"\bCREATE\s+OR\s+REPLACE\s+VIEW\b", "CREATE OR ALTER VIEW", code, flags=re.IGNORECASE)
+    code = re.sub(r"\bCREATE\s+OR\s+REPLACE\s+FUNCTION\b", "CREATE OR ALTER FUNCTION", code, flags=re.IGNORECASE)
+    code = re.sub(r"\bCREATE\s+OR\s+REPLACE\s+TRIGGER\b", "CREATE OR ALTER TRIGGER", code, flags=re.IGNORECASE)
+
+    # 9b. Sanitize 'CREATE OR ALTER TABLE' -> invalid in T-SQL (tables do not support CREATE OR ALTER)
+    code = re.sub(r"\bCREATE\s+OR\s+ALTER\s+TABLE\b", "CREATE TABLE", code, flags=re.IGNORECASE)
+
+    # 9c. Sanitize filtered indexes with 'OR' in WHERE clause -> causes Msg 156 'Incorrect syntax near keyword OR'
+    def _fix_filtered_idx(m):
+        full_match = m.group(0)
+        if re.search(r"\bWHERE\b[\s\S]*\bOR\b", full_match, re.IGNORECASE):
+            return re.sub(r"\s+WHERE\s+[\s\S]*?;?$", ";", full_match, flags=re.IGNORECASE)
+        return full_match
+
+    code = re.sub(
+        r"(?:IF\s+NOT\s+EXISTS\s*\([^;]+\)\s*)?CREATE\s+(?:UNIQUE\s+)?(?:NONCLUSTERED\s+|CLUSTERED\s+)?INDEX\s+[^\n;]+?\s+ON\s+[^\n;]+?\s+WHERE\s+[^\n;]+;",
+        _fix_filtered_idx,
+        code,
+        flags=re.IGNORECASE
+    )
+
+    # 9d. Sanitize raw boolean assignments without CASE:
+    # e.g., [is_valid] = [col] > 0 OR [col] < 10
+    def _fix_boolean_assignment(m):
+        prefix = m.group(1)
+        expr = m.group(2).strip()
+        if "CASE" not in expr.upper() and re.search(r"\bOR\b", expr, re.IGNORECASE):
+            return f"{prefix}CASE WHEN {expr} THEN 1 ELSE 0 END"
+        return m.group(0)
+
+    code = re.sub(
+        r"(\[\w+\]\s*=\s*)([^,;\n]+?(?:>|<|=|<>|!=|\bLIKE\b|\bIS NULL\b|\bIS NOT NULL\b)[^,;\n]+?\bOR\b[^,;\n]+?)(?=[,;\n])",
+        _fix_boolean_assignment,
+        code,
+        flags=re.IGNORECASE
+    )
 
     return code
 
@@ -1914,7 +1955,7 @@ T-SQL REQUIREMENTS:
     ```
     Never execute a bare `ROLLBACK TRANSACTION;` without verifying an active transaction exists (prevents `Msg 3903: The ROLLBACK TRANSACTION request has no corresponding BEGIN TRANSACTION`).
     Update `dbo.etl_log` to `'FAILED'` with `end_time = GETDATE()`, and ALWAYS execute `THROW;` to propagate errors.
-- FORBIDDEN Syntax: NEVER output `CREATE TABLE IF NOT EXISTS`, `CREATE OR REPLACE`, `ON CONFLICT`, `RETURNING`, `ILIKE`, `SERIAL`, or `AUTO_INCREMENT`. Use T-SQL equivalents at all times.
+- FORBIDDEN Syntax: NEVER output `CREATE TABLE IF NOT EXISTS`, `CREATE OR REPLACE`, `CREATE OR ALTER TABLE`, `ON CONFLICT`, `RETURNING`, `ILIKE`, `SERIAL`, or `AUTO_INCREMENT`. Never use `OR` inside filtered index `WHERE` clauses (T-SQL filtered indexes forbid `OR`). Never assign raw boolean expressions (e.g. `SET col = a > 0 OR b > 0`), use `CASE WHEN a > 0 OR b > 0 THEN 1 ELSE 0 END`. Use T-SQL equivalents at all times.
 - Raw -> Staging -> Transform -> Clean Architecture:
   1. Staging Schema: NEVER use `SELECT * INTO #Staging WHERE 1=0` followed by `INSERT INTO #Staging SELECT *, companion_columns...` (fails with Msg 213).
   2. Staging Companion Columns Completeness (CRITICAL):

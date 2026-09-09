@@ -663,4 +663,93 @@ END CATCH;
     assert ok, f"Postprocessed script must pass validate_tsql: {errors}"
 
 
+def test_postprocess_and_validator_catch_syntax_near_or():
+    from agent.etl_pipeline.validate_sql import validate_sql_basic
+
+    # 1. CREATE OR REPLACE and CREATE OR ALTER TABLE
+    bad_code = """
+CREATE OR REPLACE TABLE dbo.Customers_Clean (id INT);
+CREATE OR ALTER TABLE dbo.Courses_Clean (id INT);
+CREATE NONCLUSTERED INDEX ix_test ON dbo.Customers_Clean (id) WHERE id > 10 OR id < 5;
+BEGIN TRY
+    UPDATE #Customers_Staging SET [is_valid] = [colA] > 0 OR [colB] > 0;
+END TRY
+BEGIN CATCH
+    ROLLBACK TRANSACTION;
+END CATCH;
+"""
+    # Validator should reject bad code
+    v_ok, v_errs, _ = validate_tsql(bad_code)
+    assert not v_ok
+    assert any("CREATE OR REPLACE" in e for e in v_errs)
+    assert any("CREATE OR ALTER TABLE" in e for e in v_errs)
+    assert any("Filtered indexes cannot use OR" in e for e in v_errs)
+
+    # validate_sql_basic should also reject bad code
+    s_ok, s_errs, _ = validate_sql_basic(bad_code)
+    assert not s_ok
+    assert any("CREATE OR REPLACE" in e for e in s_errs)
+    assert any("CREATE OR ALTER TABLE" in e for e in s_errs)
+    assert any("Filtered indexes cannot use OR" in e for e in s_errs)
+
+    # 2. _postprocess_tsql_code should sanitize all of them
+    sanitized = _postprocess_tsql_code(bad_code)
+    assert "CREATE OR REPLACE TABLE" not in sanitized
+    assert "CREATE OR ALTER TABLE" not in sanitized
+    assert "WHERE id > 10 OR id < 5" not in sanitized
+    assert "CASE WHEN [colA] > 0 OR [colB] > 0 THEN 1 ELSE 0 END" in sanitized
+
+
+def test_ensure_idempotent_sql_sanitizes_syntax_near_or():
+    from agent.etl_pipeline.execution_orchestrator import ensure_idempotent_sql
+
+    raw_sql = """
+CREATE OR REPLACE TABLE dbo.TestTbl (id INT);
+CREATE OR REPLACE PROCEDURE dbo.sp_test AS BEGIN SELECT 1; END;
+CREATE OR ALTER TABLE dbo.AnotherTbl (id INT);
+CREATE NONCLUSTERED INDEX ix_bad ON dbo.TestTbl (id) WHERE id = 1 OR id = 2;
+"""
+    cleaned = ensure_idempotent_sql(raw_sql)
+    assert "CREATE OR REPLACE TABLE" not in cleaned
+    assert "CREATE TABLE dbo.TestTbl" in cleaned
+    assert "CREATE OR ALTER PROCEDURE dbo.sp_test" in cleaned
+    assert "CREATE OR ALTER TABLE" not in cleaned
+    assert "CREATE TABLE dbo.AnotherTbl" in cleaned
+    assert "WHERE id = 1 OR id = 2" not in cleaned
+
+
+def test_azure_sql_executor_remediates_syntax_near_or():
+    from agent.azure_sql_executor import _remediate_batch_syntax_error
+
+    err_msg = "('42000', \"[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Incorrect syntax near the keyword 'OR'. (156) (SQLExecDirectW)\")"
+
+    # Case 1: CREATE OR ALTER PROCEDURE (on compatibility level < 130)
+    batch_proc = "CREATE OR ALTER PROCEDURE dbo.etl_clean_Customers AS BEGIN SELECT 1; END;"
+    rem = _remediate_batch_syntax_error(batch_proc, err_msg)
+    assert len(rem) == 2
+    assert "IF OBJECT_ID('dbo.etl_clean_Customers', 'P') IS NOT NULL DROP PROCEDURE [dbo].[etl_clean_Customers];" in rem[0]
+    assert rem[1] == "CREATE PROCEDURE dbo.etl_clean_Customers AS BEGIN SELECT 1; END;"
+
+    # Case 2: CREATE OR REPLACE VIEW
+    batch_view = "CREATE OR REPLACE VIEW dbo.vw_Test AS SELECT 1 AS id;"
+    rem = _remediate_batch_syntax_error(batch_view, err_msg)
+    assert len(rem) == 2
+    assert "DROP VIEW [dbo].[vw_Test];" in rem[0]
+    assert rem[1] == "CREATE VIEW dbo.vw_Test AS SELECT 1 AS id;"
+
+    # Case 3: CREATE OR ALTER TABLE
+    batch_tbl = "CREATE OR ALTER TABLE dbo.Orders_Clean (id INT);"
+    rem = _remediate_batch_syntax_error(batch_tbl, err_msg)
+    assert len(rem) == 1
+    assert rem[0] == "CREATE TABLE dbo.Orders_Clean (id INT);"
+
+    # Case 4: Filtered index with OR
+    batch_idx = "CREATE NONCLUSTERED INDEX ix_order ON dbo.Orders (id) WHERE status = 'A' OR status = 'B';"
+    rem = _remediate_batch_syntax_error(batch_idx, err_msg)
+    assert len(rem) == 1
+    assert "WHERE" not in rem[0]
+    assert rem[0].endswith(";")
+
+
+
 

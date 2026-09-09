@@ -175,6 +175,88 @@ def _split_sql_batches(sql: str) -> list[str]:
             result.append(b_stripped)
     return result
 
+def _remediate_batch_syntax_error(batch_sql: str, error_msg: str) -> list[str]:
+    """
+    If a batch fails with Msg 156 (Incorrect syntax near the keyword 'OR'),
+    attempt automated remediation for known compatibility/syntax issues:
+    1. 'CREATE OR ALTER' on database compatibility level < 130:
+       Transform to:
+         IF OBJECT_ID('schema.obj', '<type>') IS NOT NULL DROP <TYPE> schema.obj;
+         CREATE <TYPE> schema.obj ...
+    2. 'CREATE OR REPLACE' -> convert to CREATE (with drop if exists)
+    3. 'CREATE OR ALTER TABLE' -> convert to CREATE TABLE
+    4. Filtered index with 'WHERE ... OR ...' -> strip WHERE clause
+    Returns list of one or more remediated batch strings, or [] if no remediation applies.
+    """
+    if not error_msg or not any(k in error_msg.lower() for k in ("keyword 'or'", "near 'or'", "near the keyword 'or'")):
+        return []
+
+    # Remediation 1: CREATE OR ALTER {PROCEDURE|PROC|VIEW|FUNCTION|TRIGGER} -> compatibility fallback (DROP IF EXISTS + CREATE)
+    coa_match = re.search(
+        r"\bCREATE\s+OR\s+ALTER\s+(PROCEDURE|PROC|VIEW|FUNCTION|TRIGGER)\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?",
+        batch_sql,
+        re.IGNORECASE
+    )
+    if coa_match:
+        obj_type_raw = coa_match.group(1).upper()
+        obj_type = "PROCEDURE" if obj_type_raw in ("PROCEDURE", "PROC") else obj_type_raw
+        schema = coa_match.group(2) or "dbo"
+        obj_name = coa_match.group(3)
+        full_obj = f"[{schema}].[{obj_name}]"
+
+        type_code = {
+            "PROCEDURE": "P",
+            "VIEW": "V",
+            "FUNCTION": "FN",
+            "TRIGGER": "TR"
+        }.get(obj_type, "P")
+
+        drop_batch = f"IF OBJECT_ID('{schema}.{obj_name}', '{type_code}') IS NOT NULL DROP {obj_type} {full_obj};"
+        create_batch = re.sub(
+            r"\bCREATE\s+OR\s+ALTER\s+" + re.escape(obj_type_raw) + r"\b",
+            f"CREATE {obj_type}",
+            batch_sql,
+            count=1,
+            flags=re.IGNORECASE
+        )
+        return [drop_batch, create_batch]
+
+    # Remediation 2: CREATE OR REPLACE {PROCEDURE|VIEW|FUNCTION|TRIGGER}
+    cor_match = re.search(
+        r"\bCREATE\s+OR\s+REPLACE\s+(PROCEDURE|PROC|VIEW|FUNCTION|TRIGGER)\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?",
+        batch_sql,
+        re.IGNORECASE
+    )
+    if cor_match:
+        obj_type_raw = cor_match.group(1).upper()
+        obj_type = "PROCEDURE" if obj_type_raw in ("PROCEDURE", "PROC") else obj_type_raw
+        schema = cor_match.group(2) or "dbo"
+        obj_name = cor_match.group(3)
+        full_obj = f"[{schema}].[{obj_name}]"
+        type_code = {"PROCEDURE": "P", "VIEW": "V", "FUNCTION": "FN", "TRIGGER": "TR"}.get(obj_type, "P")
+        drop_batch = f"IF OBJECT_ID('{schema}.{obj_name}', '{type_code}') IS NOT NULL DROP {obj_type} {full_obj};"
+        create_batch = re.sub(
+            r"\bCREATE\s+OR\s+REPLACE\s+" + re.escape(obj_type_raw) + r"\b",
+            f"CREATE {obj_type}",
+            batch_sql,
+            count=1,
+            flags=re.IGNORECASE
+        )
+        return [drop_batch, create_batch]
+
+    # Remediation 3: CREATE OR REPLACE TABLE / CREATE OR ALTER TABLE
+    if re.search(r"\bCREATE\s+OR\s+(?:REPLACE|ALTER)\s+TABLE\b", batch_sql, re.IGNORECASE):
+        cleaned_batch = re.sub(r"\bCREATE\s+OR\s+(?:REPLACE|ALTER)\s+TABLE\b", "CREATE TABLE", batch_sql, flags=re.IGNORECASE)
+        return [cleaned_batch]
+
+    # Remediation 4: Filtered index with OR in WHERE clause
+    if re.search(r"\bINDEX\s+[\w\.\[\]]+\s+ON\s+[\w\.\[\]]+\s*\([^\)]+\)\s*WHERE\s+[^;\n]*\bOR\b", batch_sql, re.IGNORECASE):
+        cleaned_batch = re.sub(r"\s+WHERE\s+[^\n;]*\bOR\b[^\n;]*;", ";", batch_sql, flags=re.IGNORECASE)
+        if cleaned_batch != batch_sql:
+            return [cleaned_batch]
+
+    return []
+
 
 def execute_sql_batch(
     cursor: pyodbc.Cursor,
@@ -332,6 +414,43 @@ def run_transactional_sql(
             total_duration += batch_res["duration_ms"]
 
             if batch_res["error"] is not None:
+                # Attempt automated self-healing remediation on syntax errors (e.g. Msg 156 near 'OR')
+                remediated_batches = _remediate_batch_syntax_error(batch_sql, batch_res["error"])
+                if remediated_batches:
+                    logger.warning(
+                        "Attempting automatic syntax remediation for Batch %d error: %s (generating %d sub-batches)",
+                        len(batch_results),
+                        batch_res["error"],
+                        len(remediated_batches),
+                    )
+                    all_rem_ok = True
+                    rem_results = []
+                    for rem_sql in remediated_batches:
+                        cursor = conn.cursor()
+                        rem_res = execute_sql_batch(cursor, rem_sql, timeout_s=timeout_s)
+                        rem_results.append(rem_res)
+                        total_duration += rem_res["duration_ms"]
+                        if rem_res["error"] is not None:
+                            all_rem_ok = False
+                            batch_res = rem_res
+                            break
+                        if rem_res["rows_affected"] > 0:
+                            total_rows_affected += rem_res["rows_affected"]
+
+                    if all_rem_ok:
+                        logger.info("Batch %d automatic remediation succeeded!", len(batch_results))
+                        batch_results[-1] = rem_results[-1]
+                        continue
+
+                # Detailed failure logging
+                logger.error(
+                    "Batch %d/%d execution failed: %s\nFailing batch SQL snippet:\n%s",
+                    len(batch_results),
+                    len(batches),
+                    batch_res["error"],
+                    batch_sql[:500],
+                )
+
                 # Rollback on failure (only if not in autocommit mode)
                 if not conn.autocommit:
                     try:

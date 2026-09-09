@@ -177,14 +177,43 @@ def orchestrate_sql_execution(
 
 def ensure_idempotent_sql(sql: str) -> str:
     """
-    Safe non-destructive T-SQL handling: Converts CREATE PROCEDURE to CREATE OR ALTER PROCEDURE.
-    Never injects dangerous DROP TABLE or DROP PROCEDURE statements.
+    Safe non-destructive T-SQL handling:
+    1. Converts CREATE PROCEDURE to CREATE OR ALTER PROCEDURE.
+    2. Sanitizes 'CREATE OR REPLACE' to T-SQL valid syntax (CREATE OR ALTER / CREATE TABLE).
+    3. Strips invalid 'CREATE OR ALTER TABLE' to 'CREATE TABLE'.
+    4. Sanitizes filtered indexes containing 'OR' in WHERE clause (forbidden in T-SQL).
+    Never injects dangerous unconditional DROP TABLE statements.
     """
     if not sql:
         return sql
 
     import re
-    # Safely convert any CREATE PROCEDURE to CREATE OR ALTER PROCEDURE (case-insensitive)
+    # 1. Clean CREATE OR REPLACE (invalid in T-SQL)
+    sql = re.sub(r"\bCREATE\s+OR\s+REPLACE\s+TABLE\b", "CREATE TABLE", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bCREATE\s+OR\s+REPLACE\s+PROCEDURE\b", "CREATE OR ALTER PROCEDURE", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bCREATE\s+OR\s+REPLACE\s+PROC\b", "CREATE OR ALTER PROCEDURE", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bCREATE\s+OR\s+REPLACE\s+VIEW\b", "CREATE OR ALTER VIEW", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bCREATE\s+OR\s+REPLACE\s+FUNCTION\b", "CREATE OR ALTER FUNCTION", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bCREATE\s+OR\s+REPLACE\s+TRIGGER\b", "CREATE OR ALTER TRIGGER", sql, flags=re.IGNORECASE)
+
+    # 2. Clean CREATE OR ALTER TABLE (invalid in T-SQL, tables do not support CREATE OR ALTER)
+    sql = re.sub(r"\bCREATE\s+OR\s+ALTER\s+TABLE\b", "CREATE TABLE", sql, flags=re.IGNORECASE)
+
+    # 3. Clean filtered index with OR in WHERE clause
+    def _fix_filtered_idx(m):
+        full_match = m.group(0)
+        if re.search(r"\bWHERE\b[\s\S]*\bOR\b", full_match, re.IGNORECASE):
+            return re.sub(r"\s+WHERE\s+[\s\S]*?;?$", ";", full_match, flags=re.IGNORECASE)
+        return full_match
+
+    sql = re.sub(
+        r"(?:IF\s+NOT\s+EXISTS\s*\([^;]+\)\s*)?CREATE\s+(?:UNIQUE\s+)?(?:NONCLUSTERED\s+|CLUSTERED\s+)?INDEX\s+[^\n;]+?\s+ON\s+[^\n;]+?\s+WHERE\s+[^\n;]+;",
+        _fix_filtered_idx,
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # 4. Safely convert any CREATE PROCEDURE to CREATE OR ALTER PROCEDURE (case-insensitive)
     sql = re.sub(
         r"\bCREATE\s+PROCEDURE\b",
         "CREATE OR ALTER PROCEDURE",

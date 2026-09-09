@@ -246,6 +246,9 @@ def validate_sql_basic(source: str) -> Tuple[bool, List[str], List[str]]:
         (r"OPENROWSET", "Forbidden: OPENROWSET"),
         (r"DROP\s+TABLE\s+(?!\s*#|\s*dbo\.etl_)", "Dangerous DROP TABLE on non-temp/non-etl table"),
         (r"DELETE\s+FROM\s+\w+_Raw", "Forbidden: DELETE on Raw table"),
+        (r"\bCREATE\s+OR\s+REPLACE\b", "Invalid T-SQL: CREATE OR REPLACE is not supported in T-SQL"),
+        (r"\bCREATE\s+OR\s+ALTER\s+TABLE\b", "Invalid T-SQL: CREATE OR ALTER TABLE is not valid syntax in T-SQL"),
+        (r"\bINDEX\s+[\w\.\[\]]+\s+ON\s+[\w\.\[\]]+\s*\([^\)]+\)\s*WHERE\s+[^;\n]*\bOR\b", "Invalid T-SQL: Filtered indexes cannot use OR in WHERE clause"),
     ]
     for pattern, msg in SECURITY_PATTERNS:
         if re.search(pattern, cleaned, re.IGNORECASE):
