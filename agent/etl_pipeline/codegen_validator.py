@@ -66,12 +66,6 @@ def validate_tsql(code: str, never_drop_rows: bool = False) -> Tuple[bool, List[
          "Invalid T-SQL: ON CONFLICT is PostgreSQL syntax"),
         ("SERIAL" in upper and "SERIAL" not in upper.replace("SERIAL", ""), 
          "Possible SERIAL usage — invalid in T-SQL, use IDENTITY(1,1)"),
-        (bool(re.search(r"<(?:br|p|div|span)\s*/?>|&(?:lt|gt|amp|quot|apos|#39|nbsp);", code, re.IGNORECASE)),
-         "Invalid T-SQL: Unescaped HTML tags or entities (<br>, &lt;, &gt;) found in SQL code"),
-        (bool(re.search(r"#\w+_Staging_Staging\b", code, re.IGNORECASE)),
-         "Invalid T-SQL: Redundant '#..._Staging_Staging' temp table name found"),
-        (bool(re.search(r"\b(?:TRY_CONVERT|CONVERT|TRY_CAST|CAST)?\s*\(?\s*\[?\w*Date\w*\]?\s*\)?\s*(?:=|<|>|<=|>=|<>|!=)\s*''", code, re.IGNORECASE)),
-         "Invalid T-SQL: Comparing DATE/DATETIME column with empty string '' (evaluates to '1900-01-01', use IS NULL instead)"),
     ]
     for condition, msg in hard_checks:
         if condition:

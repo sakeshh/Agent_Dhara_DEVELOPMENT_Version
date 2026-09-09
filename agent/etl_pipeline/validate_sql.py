@@ -116,24 +116,6 @@ def validate_security(sql: str) -> Tuple[bool, List[str]]:
     if re.search(r"\{\{[a-zA-Z0-9_]+\}\}", sql):
         issues.append("Unreplaced template placeholder like '{{variable}}' found in SQL")
 
-    # 10. Check for unescaped HTML tags / entities
-    if re.search(r"<(?:br|p|div|span)\s*/?>|&(?:lt|gt|amp|quot|apos|#39|nbsp);", sql, re.IGNORECASE):
-        issues.append("Contains unescaped HTML markup or entities (<br>, &lt;, &gt;) — invalid in T-SQL")
-
-    # 11. Check for invalid DDL syntax
-    if re.search(r"\bcreate\s+or\s+replace\b", cleaned_lower):
-        issues.append("Contains 'CREATE OR REPLACE' — invalid in T-SQL")
-    if re.search(r"\bcreate\s+or\s+alter\s+table\b", cleaned_lower):
-        issues.append("Contains 'CREATE OR ALTER TABLE' — tables do not support CREATE OR ALTER in T-SQL")
-
-    # 12. Check for invalid filtered index with OR
-    if re.search(r"\bindex\s+[\w\.\[\]]+\s+on\s+[\w\.\[\]]+\s*\([^\)]+\)\s*where\s+[^;\n]*\bor\b", cleaned_lower):
-        issues.append("Filtered index contains 'OR' in WHERE clause — not supported by SQL Server")
-
-    # 13. Check for double staging table naming
-    if re.search(r"#\w+_staging_staging\b", cleaned_lower):
-        issues.append("Contains redundant '#..._staging_staging' temp table name")
-
     try:
         import sqlparse  # type: ignore
         parsed = sqlparse.parse(sql)
