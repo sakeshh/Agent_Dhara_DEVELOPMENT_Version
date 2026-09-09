@@ -37,6 +37,7 @@ from agent.etl_pipeline.io_snippets import (
     resolve_path_fabric_pyspark_helper,
 )
 from agent.etl_pipeline.payload_trimmer import trim_payload, _FLOOR_TRIM_CONFIG, _CODEGEN_TRIM_CONFIG, TrimConfig
+from agent.etl_pipeline.issue_identity import make_issue_id
 import logging
 logger = logging.getLogger("agent.etl_pipeline.llm_codegen")
 
@@ -985,7 +986,15 @@ def _postprocess_tsql_code(code: str) -> str:
 
     code = _sanitize_unquoted_nan_in_code(code)
 
-    # 1. Hoist table DDL if generated inside BEGIN TRY before @run_id or execution statements
+    # 0. Ensure ANSI_NULLS and QUOTED_IDENTIFIER are set (mandatory for Azure SQL views/indexes)
+    upper_code = code.upper()
+    ansi_prefix = ""
+    if "SET ANSI_NULLS ON" not in upper_code:
+        ansi_prefix += "SET ANSI_NULLS ON;\n"
+    if "SET QUOTED_IDENTIFIER ON" not in upper_code:
+        ansi_prefix += "SET QUOTED_IDENTIFIER ON;\n"
+    if ansi_prefix:
+        code = ansi_prefix + "GO\n\n" + code
     try_match = re.search(r"\bBEGIN\s+TRY\b", code, re.IGNORECASE)
     if try_match:
         post_try = code[try_match.end():]
@@ -2430,7 +2439,9 @@ def _extract_assessment_dq_issues(assessment: Dict[str, Any], plan: Dict[str, An
             key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
             if key not in seen:
                 seen.add(key)
+                iid = make_issue_id(ds_name, col, itype)
                 issues.append({
+                    "issue_id": iid,
                     "dataset": ds_name,
                     "column": col,
                     "issue_type": itype,
@@ -2449,7 +2460,9 @@ def _extract_assessment_dq_issues(assessment: Dict[str, Any], plan: Dict[str, An
             key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
             if key not in seen:
                 seen.add(key)
+                iid = make_issue_id(ds_name, col, itype)
                 issues.append({
+                    "issue_id": iid,
                     "dataset": ds_name,
                     "column": col,
                     "issue_type": itype,
@@ -2467,7 +2480,9 @@ def _extract_assessment_dq_issues(assessment: Dict[str, Any], plan: Dict[str, An
         key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
         if key not in seen:
             seen.add(key)
+            iid = item.get("id") or make_issue_id(ds_name, col, itype)
             issues.append({
+                "issue_id": iid,
                 "dataset": ds_name,
                 "column": col,
                 "issue_type": itype,
@@ -2476,6 +2491,56 @@ def _extract_assessment_dq_issues(assessment: Dict[str, Any], plan: Dict[str, An
                 "suggested_action": item.get("suggested_action") or item.get("catalog_guidance", ""),
                 "rows_affected": item.get("affected_rows") or item.get("rows_affected"),
             })
+
+    # 4. From plan.datasets.*.steps and plan.global_steps
+    for ds_name, block in (plan.get("datasets") or {}).items():
+        for st in (block.get("steps") or []):
+            types_to_check = list(st.get("source_issue_types") or [])
+            if st.get("source_issue_type") and st.get("source_issue_type") not in types_to_check:
+                types_to_check.append(st.get("source_issue_type"))
+            for itype in types_to_check:
+                if not itype or itype in ("business_notes", "none"):
+                    continue
+                col = st.get("column")
+                key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
+                if key not in seen:
+                    seen.add(key)
+                    iid = make_issue_id(ds_name, col, itype)
+                    issues.append({
+                        "issue_id": iid,
+                        "dataset": ds_name,
+                        "column": col,
+                        "issue_type": itype,
+                        "severity": st.get("severity", "medium"),
+                        "message": st.get("message") or st.get("note", ""),
+                        "suggested_action": st.get("action", ""),
+                        "rows_affected": st.get("estimated_affected_rows"),
+                        "step_id": st.get("step_id"),
+                    })
+
+    for st in (plan.get("global_steps") or []):
+        types_to_check = list(st.get("source_issue_types") or [])
+        if st.get("source_issue_type") and st.get("source_issue_type") not in types_to_check:
+            types_to_check.append(st.get("source_issue_type"))
+        for itype in types_to_check:
+            if not itype or itype in ("business_notes", "none"):
+                continue
+            col = st.get("column")
+            key = ("_global", str(col).lower() if col else "", str(itype).lower())
+            if key not in seen:
+                seen.add(key)
+                iid = make_issue_id("_global", col, itype)
+                issues.append({
+                    "issue_id": iid,
+                    "dataset": "_global",
+                    "column": col,
+                    "issue_type": itype,
+                    "severity": st.get("severity", "medium"),
+                    "message": st.get("message") or st.get("note", ""),
+                    "suggested_action": st.get("action", ""),
+                    "rows_affected": st.get("estimated_affected_rows"),
+                    "step_id": st.get("step_id"),
+                })
 
     return issues
 
@@ -2540,6 +2605,19 @@ def _build_codegen_payload(
 
     detected_dq_issues = _extract_assessment_dq_issues(assessment, plan)
 
+    # Build issue_coverage_manifest
+    issue_coverage_manifest = []
+    for iss in detected_dq_issues:
+        issue_coverage_manifest.append({
+            "issue_id": iss.get("issue_id"),
+            "dataset": iss.get("dataset"),
+            "column": iss.get("column"),
+            "issue_type": iss.get("issue_type"),
+            "severity": iss.get("severity", "medium"),
+            "planned_action": iss.get("suggested_action"),
+            "planned_step_id": iss.get("step_id"),
+        })
+
     base = {
         "plan_id": plan.get("plan_id"),
         "engine": plan.get("engine"),
@@ -2560,6 +2638,7 @@ def _build_codegen_payload(
         "domain_rules": plan.get("domain_rules") or {},
         "business_keys": plan.get("business_keys") or {},
         "detected_dq_issues": detected_dq_issues,
+        "issue_coverage_manifest": issue_coverage_manifest,
     }
     
     required_transforms = []
@@ -2815,28 +2894,35 @@ def _build_user_message_parts(
         )
     manual = payload.get("manual_review") or []
     if manual:
-        mr_lines = []
+        by_ds_mr: Dict[str, List[str]] = defaultdict(list)
         PII_ACTIONS = {"hash_phone", "mask_phone", "hash_email", "exclude"}
         manual_sorted = sorted(
             manual,
             key=lambda x: 0 if str(x.get("action") or x.get("catalog_guidance") or "").lower().strip() in PII_ACTIONS else 1
         )
-        for item in manual_sorted[:20]:
-            ds = item.get("dataset") or "?"
-            col = item.get("column") or "?"
+        for item in manual_sorted:
+            ds = item.get("dataset") or "_global"
+            col = item.get("column") or "all"
             msg = item.get("message") or item.get("guidance") or ""
             cat_guidance = item.get("catalog_guidance") or ""
+            act = item.get("suggested_action") or item.get("selected_resolution") or ""
+            act_str = f" [Action: {act}]" if act else ""
             if cat_guidance:
                 msg = f"{msg} (Catalog guidance: {cat_guidance})"
-            mr_lines.append(f"- [{ds}] {col}: {msg}")
+            by_ds_mr[ds].append(f"  * Col '{col}': {msg}{act_str}")
+
+        mr_sections = []
+        for ds_name, items in by_ds_mr.items():
+            mr_sections.append(f"- Table/Dataset [{ds_name}]:\n" + "\n".join(items))
+
         user_parts.append(
-            "MANUAL REVIEW (implement in code when business notes require it, especially phone hash/mask):\n"
-            + "\n".join(mr_lines)
+            "MANUAL REVIEW & GOVERNANCE RESOLUTIONS (implement in code when business notes require it, especially phone hash/mask):\n"
+            + "\n".join(mr_sections)
         )
     gate = payload.get("dq_gate_summary") or {}
     blocking = gate.get("blocking_issues") or []
     if blocking:
-        block_lines = [f"- [{b.get('dataset')}] {b.get('reason')}" for b in blocking[:10]]
+        block_lines = [f"- [{b.get('dataset')}] {b.get('reason')}" for b in blocking]
         user_parts.append(
             "DQ GATE BLOCKING ISSUES (these columns/datasets must be cleaned — do NOT skip these steps):\n"
             + "\n".join(block_lines)
@@ -2844,18 +2930,27 @@ def _build_user_message_parts(
 
     dq_issues = payload.get("detected_dq_issues") or []
     if dq_issues:
-        issue_lines = []
-        for iss in dq_issues[:35]:
-            ds = iss.get("dataset") or "?"
+        by_ds_dq: Dict[str, List[str]] = defaultdict(list)
+        for iss in dq_issues:
+            ds = iss.get("dataset") or "_global"
             col = iss.get("column") or "all"
             msg = iss.get("message") or iss.get("issue_type") or ""
             act = iss.get("suggested_action") or ""
+            iid = iss.get("issue_id") or ""
+            id_prefix = f"[{iid}] " if iid else ""
             act_str = f" -> Remediation: {act}" if act else ""
-            issue_lines.append(f"- [{ds}] Column '{col}' (Severity: {iss.get('severity', 'medium')}): {msg}{act_str}")
+            by_ds_dq[ds].append(f"  * {id_prefix}Col '{col}' (Severity: {iss.get('severity', 'medium')}): {msg}{act_str}")
+
+        issue_sections = []
+        for ds_name, items in by_ds_dq.items():
+            issue_sections.append(f"- Table/Dataset [{ds_name}]:\n" + "\n".join(items))
+
         user_parts.append(
-            "MANDATORY ASSESSMENT DATA QUALITY DEFECT REMEDIATIONS:\n"
-            "Every one of the following defects was detected during data assessment. You MUST generate explicit cleaning and validation code addressing each finding:\n"
-            + "\n".join(issue_lines)
+            "MANDATORY ASSESSMENT DATA QUALITY DEFECT REMEDIATIONS (ZERO OMISSIONS ALLOWED):\n"
+            "Every single detected defect listed below was discovered during data assessment and MUST be remediated in the generated code. "
+            "For SQL/T-SQL scripts, each remediation code block MUST begin with a coverage annotation comment: "
+            "-- COVERS: {issue_id} (or dataset.column.issue_type):\n"
+            + "\n".join(issue_sections)
         )
 
     dr = payload.get("domain_rules") or {}

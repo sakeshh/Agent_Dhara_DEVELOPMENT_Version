@@ -5,6 +5,13 @@ to rule-validated, semantics-refined ETL plan steps, manual review queues, and n
 from typing import Any, Dict, List, Tuple
 import logging
 
+from agent.etl_pipeline.issue_identity import (
+    make_step_id,
+    make_issue_id,
+    step_identity,
+    merge_steps,
+)
+
 logger = logging.getLogger("agent.etl_pipeline.issue_to_step_compiler")
 
 from agent.transformation_suggester import ISSUE_TO_ACTION
@@ -252,7 +259,7 @@ def _apply_three_pass_overrides(
         action = "standardize_boolean"
         note = "Semantic refinement: standardize_boolean for boolean_int sub_type"
     # Pass 4: Governance guards
-    if action == "lowercase" and (_is_name_field(col) or _is_business_key(col)):
+    if action == "lowercase" and (_is_name_field(col) or _is_business_key(col)) and it not in ("duplicate_insensitive_values", "inconsistent_case", "mixed_case"):
         action = "trim_preserve_case"
         note = f"Governance override: replaced lowercase with trim_preserve_case for name/key column {col}"
         
@@ -407,7 +414,10 @@ def compile_issues_to_steps(
             datasets_steps.setdefault(ds, [])
             max_order = max((s.get("order", 0) for s in datasets_steps[ds]), default=0)
             
+            sid = make_step_id(ds, col, action)
+            iid = make_issue_id(ds, col, it)
             datasets_steps[ds].append({
+                "step_id": sid,
                 "order": max_order + 1,
                 "column": col,
                 "action": action,
@@ -430,6 +440,8 @@ def compile_issues_to_steps(
                     "execution_status": "not_started",
                 },
                 "source_issue_type": it,
+                "source_issue_types": [it] if it else [],
+                "source_issue_ids": [iid],
                 "severity": sug.get("severity") or "medium",
                 "estimated_affected_rows": sug.get("row_count_affected"),
                 "llm_recommendation": sug.get("llm_recommendation"),
@@ -494,21 +506,25 @@ def compile_issues_to_steps(
                 llm_recommendation=mr_item.get("llm_recommendation")
             ))
             
-    # Deduplicate and sort steps by priority to avoid redundant operations and ensure correct execution order
+    # Deduplicate using merge_steps preserving full issue provenance, then sort by priority
     from agent.etl_pipeline.planner import _ACTION_PRIORITY
     deduplicated_datasets_steps = {}
     for ds, steps in datasets_steps.items():
-        sorted_steps = sorted(steps, key=lambda s: (_ACTION_PRIORITY.get(str(s.get("action") or ""), 80), str(s.get("column") or "")))
-        seen = set()
-        deduped = []
-        for step in sorted_steps:
-            key = (step.get("action"), step.get("column"))
-            if key not in seen:
-                seen.add(key)
-                deduped.append(step)
-        for idx, step in enumerate(deduped):
+        merged_by_ident: Dict[str, Dict[str, Any]] = {}
+        for step in steps:
+            s_ident = step_identity(ds, step.get("column"), step.get("action"))
+            if s_ident in merged_by_ident:
+                merged_by_ident[s_ident] = merge_steps(merged_by_ident[s_ident], step)
+            else:
+                merged_by_ident[s_ident] = step
+
+        sorted_steps = sorted(
+            merged_by_ident.values(),
+            key=lambda s: (_ACTION_PRIORITY.get(str(s.get("action") or ""), 80), str(s.get("column") or ""))
+        )
+        for idx, step in enumerate(sorted_steps):
             step["order"] = idx + 1
-        deduplicated_datasets_steps[ds] = deduped
+        deduplicated_datasets_steps[ds] = sorted_steps
             
     return deduplicated_datasets_steps, manual_review
 

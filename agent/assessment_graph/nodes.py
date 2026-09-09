@@ -7,6 +7,8 @@ import logging
 import os
 import hashlib
 from typing import Any, Dict, List, Optional
+import time
+import threading
 import pandas as pd
 
 from agent.assessment_graph.state import AssessmentState, DatasetState
@@ -27,6 +29,33 @@ from agent.profiling.assessment_orchestrator import (
 from agent.assessment_governance import enrich_assessment_with_governance
 
 logger = logging.getLogger("agent.assessment_graph.nodes")
+
+# Assessment performance configuration
+DHARA_DISABLE_ASSESSMENT_CACHE = os.getenv("DHARA_DISABLE_ASSESSMENT_CACHE", "").strip().lower() in ("1", "true", "yes")
+DHARA_PROFILE_CACHE_TTL_SECONDS = float(os.getenv("DHARA_PROFILE_CACHE_TTL_SECONDS", "600"))
+DHARA_YDATA_PROFILE = os.getenv("DHARA_YDATA_PROFILE", "off").strip().lower()
+DHARA_YDATA_MAX_ROWS = int(os.getenv("DHARA_YDATA_MAX_ROWS", "100000"))
+DHARA_YDATA_MAX_COLUMNS = int(os.getenv("DHARA_YDATA_MAX_COLUMNS", "100"))
+DHARA_YDATA_TIMEOUT_SECONDS = float(os.getenv("DHARA_YDATA_TIMEOUT_SECONDS", "120"))
+
+_PROFILE_CACHE: Dict[str, Tuple[Dict[str, Any], float]] = {}
+_PROFILE_CACHE_LOCK = threading.Lock()
+
+
+def _compute_df_fingerprint(df: pd.DataFrame) -> str:
+    """Compute content fingerprint for profiling cache."""
+    if df is None or not isinstance(df, pd.DataFrame):
+        return "empty"
+    cols_sig = ",".join(f"{c}:{df[c].dtype}" for c in df.columns)
+    row_count = len(df)
+    try:
+        sample_rows = pd.concat([df.head(100), df.tail(100)]) if row_count > 200 else df
+        sample_bytes = sample_rows.to_json(orient="split").encode("utf-8")
+        sample_hash = hashlib.sha256(sample_bytes).hexdigest()[:16]
+    except Exception:
+        sample_hash = "fallback_hash"
+    raw = f"{cols_sig}::{row_count}::{sample_hash}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
 def source_loader(state: AssessmentState) -> Dict[str, Any]:
@@ -125,16 +154,43 @@ def profiler(state: DatasetState) -> Dict[str, Any]:
         if cached:
             return cached
 
+    # Fingerprint cache lookup
+    if not DHARA_DISABLE_ASSESSMENT_CACHE:
+        fp = _compute_df_fingerprint(df)
+        with _PROFILE_CACHE_LOCK:
+            entry = _PROFILE_CACHE.get(fp)
+            if entry:
+                cached_meta, cached_ts = entry
+                if time.time() - cached_ts < DHARA_PROFILE_CACHE_TTL_SECONDS:
+                    logger.info("Reusing cached statistical profile for %s (fingerprint=%s)", dataset_name, fp)
+                    return {"metadata": {dataset_name: cached_meta}}
+
     meta = profile_dataframe(df, job_id=job_id)
 
-    # Optional ydata profiler
-    try:
-        from agent.specialists.ydata_profiler import enrich_assessment_with_profile
-        meta = enrich_assessment_with_profile(df, meta)
-    except ImportError:
-        pass
-    except Exception as e:
-        logger.warning("ydata enrichment failed for %s: %s", dataset_name, e)
+    # Optional ydata profiler (disabled by default for speed, configurable via DHARA_YDATA_PROFILE)
+    run_ydata = False
+    if DHARA_YDATA_PROFILE == "on":
+        run_ydata = True
+    elif DHARA_YDATA_PROFILE == "auto":
+        row_count = len(df)
+        col_count = len(df.columns)
+        if row_count <= DHARA_YDATA_MAX_ROWS and col_count <= DHARA_YDATA_MAX_COLUMNS:
+            run_ydata = True
+
+    if run_ydata:
+        try:
+            from agent.specialists.ydata_profiler import enrich_assessment_with_profile
+            meta = enrich_assessment_with_profile(df, meta)
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning("ydata enrichment failed for %s: %s", dataset_name, e)
+
+    # Cache result
+    if not DHARA_DISABLE_ASSESSMENT_CACHE:
+        fp = _compute_df_fingerprint(df)
+        with _PROFILE_CACHE_LOCK:
+            _PROFILE_CACHE[fp] = (meta, time.time())
 
     res = {"metadata": {dataset_name: meta}}
     if job_id:

@@ -890,6 +890,16 @@ def _save_dynamic_options_cache(cache: Dict[str, List[ResolutionOption]]):
 _DYNAMIC_OPTIONS_CACHE = _load_dynamic_options_cache()
 
 
+from agent.etl_pipeline.llm_resolution_fallback import (
+    get_cached_resolution,
+    resolve_unmapped_issue_async,
+    LLMResolutionBudget,
+    DHARA_LLM_RESOLUTION_CONCURRENCY,
+    _make_budget_exhausted_fallback,
+)
+from agent.etl_pipeline.issue_identity import make_resolution_signature
+
+
 def get_dynamic_resolution_options(
     issue_type: str,
     item: Dict[str, Any],
@@ -897,136 +907,74 @@ def get_dynamic_resolution_options(
     allow_llm_call: bool = False
 ) -> List[ResolutionOption]:
     """
-    allow_llm_call=False (default): return cached or fallback immediately.
-    allow_llm_call=True: may make LLM call (only from background worker).
+    Check cache for unmapped issue type resolutions.
+    Always returns immediately without blocking (NO asyncio.run() in library code).
     """
-    cache_key = issue_type.strip().lower()
-    global _DYNAMIC_OPTIONS_CACHE
-    _DYNAMIC_OPTIONS_CACHE = _load_dynamic_options_cache()
-    if cache_key in _DYNAMIC_OPTIONS_CACHE:
-        return _DYNAMIC_OPTIONS_CACHE[cache_key]
+    col_sem = item.get("semantic_type") or (item.get("col_stats") or {}).get("semantic_type")
+    msg = item.get("message") or item.get("guidance")
+    sig = make_resolution_signature(issue_type, col_sem, msg)
 
-    if not allow_llm_call:
-        # Return minimal safe fallback — never block plan build
-        fallback = [
-            _opt("keep_as_is", "Keep as-is (review manually)", "noop",
-                 recommended=True,
-                 description=f"Unknown issue type '{issue_type}' — review with your data team.")
-        ]
-        return fallback
+    cached = get_cached_resolution(sig)
+    if cached:
+        return cached
 
-    # LLM call logic (only when allow_llm_call=True)
-    import json
-    import logging
-    from agent.model_config import load_llm_config
+    # Safe fallback if not yet resolved by async Phase B
+    return _make_budget_exhausted_fallback(issue_type, "unmapped_pending_resolution")
 
-    opts = [
-        _opt("keep_as_is", "Keep as-is (skip in ETL)", "noop", recommended=True, description="No transform; document in runbook.")
-    ]
 
-    cfg = load_llm_config()
-    if not cfg:
-        _DYNAMIC_OPTIONS_CACHE[cache_key] = opts
-        _save_dynamic_options_cache(_DYNAMIC_OPTIONS_CACHE)
-        return opts
+async def enrich_unmapped_items_with_llm(
+    items: List[Dict[str, Any]],
+    *,
+    max_calls: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Phase B: Asynchronously enrich unmapped manual review items using LLM resolution fallback.
+    Respects budget, deduplication by signature, concurrency semaphore, and timeouts.
+    """
+    budget = LLMResolutionBudget(max_calls=max_calls) if max_calls else LLMResolutionBudget()
+    semaphore = asyncio.Semaphore(DHARA_LLM_RESOLUTION_CONCURRENCY)
 
-    client = None
-    try:
-        if cfg.provider == "azure_openai":
-            from openai import AzureOpenAI
-            client = AzureOpenAI(
-                azure_endpoint=cfg.endpoint,
-                api_key=cfg.api_key,
-                api_version=cfg.api_version or "2024-02-01",
-            )
-        elif cfg.provider == "openai":
-            from openai import OpenAI
-            client = OpenAI(api_key=cfg.api_key)
-    except Exception as e:
-        logger = logging.getLogger("agent.manual_review_catalog")
-        logger.error(f"Failed to initialize OpenAI client: {e}")
-        _DYNAMIC_OPTIONS_CACHE[cache_key] = opts
-        _save_dynamic_options_cache(_DYNAMIC_OPTIONS_CACHE)
-        return opts
+    tasks = []
+    unmapped_indices = []
 
-    if not client:
-        _DYNAMIC_OPTIONS_CACHE[cache_key] = opts
-        _save_dynamic_options_cache(_DYNAMIC_OPTIONS_CACHE)
-        return opts
-
-    system_prompt = (
-        "You are an expert ETL engineer. We detected a data quality issue in a dataset.\n"
-        "Generate 1 or 2 appropriate cleanup actions from the following allowed set of standard actions:\n"
-        "- noop: Keep as-is, do not modify or transform the data.\n"
-        "- drop_column: Drop the entire column from the dataset.\n"
-        "- exclude_column: Exclude this column from output.\n"
-        "- deduplicate: Deduplicate rows based on this column.\n"
-        "- flag_outliers: Add a boolean audit column to flag these outlier values.\n"
-        "- fill_nulls_simple: Fill missing values with a default value (e.g. median/mean/mode/constant).\n"
-        "- zero_to_null: Replace sentinel/magic/placeholder values (e.g. -999, '###') with NULL.\n"
-        "- lowercase: Standardize string case to lowercase.\n"
-        "- uppercase: Standardize string case to uppercase.\n"
-        "- parse_dates: Standardize/parse mixed date strings into clean ISO dates.\n\n"
-        "Return a JSON object exactly formatted like this:\n"
-        "{\n"
-        "  \"options\": [\n"
-        "    {\n"
-        "      \"id\": \"unique_id_for_option\",\n"
-        "      \"label\": \"User-friendly label\",\n"
-        "      \"action\": \"one of the allowed standard actions\",\n"
-        "      \"recommended\": true/false,\n"
-        "      \"description\": \"Description of the cleanup action\"\n"
-        "    }\n"
-        "  ]\n"
-        "}"
-    )
-
-    user_prompt = f"Issue Type: {issue_type}\nIssue Context: {json.dumps(item)}"
-
-    try:
-        resp = client.chat.completions.create(
-            model=cfg.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.1,
-            response_format={"type": "json_object"},
+    for idx, item in enumerate(items):
+        opts = item.get("resolution_options") or []
+        # Check if item is unmapped (options come from unmapped fallback)
+        is_unmapped = (
+            not opts
+            or any(o.get("resolution_source") in ("unmapped_pending_resolution", "default_safe") for o in opts)
+            or (len(opts) == 1 and opts[0].get("id") == "keep_as_is")
         )
-        raw = resp.choices[0].message.content or "{}"
-        parsed = json.loads(raw)
-        llm_opts = parsed.get("options") or []
-        for opt in llm_opts:
-            if isinstance(opt, dict) and opt.get("id") and opt.get("label") and opt.get("action"):
-                action = opt.get("action")
-                allowed_actions = {
-                    "noop", "drop_column", "exclude_column", "deduplicate",
-                    "flag_outliers", "fill_nulls_simple", "zero_to_null",
-                    "lowercase", "uppercase", "parse_dates"
-                }
-                if action not in allowed_actions:
-                    action = "noop"
+        if is_unmapped:
+            it = item.get("issue_type") or "unknown"
+            col = item.get("column")
+            col_sem = item.get("semantic_type") or (item.get("col_stats") or {}).get("semantic_type")
+            msg = item.get("message") or item.get("guidance")
+            tasks.append(
+                resolve_unmapped_issue_async(
+                    it, col, col_sem, msg, budget, semaphore
+                )
+            )
+            unmapped_indices.append(idx)
 
-                if opt.get("id") == "keep_as_is" or action == "noop":
-                    continue
+    if tasks:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for idx, res in zip(unmapped_indices, results):
+            if isinstance(res, list) and res:
+                items[idx]["resolution_options"] = res
+                rec = next((o["id"] for o in res if o.get("recommended")), res[0]["id"])
+                items[idx]["default_resolution"] = rec
 
-                opts.append({
-                    "id": opt.get("id"),
-                    "label": opt.get("label"),
-                    "action": action,
-                    "recommended": bool(opt.get("recommended")),
-                    "description": opt.get("description", "")
-                })
-    except Exception as e:
-        logger = logging.getLogger("agent.manual_review_catalog")
-        logger.error(f"Failed to generate dynamic resolution options: {e}")
+    return items
 
-    if not any(o.get("recommended") for o in opts):
-        opts[0]["recommended"] = True
 
-    _DYNAMIC_OPTIONS_CACHE[cache_key] = opts
-    _save_dynamic_options_cache(_DYNAMIC_OPTIONS_CACHE)
-    return opts
+def enrich_manual_review_item_static(
+    item: Dict[str, Any],
+    *,
+    llm_recommendation: Optional[Any] = None
+) -> Dict[str, Any]:
+    """Pure synchronous static catalog enrichment (Phase A)."""
+    return enrich_manual_review_item(item, llm_recommendation=llm_recommendation)
 
 
 def action_for_resolution(issue_type: str, resolution_id: str, options: Optional[List[ResolutionOption]] = None) -> Optional[str]:

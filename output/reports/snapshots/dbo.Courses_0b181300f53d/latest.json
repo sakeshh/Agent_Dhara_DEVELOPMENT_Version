@@ -1,7 +1,7 @@
 {
   "dataset_name": "dbo.Courses",
-  "saved_at": "2026-09-07T07:14:43.546737+00:00",
-  "run_id": "62afb96c-bfc8-43b9-bff1-b4d53c19a2ed",
+  "saved_at": "2026-09-08T10:16:47.161105+00:00",
+  "run_id": "d7165fc9-59e3-4543-b95e-cf2edb3df247",
   "fingerprint": {
     "row_count": 80,
     "column_count": 5,
@@ -35,10 +35,12 @@
         "std": 259.6525624070692
       },
       "Price": {
-        "dtype": "object",
+        "dtype": "int64",
         "null_pct": 0.0,
         "unique": 71,
-        "semantic_type": "categorical"
+        "semantic_type": "categorical",
+        "mean": 287.5,
+        "std": 369.9384143066881
       }
     }
   }

@@ -104,6 +104,18 @@ def validate_security(sql: str) -> Tuple[bool, List[str]]:
     if has_begin_try and not has_end_catch:
         issues.append("BEGIN TRY without matching END CATCH — SQL Server will reject this script")
 
+    # 8. Check for GO inside BEGIN TRY ... END CATCH
+    if has_begin_try:
+        try_catch_blocks = re.findall(r"begin\s+try([\s\S]*?)end\s+catch", cleaned_lower)
+        for block in try_catch_blocks:
+            if re.search(r"^\s*go\b", block, flags=re.MULTILINE):
+                issues.append("Fatal: 'GO' batch separator inside BEGIN TRY ... END CATCH block")
+                break
+
+    # 9. Check for unreplaced template placeholders
+    if re.search(r"\{\{[a-zA-Z0-9_]+\}\}", sql):
+        issues.append("Unreplaced template placeholder like '{{variable}}' found in SQL")
+
     try:
         import sqlparse  # type: ignore
         parsed = sqlparse.parse(sql)
@@ -263,3 +275,49 @@ def validate_for_execution(sql: str) -> dict:
         "issues": issues,
         "warnings": warnings,
     }
+
+
+def validate_issue_coverage(sql: str, manifest: List[dict]) -> dict:
+    """
+    Level 2 validation: Verify every issue in issue_coverage_manifest is explicitly
+    addressed with a remediation query and/or annotated with '-- COVERS: {issue_id}'.
+    """
+    if not manifest:
+        return {"valid": True, "coverage_pct": 100.0, "covered": 0, "total": 0, "missing": []}
+
+    sql_lower = (sql or "").lower()
+    covered = []
+    missing = []
+
+    for item in manifest:
+        iid = str(item.get("issue_id") or "").lower()
+        col = str(item.get("column") or "").lower()
+        ds = str(item.get("dataset") or "").lower()
+        itype = str(item.get("issue_type") or "").lower()
+
+        is_covered = False
+        # Match by explicit ID in comments (e.g. -- COVERS: ISSUE-abcd1234 or -- COVERS: [ISSUE-abcd1234])
+        if iid and (iid in sql_lower or f"covers: {iid}" in sql_lower or f"covers: [{iid}]" in sql_lower):
+            is_covered = True
+        # Or match by column + issue_type / action
+        elif col and col != "*" and itype:
+            if col in sql_lower and (itype in sql_lower or (item.get("planned_action") and str(item.get("planned_action")).lower() in sql_lower)):
+                is_covered = True
+        elif itype and itype in sql_lower:
+            is_covered = True
+
+        if is_covered:
+            covered.append(item)
+        else:
+            missing.append(item)
+
+    total = len(manifest)
+    cov_pct = (len(covered) / total * 100.0) if total > 0 else 100.0
+    return {
+        "valid": len(missing) == 0,
+        "coverage_pct": round(cov_pct, 1),
+        "covered": len(covered),
+        "total": total,
+        "missing": missing,
+    }
+

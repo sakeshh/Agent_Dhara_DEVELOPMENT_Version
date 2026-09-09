@@ -14,6 +14,12 @@ from agent.etl_pipeline.business_rules import normalize_business_rules, column_i
 from agent.etl_pipeline.classify_steps import classify_step_bucket
 from agent.etl_pipeline.relationship_planner import build_relationship_plan
 from agent.etl_pipeline.manual_review_catalog import enrich_manual_review_item
+from agent.etl_pipeline.issue_identity import (
+    make_step_id,
+    make_issue_id,
+    step_identity,
+    merge_steps,
+)
 from agent.etl_pipeline.step_metadata import (
     build_plan_invariants,
     enrich_relationship_plan_joins,
@@ -857,7 +863,7 @@ class PlanBuilder:
                 sev = st.get("severity") or "medium"
                 row_est = st.get("estimated_affected_rows")
                 pri = _ACTION_PRIORITY.get(action, 80)
-                key = (ds_name, col, action, it)
+                key = step_identity(ds_name, col, action)
 
                 sug_dict = {
                     "dataset": ds_name,
@@ -885,10 +891,13 @@ class PlanBuilder:
                     params.update(st["params"])
 
                 entry = {
+                    "step_id": st.get("step_id") or make_step_id(ds_name, col, action),
                     "dataset": ds_name or "_global",
                     "column": col,
                     "action": action,
                     "source_issue_type": it,
+                    "source_issue_types": st.get("source_issue_types") or ([it] if it else []),
+                    "source_issue_ids": st.get("source_issue_ids") or ([make_issue_id(ds_name, col, it)] if it else []),
                     "severity": sev,
                     "estimated_affected_rows": row_est,
                     "priority": pri,
@@ -900,48 +909,56 @@ class PlanBuilder:
                 if st.get("llm_recommendation"):
                     entry["llm_recommendation"] = st["llm_recommendation"]
 
-                prev = step_map.get(key)
-                if not prev or (row_est and (prev.get("estimated_affected_rows") or 0) < (row_est or 0)):
+                if key in step_map:
+                    step_map[key] = merge_steps(step_map[key], entry)
+                else:
                     step_map[key] = entry
 
         for ds, col, act, note in _steps_from_business_notes(rules, assessment):
             if column_is_excluded(col, exclude):
                 continue
-            key = (ds, col, act, "business_notes")
-            if key not in step_map:
-                cstats = _col_stats_for_step(assessment, ds, col)
-                if ds and col:
-                    col_key = f"{ds}.{col}"
-                    desc = sem_schema.get(col_key)
-                    if desc:
-                        cstats = dict(cstats)
-                        cstats["semantic_type"] = desc.get("semantic_type")
-                        cstats["sub_type"] = desc.get("sub_type")
-                        cstats["pii_level"] = desc.get("pii_level")
-                        cstats["fill_strategy"] = desc.get("fill_strategy")
-                ev = {"why_this_action": note, "confidence": 0.9}
-                step_map[key] = {
-                    "dataset": ds,
-                    "column": col,
-                    "action": act,
-                    "source_issue_type": "business_notes",
-                    "severity": "medium",
-                    "priority": _ACTION_PRIORITY.get(act, 56),
-                    "note": note,
-                    "params": build_step_params(act, column=col, col_stats=cstats, evidence=ev, rules=rules),
-                    "evidence": ev,
-                    "message": note,
-                }
+            key = step_identity(ds, col, act)
+            cstats = _col_stats_for_step(assessment, ds, col)
+            if ds and col:
+                col_key = f"{ds}.{col}"
+                desc = sem_schema.get(col_key)
+                if desc:
+                    cstats = dict(cstats)
+                    cstats["semantic_type"] = desc.get("semantic_type")
+                    cstats["sub_type"] = desc.get("sub_type")
+                    cstats["pii_level"] = desc.get("pii_level")
+                    cstats["fill_strategy"] = desc.get("fill_strategy")
+            ev = {"why_this_action": note, "confidence": 0.9}
+            b_entry = {
+                "step_id": make_step_id(ds, col, act),
+                "dataset": ds or "_global",
+                "column": col,
+                "action": act,
+                "source_issue_type": "business_notes",
+                "source_issue_types": ["business_notes"],
+                "source_issue_ids": [make_issue_id(ds, col, "business_notes")],
+                "severity": "medium",
+                "priority": _ACTION_PRIORITY.get(act, 56),
+                "note": note,
+                "params": build_step_params(act, column=col, col_stats=cstats, evidence=ev, rules=rules),
+                "evidence": ev,
+                "message": note,
+            }
+            if key in step_map:
+                step_map[key] = merge_steps(step_map[key], b_entry)
+            else:
+                step_map[key] = b_entry
 
         # Per-dataset ordered steps
-        datasets_out: Dict[str, Any] = {}
+        datasets_out: Dict[str, Any] = {ds: [] for ds in datasets_known}
         global_steps: List[Dict[str, Any]] = []
 
         for key, st in step_map.items():
-            ds_name = key[0]
+            ds_name = st.get("dataset")
             if not ds_name or ds_name == "_global":
                 global_steps.append(
                     {
+                        "step_id": st.get("step_id") or make_step_id("_global", st.get("column"), st["action"]),
                         "order": st["priority"],
                         "column": st.get("column"),
                         "action": st["action"],
@@ -966,39 +983,45 @@ class PlanBuilder:
             if act == "validate_referential_integrity_or_stage":
                 ds = rstep.get("dataset") or "_global"
                 col = rstep.get("column")
-                key = (ds, (col or "*"), act, "relationship")
-                if key not in step_map:
-                    ri_ev = rstep.get("evidence") or {}
-                    step_map[key] = {
-                        "dataset": ds,
-                        "column": col,
-                        "action": act,
-                        "severity": "high",
-                        "estimated_affected_rows": rstep.get("estimated_affected_rows"),
-                        "priority": _ACTION_PRIORITY.get(act, 300),
-                        "note": f"FK to {rstep.get('related_dataset')}.{rstep.get('related_column')}",
-                        "params": build_ri_step_params(rstep, rules),
-                        "evidence": ri_ev,
-                        "message": ri_ev.get("why_this_action"),
-                    }
-                    datasets_out.setdefault(ds, []).append(step_map[key])
+                key = step_identity(ds, col, act)
+                ri_ev = rstep.get("evidence") or {}
+                r_entry = {
+                    "step_id": make_step_id(ds, col, act),
+                    "dataset": ds,
+                    "column": col,
+                    "action": act,
+                    "source_issue_type": "referential_integrity",
+                    "source_issue_types": ["referential_integrity"],
+                    "source_issue_ids": [make_issue_id(ds, col, "referential_integrity")],
+                    "severity": "high",
+                    "estimated_affected_rows": rstep.get("estimated_affected_rows"),
+                    "priority": _ACTION_PRIORITY.get(act, 300),
+                    "note": f"FK to {rstep.get('related_dataset')}.{rstep.get('related_column')}",
+                    "params": build_ri_step_params(rstep, rules),
+                    "evidence": ri_ev,
+                    "message": ri_ev.get("why_this_action"),
+                }
+                if key in step_map:
+                    step_map[key] = merge_steps(step_map[key], r_entry)
+                else:
+                    step_map[key] = r_entry
+                    if ds and ds != "_global":
+                        datasets_out.setdefault(ds, []).append(step_map[key])
 
         global_steps.sort(key=lambda x: x.get("order") or 0)
         for i, st in enumerate(global_steps, start=1):
             st["order"] = i
 
-
-
         for ds_name, steps in datasets_out.items():
-            # Deduplicate steps with identical action and column
-            seen_step_keys = set()
-            deduped_steps = []
+            # Deduplicate steps using merge_steps if any duplicate identities still exist
+            step_identity_map = {}
             for st in steps:
-                s_key = (st.get("action"), str(st.get("column") or "").lower())
-                if s_key not in seen_step_keys:
-                    seen_step_keys.add(s_key)
-                    deduped_steps.append(st)
-            steps = deduped_steps
+                s_ident = step_identity(ds_name, st.get("column"), st.get("action"))
+                if s_ident in step_identity_map:
+                    step_identity_map[s_ident] = merge_steps(step_identity_map[s_ident], st)
+                else:
+                    step_identity_map[s_ident] = st
+            steps = list(step_identity_map.values())
             steps.sort(key=lambda x: (x["priority"], str(x.get("column") or "")))
             enriched_steps: List[Dict[str, Any]] = []
             for i, st in enumerate(steps, start=1):
