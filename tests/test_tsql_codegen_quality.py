@@ -751,5 +751,156 @@ def test_azure_sql_executor_remediates_syntax_near_or():
     assert rem[0].endswith(";")
 
 
+def test_tsql_html_entities_decoded_and_stripped():
+    raw_sql = """
+-- Comments with HTML<br>
+SELECT col1 &lt; col2 AS test_col<br>
+FROM dbo.TestTable<br>
+WHERE col3 &gt; 10 AND status &amp; 1 = 1;
+"""
+    processed = _postprocess_tsql_code(raw_sql)
+    assert "<br>" not in processed
+    assert "&lt;" not in processed
+    assert "&gt;" not in processed
+    assert "&amp;" not in processed
+    assert "col1 < col2" in processed
+    assert "col3 > 10" in processed
+
+
+def test_tsql_etl_log_hoisted_before_first_insert():
+    raw_sql = """
+SET NOCOUNT ON;
+DECLARE @run_id INT;
+BEGIN TRY
+    INSERT INTO dbo.etl_log (process_name, start_time, status) VALUES ('ETL_Pipeline', GETDATE(), 'RUNNING');
+    SET @run_id = SCOPE_IDENTITY();
+    SELECT 1;
+END TRY
+BEGIN CATCH
+    THROW;
+END CATCH;
+"""
+    processed = _postprocess_tsql_code(raw_sql)
+    log_ddl_pos = processed.find("CREATE TABLE dbo.etl_log")
+    insert_pos = processed.find("INSERT INTO dbo.etl_log")
+    assert log_ddl_pos != -1, "dbo.etl_log DDL must be synthesized if missing"
+    assert log_ddl_pos < insert_pos, "dbo.etl_log DDL must be before any INSERT INTO dbo.etl_log"
+
+
+def test_tsql_no_duplicate_alter_table_columns():
+    raw_sql = """
+SELECT 
+    src.[Price],
+    src.[Price] AS [Price_raw],
+    CAST(NULL AS NVARCHAR(MAX)) AS [Price_clean],
+    CAST(NULL AS VARCHAR(50)) AS [Price_validation_status],
+    CAST(NULL AS VARCHAR(500)) AS [Price_validation_reason]
+INTO #Courses_Staging
+FROM dbo.Courses AS src;
+
+UPDATE #Courses_Staging
+SET [Price_clean] = NULL, [Price_validation_status] = 'invalid'
+WHERE [Price] < 0;
+"""
+    processed = _postprocess_tsql_code(raw_sql)
+    # Price_clean, Price_validation_status, Price_validation_reason should NOT be ALTER TABLE added
+    assert "ALTER TABLE #Courses_Staging ADD [Price_clean]" not in processed
+    assert "ALTER TABLE #Courses_Staging ADD [Price_validation_status]" not in processed
+
+
+def test_tsql_no_staging_staging_tables():
+    raw_sql = """
+SELECT [CourseID] INTO #Courses_Staging FROM dbo.Courses;
+UPDATE dbo.Courses_Staging SET [CourseID] = '123';
+UPDATE #Courses_Staging_Staging SET [CourseID] = '456';
+"""
+    processed = _postprocess_tsql_code(raw_sql)
+    assert "#Courses_Staging_Staging" not in processed
+    assert "#Courses_Staging" in processed
+
+
+def test_tsql_datetime_no_empty_string_comparison():
+    raw_sql = """
+UPDATE #Orders_Staging
+SET [OrderDate_clean] = NULL
+WHERE [OrderDate] = '' OR [CreatedDate] <> '';
+"""
+    processed = _postprocess_tsql_code(raw_sql)
+    assert "[OrderDate] = ''" not in processed
+    assert "[OrderDate] IS NULL" in processed
+    assert "[CreatedDate] <> ''" not in processed
+    assert "[CreatedDate] IS NOT NULL" in processed
+
+
+def test_tsql_run_id_procedure_parameterization():
+    raw_sql = """
+CREATE OR ALTER PROCEDURE dbo.etl_clean_Courses
+AS
+BEGIN
+    INSERT INTO dbo.Courses_Clean (CourseID, etl_batch_id)
+    SELECT CourseID, @run_id
+    FROM #Courses_Staging;
+END;
+GO
+
+DECLARE @run_id INT = 42;
+EXEC dbo.etl_clean_Courses;
+"""
+    processed = _postprocess_tsql_code(raw_sql)
+    assert "CREATE OR ALTER PROCEDURE dbo.etl_clean_Courses (\n    @run_id INT = NULL\n) AS" in processed
+    assert "EXEC dbo.etl_clean_Courses @run_id = @run_id" in processed
+
+
+def test_validate_tsql_rejects_html_and_double_staging():
+    # HTML rejection
+    bad_html = """
+CREATE TABLE dbo.etl_log (id INT);
+GO
+BEGIN TRY
+    SELECT SCOPE_IDENTITY();
+    SELECT 1 &lt; 2;<br>
+END TRY
+BEGIN CATCH
+    ROLLBACK;
+END CATCH;
+"""
+    ok, errors, _ = validate_tsql(bad_html)
+    assert not ok
+    assert any("HTML" in e for e in errors)
+
+    # Double staging rejection
+    bad_staging = """
+CREATE TABLE dbo.etl_log (id INT);
+GO
+BEGIN TRY
+    SELECT SCOPE_IDENTITY();
+    SELECT * INTO #Orders_Staging_Staging FROM dbo.Orders;
+END TRY
+BEGIN CATCH
+    ROLLBACK;
+END CATCH;
+"""
+    ok, errors, _ = validate_tsql(bad_staging)
+    assert not ok
+    assert any("Staging_Staging" in e for e in errors)
+
+    # Date comparison rejection
+    bad_date = """
+CREATE TABLE dbo.etl_log (id INT);
+GO
+BEGIN TRY
+    SELECT SCOPE_IDENTITY();
+    SELECT * FROM dbo.Orders WHERE OrderDate = '';
+END TRY
+BEGIN CATCH
+    ROLLBACK;
+END CATCH;
+"""
+    ok, errors, _ = validate_tsql(bad_date)
+    assert not ok
+    assert any("empty string" in e for e in errors)
+
+
+
 
 

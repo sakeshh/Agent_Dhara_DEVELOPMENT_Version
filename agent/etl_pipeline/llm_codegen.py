@@ -974,48 +974,110 @@ def _sanitize_html_entities_in_code(code: str) -> str:
 
 
 def _postprocess_tsql_code(code: str) -> str:
-    """Sanitizes generated T-SQL to guarantee zero syntax and runtime errors:
-    1. Hoists table DDL outside BEGIN TRY so infrastructure exists before execution.
-    2. Strips all 'GO' batch separators inside BEGIN TRY ... END CATCH blocks.
-    3. Ensures balanced transactions (BEGIN TRANSACTION inside TRY, COMMIT before success).
-    4. Guards ROLLBACK with @@TRANCOUNT / XACT_STATE checks to prevent Msg 3903.
-    5. Injects missing companion columns to staging tables to prevent Msg 207 invalid column errors.
+    """Sanitizes generated T-SQL to guarantee zero syntax and runtime errors in Azure SQL Query Editor:
+    1. Decodes all HTML markup and entities (<br>, &lt;, &gt;, &amp;, &quot;, &#39;).
+    2. Hoists all table DDLs (dbo.etl_log, dbo.etl_rejects, dbo.etl_watermark, and dbo.*_Clean)
+       to the absolute top batch, guaranteeing they exist before any INSERT or execution.
+    3. Strips all 'GO' batch separators after execution begins (variables like @run_id stay in scope).
+    4. Ensures @run_id declaration and parameterizes any stored procedures (@run_id INT = NULL).
+    5. Redirects source table updates to #<Table>_Staging without multi-suffixing (#*_Staging_Staging).
+    6. Ensures balanced transactions (BEGIN TRANSACTION inside TRY, COMMIT before success).
+    7. Guards ROLLBACK with @@TRANCOUNT / XACT_STATE checks to prevent Msg 3903.
+    8. Injects missing companion columns to staging tables without duplicating existing columns.
+    9. Sanitizes syntax: removes CREATE OR REPLACE, CREATE OR ALTER TABLE, filtered index OR,
+       DATETIME empty string comparisons, and raw boolean assignments.
     """
     if not code:
         return code
 
     code = _sanitize_unquoted_nan_in_code(code)
 
-    # 0. Ensure ANSI_NULLS and QUOTED_IDENTIFIER are set (mandatory for Azure SQL views/indexes)
-    upper_code = code.upper()
-    ansi_prefix = ""
-    if "SET ANSI_NULLS ON" not in upper_code:
-        ansi_prefix += "SET ANSI_NULLS ON;\n"
-    if "SET QUOTED_IDENTIFIER ON" not in upper_code:
-        ansi_prefix += "SET QUOTED_IDENTIFIER ON;\n"
-    if ansi_prefix:
-        code = ansi_prefix + "GO\n\n" + code
-    try_match = re.search(r"\bBEGIN\s+TRY\b", code, re.IGNORECASE)
-    if try_match:
-        post_try = code[try_match.end():]
-        run_match = re.search(r"(?:DECLARE\s+@run_id|SET\s+@run_id|INSERT\s+INTO\s+dbo\.etl_log)", post_try, re.IGNORECASE)
-        if run_match:
-            pre_run_code = post_try[:run_match.start()]
-            general_pattern = re.compile(
-                r"(IF\s+NOT\s+EXISTS\s*\([^;]+\)\s*CREATE\s+TABLE\s+[^;]+;\s*(?:--\s*GO\s*|\bGO\b\s*)?)",
-                re.IGNORECASE
+    # 0a. Strip and unescape HTML markup / entities
+    code = re.sub(r"<\s*br\s*/?\s*>", "\n", code, flags=re.IGNORECASE)
+    import html
+    code = html.unescape(code)
+    _html_entities = {
+        "&lt;": "<",
+        "&gt;": ">",
+        "&amp;": "&",
+        "&quot;": '"',
+        "&#39;": "'",
+        "&apos;": "'",
+        "&nbsp;": " ",
+    }
+    for ent, repl in _html_entities.items():
+        code = code.replace(ent, repl)
+
+    # 0b. Hoist all Infrastructure Table DDLs and Target Clean Table DDLs to the absolute top batch!
+    # Pattern to match: IF NOT EXISTS (...) CREATE TABLE dbo.TableName (...); (optionally followed by GO)
+    # OR standalone CREATE TABLE dbo.TableName (...);
+    ddl_block_pattern = re.compile(
+        r"(?:IF\s+NOT\s+EXISTS\s*\([^;]+?\)\s*)?CREATE\s+TABLE\s+(?:\[?dbo\]?\.)?\[?(etl_log|etl_rejects|etl_watermark|[a-zA-Z0-9_]+_Clean)\]?\s*\([\s\S]+?\);(?:\s*(?:--\s*GO\b|\bGO\b))?",
+        re.IGNORECASE
+    )
+    matched_ddl_blocks = [m.group(0).strip() for m in ddl_block_pattern.finditer(code)]
+    if matched_ddl_blocks:
+        code = ddl_block_pattern.sub("", code)
+
+    # Build clean infrastructure & target table DDL header
+    infra_ddls = []
+    has_etl_log = any("etl_log" in b.lower() for b in matched_ddl_blocks) or "dbo.etl_log" in code.lower()
+    if has_etl_log:
+        log_ddl = [b for b in matched_ddl_blocks if "etl_log" in b.lower()]
+        if log_ddl:
+            infra_ddls.append(re.sub(r"\s*(?:--\s*GO\b|\bGO\b)\s*$", "", log_ddl[0], flags=re.IGNORECASE).strip() + "\nGO")
+        else:
+            infra_ddls.append(
+                "IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'etl_log' AND schema_id = SCHEMA_ID('dbo'))\n"
+                "CREATE TABLE dbo.etl_log (\n"
+                "    id INT IDENTITY(1,1) PRIMARY KEY,\n"
+                "    process_name NVARCHAR(255),\n"
+                "    start_time DATETIME,\n"
+                "    end_time DATETIME,\n"
+                "    status NVARCHAR(50)\n"
+                ");\nGO"
             )
-            ddls = general_pattern.findall(pre_run_code)
-            if ddls:
-                cleaned_pre = general_pattern.sub("", pre_run_code)
-                hoisted_list = []
-                for d in ddls:
-                    d_clean = re.sub(r"\s*(?:--\s*GO\b|GO\b)\s*$", "", d.strip(), flags=re.IGNORECASE).strip()
-                    hoisted_list.append(d_clean + "\nGO")
-                hoisted_str = "\n\n".join(hoisted_list)
-                before_try = code[:try_match.start()].rstrip()
-                after_try = cleaned_pre + post_try[run_match.start():]
-                code = f"{before_try}\n\n-- =============================================\n-- Database Infrastructure DDL (Executed before batch)\n-- =============================================\n{hoisted_str}\n\nBEGIN TRY{after_try}"
+
+    has_etl_rejects = any("etl_rejects" in b.lower() for b in matched_ddl_blocks) or "dbo.etl_rejects" in code.lower()
+    if has_etl_rejects:
+        rej_ddl = [b for b in matched_ddl_blocks if "etl_rejects" in b.lower()]
+        if rej_ddl:
+            infra_ddls.append(re.sub(r"\s*(?:--\s*GO\b|\bGO\b)\s*$", "", rej_ddl[0], flags=re.IGNORECASE).strip() + "\nGO")
+        else:
+            infra_ddls.append(
+                "IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'etl_rejects' AND schema_id = SCHEMA_ID('dbo'))\n"
+                "CREATE TABLE dbo.etl_rejects (\n"
+                "    id INT IDENTITY(1,1) PRIMARY KEY,\n"
+                "    process_name NVARCHAR(255),\n"
+                "    table_name NVARCHAR(255),\n"
+                "    row_data NVARCHAR(MAX),\n"
+                "    error_reason NVARCHAR(500),\n"
+                "    rejected_at DATETIME\n"
+                ");\nGO"
+            )
+
+    clean_ddls = []
+    for b in matched_ddl_blocks:
+        if "etl_log" not in b.lower() and "etl_rejects" not in b.lower():
+            b_clean = re.sub(r"\s*(?:--\s*GO\b|\bGO\b)\s*$", "", b, flags=re.IGNORECASE).strip()
+            clean_ddls.append(b_clean + "\nGO")
+
+    hoisted_all = "\n\n".join(infra_ddls + clean_ddls)
+
+    # 1. Ensure ANSI_NULLS and QUOTED_IDENTIFIER are set at line 1
+    code = re.sub(r"^\s*SET\s+ANSI_NULLS\s+ON;?\s*(?:GO)?\s*", "", code, flags=re.IGNORECASE | re.MULTILINE)
+    code = re.sub(r"^\s*SET\s+QUOTED_IDENTIFIER\s+ON;?\s*(?:GO)?\s*", "", code, flags=re.IGNORECASE | re.MULTILINE)
+    code = code.strip()
+
+    prefix_block = "SET ANSI_NULLS ON;\nSET QUOTED_IDENTIFIER ON;\nGO\n\n"
+    if hoisted_all:
+        prefix_block += (
+            "-- =============================================\n"
+            "-- Database Infrastructure & Target Clean Tables DDL\n"
+            "-- =============================================\n"
+            f"{hoisted_all}\n\n"
+        )
+    code = prefix_block + code
 
     # 2. Strip ALL GO statements after the start of execution (SET NOCOUNT / DECLARE @run_id / BEGIN TRY)
     # In T-SQL, variables like @run_id do NOT survive across GO boundaries.
@@ -1032,7 +1094,6 @@ def _postprocess_tsql_code(code: str) -> str:
             if re.match(r"^\s*GO\s*(?:--.*)?$", lines[i], re.IGNORECASE):
                 lines[i] = "-- GO (omitted for variable scope across execution batch)"
     else:
-        # Fallback: comment out any GO between first BEGIN TRY and EOF
         try_seen = False
         for i, line in enumerate(lines):
             line_clean = line.strip().upper()
@@ -1051,7 +1112,6 @@ def _postprocess_tsql_code(code: str) -> str:
             code = code[:pos] + "DECLARE @run_id INT;\n\n" + code[pos:]
 
     # 2c. Redirect updates targeting source tables to their staging tables
-    # 2c. Redirect updates targeting source tables to their staging tables
     # Exclude declared CTE names, temporary tables, clean target tables, and infrastructure tables
     declared_ctes = set(re.findall(r"\bWITH\s+([a-zA-Z0-9_]+)\s+AS\s*\(", code, re.IGNORECASE))
     declared_ctes.update(re.findall(r",\s*([a-zA-Z0-9_]+)\s+AS\s*\(", code, re.IGNORECASE))
@@ -1061,18 +1121,23 @@ def _postprocess_tsql_code(code: str) -> str:
         prefix = match.group(1) or ""
         tbl_raw = match.group(3)
         suffix = match.group(4)
-        clean_tbl = tbl_raw.strip("[]")
+        clean_tbl = tbl_raw.strip("[]#")
         low = clean_tbl.lower()
-        if low.startswith("#") or low.endswith("_clean") or low in ("etl_log", "etl_rejects", "etl_watermark") or low in declared_ctes_lower or "cte" in low:
+        if low.endswith("_clean") or low in ("etl_log", "etl_rejects", "etl_watermark") or low in declared_ctes_lower or "cte" in low:
             return match.group(0)
-        return f"{prefix}#{clean_tbl}_Staging{suffix}"
+        # Avoid multi-suffixing (#*_Staging_Staging)
+        base_name = re.sub(r"(?:_staging)+$", "", clean_tbl, flags=re.IGNORECASE).strip("#")
+        return f"{prefix}#{base_name}_Staging{suffix}"
 
     code = re.sub(
-        r"(\bUPDATE\s+)(?:(\[?dbo\]?\.)?\[?([a-zA-Z0-9_]+)\]?)(\s+SET\b)",
+        r"(\bUPDATE\s+)(?:(\[?dbo\]?\.)?\[?([a-zA-Z0-9_#]+)\]?)(\s+SET\b)",
         _redirect_source_updates,
         code,
         flags=re.IGNORECASE
     )
+    # Global cleanup of any stray multi-staging names
+    code = re.sub(r"#+([a-zA-Z0-9_]+?)(?:_Staging)+_Staging\b", r"#\1_Staging", code, flags=re.IGNORECASE)
+    code = re.sub(r"\[#+([a-zA-Z0-9_]+?)(?:_Staging)+_Staging\]", r"[#\1_Staging]", code, flags=re.IGNORECASE)
 
     # 2d. Fix pseudo-column [Row-level] / [row-level] in SET clauses
     code = re.sub(
@@ -1082,8 +1147,7 @@ def _postprocess_tsql_code(code: str) -> str:
         flags=re.IGNORECASE
     )
 
-    # 2e. Phone Validation Length Fix:
-    # If phone validation checks NOT LIKE '%[^0-9]%' without length check, enforce LEN BETWEEN 7 AND 15
+    # 2e. Phone Validation Length Fix
     def _fix_phone_check(match):
         cond = match.group(0)
         if "7" not in cond and "15" not in cond:
@@ -1093,6 +1157,38 @@ def _postprocess_tsql_code(code: str) -> str:
     code = re.sub(
         r"\[?Phone\]?\s+NOT\s+LIKE\s+'%\[\^0-9\]%'",
         _fix_phone_check,
+        code,
+        flags=re.IGNORECASE
+    )
+
+    # 2f. Parameterize @run_id on any stored procedures if present
+    proc_matches = list(re.finditer(r"(CREATE\s+(?:OR\s+ALTER\s+)?PROCEDURE\s+(?:dbo\.)?([a-zA-Z0-9_]+))([\s\S]*?)\bAS\b", code, re.IGNORECASE))
+    for pm in proc_matches:
+        full_sig = pm.group(0)
+        proc_prefix = pm.group(1)
+        proc_name = pm.group(2)
+        proc_params = pm.group(3)
+        proc_body_match = re.search(rf"{re.escape(full_sig)}([\s\S]*?)(?:CREATE\s+(?:OR\s+ALTER\s+)?PROCEDURE|\Z)", code, re.IGNORECASE)
+        proc_body = proc_body_match.group(1) if proc_body_match else ""
+        if "@run_id" in proc_body.lower() and "@run_id" not in proc_params.lower():
+            if proc_params.strip():
+                new_sig = f"{proc_prefix} (\n    @run_id INT = NULL,\n    {proc_params.strip()}\n) AS"
+            else:
+                new_sig = f"{proc_prefix} (\n    @run_id INT = NULL\n) AS"
+            code = code.replace(full_sig, new_sig, 1)
+
+    def _inject_run_id_to_exec(m):
+        full = m.group(0)
+        pname = m.group(1)
+        args = (m.group(2) or "").strip()
+        if "@run_id" not in args.lower():
+            prefix_comma = ", " if args else ""
+            return f"EXEC dbo.{pname} @run_id = @run_id{prefix_comma}{args}"
+        return full
+
+    code = re.sub(
+        r"\bEXEC\s+(?:dbo\.)?([a-zA-Z0-9_]+)(?:\s+([^;\n]+))?",
+        _inject_run_id_to_exec,
         code,
         flags=re.IGNORECASE
     )
@@ -1140,7 +1236,7 @@ def _postprocess_tsql_code(code: str) -> str:
         flags=re.IGNORECASE
     )
 
-    # 6. Ensure companion columns exist on staging tables
+    # 6. Ensure companion columns exist on staging tables (WITHOUT duplicate column injection)
     staging_tables = re.findall(r"#([a-zA-Z0-9_]+)_Staging\b", code, re.IGNORECASE)
     for st_name in set(staging_tables):
         st_full = f"#{st_name}_Staging"
@@ -1161,10 +1257,15 @@ def _postprocess_tsql_code(code: str) -> str:
                     cols_needed.add(f"{base_c}_validation_reason")
 
         if cols_needed:
-            create_st = re.search(rf"SELECT\s+[^;]+INTO\s+{re.escape(st_full)}[^;]*;", code, re.IGNORECASE)
+            create_st = re.search(rf"SELECT\s+[\s\S]+?INTO\s+{re.escape(st_full)}[^;]*;", code, re.IGNORECASE)
             if create_st:
                 create_stmt = create_st.group(0)
-                missing_cols = [c for c in cols_needed if f"[{c}]" not in create_stmt]
+                # Check if column is already present in create_stmt (bracketed, unbracketed, or aliased)
+                def _col_already_in_create(col_name, stmt):
+                    pattern = rf"(?:\[{re.escape(col_name)}\]|\bAS\s+\[?{re.escape(col_name)}\]?\b|\b{re.escape(col_name)}\b)"
+                    return bool(re.search(pattern, stmt, re.IGNORECASE))
+
+                missing_cols = [c for c in cols_needed if not _col_already_in_create(c, create_stmt)]
                 if missing_cols:
                     alter_clauses = []
                     for mc in sorted(missing_cols):
@@ -1183,7 +1284,6 @@ def _postprocess_tsql_code(code: str) -> str:
                     code = code[:ins_pt] + alter_sql + code[ins_pt:]
 
     # 7. Clean Data Integrity Guard (Table-Specific):
-    # Only nullify columns that ACTUALLY exist in the specific staging table
     for st_name in set(staging_tables):
         st_full = f"#{st_name}_Staging"
         st_updates = re.findall(rf"UPDATE\s+{re.escape(st_full)}\s+SET\s+([^;]+?)(?:WHERE\b|;)", code, re.IGNORECASE)
@@ -1208,13 +1308,13 @@ def _postprocess_tsql_code(code: str) -> str:
                     code = code[:ins_pos] + guard_stmt + "\n    " + code[ins_pos:]
 
     # 8. Rejects & Quarantine per-row correlated insert guard:
-    # If INSERT INTO dbo.etl_rejects aggregates via (SELECT * FROM ... FOR JSON PATH), rewrite to correlated row insert
     code = re.sub(
         r"INSERT\s+INTO\s+dbo\.etl_rejects\s*(?:\([^)]+\)\s*)?SELECT\s+[\s\S]+?,\s*\(\s*SELECT\s+\*\s+FROM\s+(#\w+_Staging)\s+WHERE\s+([^;]+?)\s+FOR\s+JSON\s+PATH\s*\)",
         r"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason, rejected_at)\n    SELECT 'ETL_Pipeline', '\1', (SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER), 'Validation failure', GETDATE()\n    FROM \1 s\n    WHERE \2",
         code,
         flags=re.IGNORECASE
     )
+
     # 9. T-SQL Syntax and Reserved Keyword Sanitization (Prevents Msg 156 near keyword 'OR'):
     # 9a. Sanitize 'CREATE OR REPLACE' -> invalid in T-SQL
     code = re.sub(r"\bCREATE\s+OR\s+REPLACE\s+TABLE\b", "CREATE TABLE", code, flags=re.IGNORECASE)
@@ -1227,22 +1327,21 @@ def _postprocess_tsql_code(code: str) -> str:
     # 9b. Sanitize 'CREATE OR ALTER TABLE' -> invalid in T-SQL (tables do not support CREATE OR ALTER)
     code = re.sub(r"\bCREATE\s+OR\s+ALTER\s+TABLE\b", "CREATE TABLE", code, flags=re.IGNORECASE)
 
-    # 9c. Sanitize filtered indexes with 'OR' in WHERE clause -> causes Msg 156 'Incorrect syntax near keyword OR'
+    # 9c. Sanitize filtered indexes with 'OR' in WHERE clause
     def _fix_filtered_idx(m):
         full_match = m.group(0)
-        if re.search(r"\bWHERE\b[\s\S]*\bOR\b", full_match, re.IGNORECASE):
-            return re.sub(r"\s+WHERE\s+[\s\S]*?;?$", ";", full_match, flags=re.IGNORECASE)
+        if re.search(r"\bWHERE\b[^;\n]*\bOR\b", full_match, re.IGNORECASE):
+            return re.sub(r"\s+WHERE\s+[^;\n]*;", ";", full_match, flags=re.IGNORECASE)
         return full_match
 
     code = re.sub(
-        r"(?:IF\s+NOT\s+EXISTS\s*\([^;]+\)\s*)?CREATE\s+(?:UNIQUE\s+)?(?:NONCLUSTERED\s+|CLUSTERED\s+)?INDEX\s+[^\n;]+?\s+ON\s+[^\n;]+?\s+WHERE\s+[^\n;]+;",
+        r"(?:IF\s+NOT\s+EXISTS\s*\([^;]+\)\s*)?CREATE\s+(?:UNIQUE\s+)?(?:NONCLUSTERED\s+|CLUSTERED\s+)?INDEX\s+[\w\.\[\]]+\s+ON\s+[\w\.\[\]]+\s*\([^\)]+\)\s*WHERE\s+[^;\n]+;",
         _fix_filtered_idx,
         code,
         flags=re.IGNORECASE
     )
 
     # 9d. Sanitize raw boolean assignments without CASE:
-    # e.g., [is_valid] = [col] > 0 OR [col] < 10
     def _fix_boolean_assignment(m):
         prefix = m.group(1)
         expr = m.group(2).strip()
@@ -1253,6 +1352,26 @@ def _postprocess_tsql_code(code: str) -> str:
     code = re.sub(
         r"(\[\w+\]\s*=\s*)([^,;\n]+?(?:>|<|=|<>|!=|\bLIKE\b|\bIS NULL\b|\bIS NOT NULL\b)[^,;\n]+?\bOR\b[^,;\n]+?)(?=[,;\n])",
         _fix_boolean_assignment,
+        code,
+        flags=re.IGNORECASE
+    )
+
+    # 9e. Sanitize invalid DATETIME comparisons against empty string ''
+    code = re.sub(
+        r"(\[?\w*(?:Date|Time|Timestamp)\w*\]?)\s*=\s*''",
+        r"\1 IS NULL",
+        code,
+        flags=re.IGNORECASE
+    )
+    code = re.sub(
+        r"(\[?\w*(?:Date|Time|Timestamp)\w*\]?)\s*(?:<>|!=)\s*''",
+        r"\1 IS NOT NULL",
+        code,
+        flags=re.IGNORECASE
+    )
+    code = re.sub(
+        r"(\[?\w+\]?\s+IS\s+NULL)\s+OR\s+\1\b",
+        r"\1",
         code,
         flags=re.IGNORECASE
     )
@@ -1924,15 +2043,23 @@ PYTHON REQUIREMENTS:
 
 T-SQL REQUIREMENTS:
 - Header comment block with plan_id.
+- NO HTML MARKUP OR ENTITIES (CRITICAL):
+  Output MUST be 100% pure executable T-SQL text. NEVER emit HTML tags (<br>, <p>, <div>) or HTML entities (&lt;, &gt;, &amp;, &quot;). Use plain '<', '>', '&', '"'.
 - SCRIPT STRUCTURE & IDEMPOTENT DDL (CRITICAL FOR RUNTIME COMPILATION):
   1. ALL table DDL statements MUST be executed FIRST at the top, BEFORE execution or stored procedure bodies:
      - Infrastructure tables: `dbo.etl_log`, `dbo.etl_rejects`, `dbo.etl_watermark`.
      - Target clean tables: `dbo.<Table>_Clean` for every dataset.
      - Tables: `IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TableName' AND schema_id = SCHEMA_ID('dbo')) CREATE TABLE dbo.TableName (...);`
      - Indexes: `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IndexName' AND object_id = OBJECT_ID('dbo.TableName')) CREATE NONCLUSTERED INDEX IndexName ON dbo.TableName (...);`
-     - Stored Procedures: `CREATE OR ALTER PROCEDURE dbo.ProcName AS BEGIN ... END; GO`.
      - Each outer script DDL statement MUST be followed by a `GO` batch separator on its own line.
-  2. ABSOLUTE FORBIDDEN: NEVER output `GO` inside `BEGIN TRY ... END TRY`, inside `BEGIN CATCH ... END CATCH`, or anywhere in the execution section:
+  2. STORED PROCEDURE PARAMETERIZATION & TEMP TABLE SCOPE:
+     - If modular stored procedures are generated, they MUST explicitly declare `@run_id INT = NULL` as a formal parameter:
+       `CREATE OR ALTER PROCEDURE dbo.etl_clean_TableName (@run_id INT = NULL) AS BEGIN ... END; GO`
+       Stored procedures CANNOT access caller variables! Never reference `@run_id` without declaring `@run_id INT = NULL` in the parameter list.
+       Caller must pass: `EXEC dbo.etl_clean_TableName @run_id = @run_id;`.
+     - Stored procedure temp table scoping: `#temp` tables created inside a stored procedure are automatically dropped when the procedure exits. Therefore:
+       Either (a) perform all staging, cleaning, and target clean inserts linearly in the main `BEGIN TRY ... END TRY` block using `#<Table>_Staging`, OR (b) inside each stored procedure, create `#<Table>_Staging`, execute all cleaning, and insert directly into `dbo.<Table>_Clean`. Do NOT attempt to read a procedure's `#temp` table from the caller!
+  3. ABSOLUTE FORBIDDEN: NEVER output `GO` inside `BEGIN TRY ... END TRY`, inside `BEGIN CATCH ... END CATCH`, or anywhere in the execution section:
      Once the execution section begins (`SET NOCOUNT ON; SET XACT_ABORT ON; DECLARE @run_id INT; BEGIN TRY...`), NEVER emit `GO` ANYWHERE in the remainder of the script!
      In T-SQL, `GO` ends the batch and destroys local variables like `@run_id`, causing fatal compilation errors (`Must declare the scalar variable "@run_id"`).
      The entire data pipeline must execute in a SINGLE contiguous batch from `SET NOCOUNT ON;` through `END CATCH`.
@@ -1940,7 +2067,7 @@ T-SQL REQUIREMENTS:
   - Raw source tables (e.g. `dbo.Courses`, `dbo.Customers`, `dbo.Customers_Raw`) are READ-ONLY and IMMUTABLE.
   - NEVER write `UPDATE dbo.Courses`, `UPDATE dbo.Customers`, or `UPDATE dbo.Customers_Raw`!
   - Source tables do NOT contain `_clean`, `_validation_status`, or `_validation_reason` columns. Any UPDATE on a source table will immediately fail with `Msg 207 (Invalid column name)`.
-  - ALL data cleaning, transformation, and validation updates MUST target the temporary staging table: `UPDATE #<Table>_Staging SET ...`.
+  - ALL data cleaning, transformation, and validation updates MUST target the temporary staging table: `UPDATE #<Table>_Staging SET ...`. NEVER name temp tables `#<Table>_Staging_Staging`.
 - Transaction Safety & Execution Logging:
   - Header: ALWAYS declare `SET NOCOUNT ON;` and `SET XACT_ABORT ON;` before the execution block.
   - Logging & Run ID: At the start of the execution TRY block, execute:
@@ -1955,17 +2082,18 @@ T-SQL REQUIREMENTS:
     ```
     Never execute a bare `ROLLBACK TRANSACTION;` without verifying an active transaction exists (prevents `Msg 3903: The ROLLBACK TRANSACTION request has no corresponding BEGIN TRANSACTION`).
     Update `dbo.etl_log` to `'FAILED'` with `end_time = GETDATE()`, and ALWAYS execute `THROW;` to propagate errors.
-- FORBIDDEN Syntax: NEVER output `CREATE TABLE IF NOT EXISTS`, `CREATE OR REPLACE`, `CREATE OR ALTER TABLE`, `ON CONFLICT`, `RETURNING`, `ILIKE`, `SERIAL`, or `AUTO_INCREMENT`. Never use `OR` inside filtered index `WHERE` clauses (T-SQL filtered indexes forbid `OR`). Never assign raw boolean expressions (e.g. `SET col = a > 0 OR b > 0`), use `CASE WHEN a > 0 OR b > 0 THEN 1 ELSE 0 END`. Use T-SQL equivalents at all times.
+- FORBIDDEN Syntax: NEVER output `CREATE TABLE IF NOT EXISTS`, `CREATE OR REPLACE`, `CREATE OR ALTER TABLE`, `ON CONFLICT`, `RETURNING`, `ILIKE`, `SERIAL`, or `AUTO_INCREMENT`. Never use `OR` inside filtered index `WHERE` clauses (T-SQL filtered indexes forbid `OR`). Never assign raw boolean expressions (e.g. `SET col = a > 0 OR b > 0`), use `CASE WHEN a > 0 OR b > 0 THEN 1 ELSE 0 END`. NEVER compare DATE/DATETIME columns with empty string `''` (e.g. `col = ''` or `col <> ''` converts `''` to `'1900-01-01'`; use `col IS NULL` or `col IS NOT NULL`). Use T-SQL equivalents at all times.
 - Raw -> Staging -> Transform -> Clean Architecture:
   1. Staging Schema: NEVER use `SELECT * INTO #Staging WHERE 1=0` followed by `INSERT INTO #Staging SELECT *, companion_columns...` (fails with Msg 213).
   2. Staging Companion Columns Completeness (CRITICAL):
      When creating `#<Table>_Staging`, you MUST declare ALL companion columns for EVERY column in the dataset:
      `src.[<col>], src.[<col>] AS [<col>_raw], CAST(NULL AS NVARCHAR(MAX)) AS [<col>_clean], CAST(NULL AS VARCHAR(50)) AS [<col>_validation_status], CAST(NULL AS VARCHAR(500)) AS [<col>_validation_reason]`.
      Include row-level duplicate companion columns: `CAST(0 AS BIT) AS [is_duplicate_row], CAST('valid' AS VARCHAR(50)) AS [row_validation_status], CAST(NULL AS VARCHAR(500)) AS [row_validation_reason]`.
+     Do NOT add columns via `ALTER TABLE #<Table>_Staging ADD ...` if they are already created in the `SELECT ... INTO` statement!
   3. Single Composite CASE Expression per Field: For each column with multiple rules (sentinels, nulls, formats, ranges), compile into ONE unified `CASE` statement following the canonical validation hierarchy:
      `source_null -> empty_value -> registered_placeholder -> punctuation_only -> unparseable_value -> format_violation -> domain_violation -> valid`.
   4. Validation Status Integrity: When a value is out of range, negative, unparseable, or sentinel, `<col>_validation_status` MUST be marked with the defect status code, and NEVER marked `'valid'`.
-  5. Target Clean Table DDL and Inserts: Include companion columns in clean table DDL ([col_raw], [col_clean], [col_validation_status], [col_validation_reason], [row_validation_status], [row_validation_reason], [is_duplicate_row]). ALWAYS specify explicit column lists in `INSERT INTO dbo.<Table>_Clean ([Col1], [Col2], ..., etl_batch_id, etl_created_at, etl_updated_at) SELECT COALESCE(s.[Col1_clean], s.[Col1]), ..., @run_id, GETDATE(), GETDATE() FROM #<Table>_Staging s;`.
+  5. Target Clean Table DDL and Inserts: Include companion columns in clean table DDL ([col_raw], [col_clean], [col_validation_status], [col_validation_reason], [row_validation_status], [row_validation_reason], [is_duplicate_row]). ALWAYS specify explicit column lists in `INSERT INTO dbo.<Table>_Clean ([Col1], [Col2], ..., etl_batch_id, etl_created_at, etl_updated_at) SELECT COALESCE(s.[Col1_clean], s.[Col1]), ..., @run_id, GETDATE(), GETDATE() FROM #<Table>_Staging s;`. Ensure every column in `dbo.<Table>_Clean` is explicitly mapped in the SELECT list.
   6. Bracket Quoting: Quote all identifiers safely: `[dbo].[Orders]`, `[column_name]`.
 - MANDATORY DATA QUALITY RULES (Must cover ALL findings from assessment report):
   1. Negative Values & Measures (P1):
