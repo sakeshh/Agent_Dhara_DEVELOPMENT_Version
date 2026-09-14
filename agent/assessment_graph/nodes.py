@@ -33,7 +33,7 @@ logger = logging.getLogger("agent.assessment_graph.nodes")
 # Assessment performance configuration
 DHARA_DISABLE_ASSESSMENT_CACHE = os.getenv("DHARA_DISABLE_ASSESSMENT_CACHE", "").strip().lower() in ("1", "true", "yes")
 DHARA_PROFILE_CACHE_TTL_SECONDS = float(os.getenv("DHARA_PROFILE_CACHE_TTL_SECONDS", "600"))
-DHARA_YDATA_PROFILE = os.getenv("DHARA_YDATA_PROFILE", "off").strip().lower()
+DHARA_YDATA_PROFILE = os.getenv("DHARA_YDATA_PROFILE", "on").strip().lower()
 DHARA_YDATA_MAX_ROWS = int(os.getenv("DHARA_YDATA_MAX_ROWS", "100000"))
 DHARA_YDATA_MAX_COLUMNS = int(os.getenv("DHARA_YDATA_MAX_COLUMNS", "100"))
 DHARA_YDATA_TIMEOUT_SECONDS = float(os.getenv("DHARA_YDATA_TIMEOUT_SECONDS", "120"))
