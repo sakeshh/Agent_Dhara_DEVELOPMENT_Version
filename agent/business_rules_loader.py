@@ -8,6 +8,11 @@ import os
 from typing import Any, Dict, List, Optional
 
 from agent.etl_pipeline.business_rules import normalize_business_rules
+from agent.rules.ingestion_bridge import (
+    BusinessRulesIngestionResult,
+    ingest_business_rules,
+    registry_to_legacy_rules,
+)
 
 try:
     import yaml
@@ -123,3 +128,30 @@ def pending_rules_from_session(ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 def tenant_id_from_session(ctx: Dict[str, Any]) -> str:
     tid = ctx.get("etl_tenant_id") or ctx.get("tenant_id")
     return (str(tid).strip() if tid else "") or "default"
+
+
+def ingest_business_rules_for_datasets(
+    ui_or_chat_rules: Any,
+    dataset_names: List[str],
+    *,
+    tenant_id: Optional[str] = None,
+) -> BusinessRulesIngestionResult:
+    """
+    Typed ingestion entry point: merges legacy configs and UI rules,
+    then transforms them into a CanonicalRuleRegistry with shadow-mode projection.
+    """
+    merged_legacy = merge_business_rules_for_datasets(
+        ui_or_chat_rules,
+        dataset_names,
+        tenant_id=tenant_id,
+    )
+    ds_name = dataset_names[0] if dataset_names else "default"
+    tid = (tenant_id or "default").strip() or "default"
+    return ingest_business_rules(
+        merged_legacy,
+        dataset_name=ds_name,
+        source_type="yaml_config",
+        source_reference="config/business_rules.yaml",
+        authority_rank=10,
+        tenant_id=tid,
+    )

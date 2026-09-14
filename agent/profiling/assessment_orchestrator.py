@@ -1030,6 +1030,52 @@ def load_and_profile(
                     1 for i in per_dataset_dq[ds_name]["issues"] if i.get("severity") == "high"
                 )
 
+    # ── Business Rules Pipeline (Integration 2: Typed Assessment Bridge) ──
+    canonical_assessment_bundle = None
+    if business_rules:
+        try:
+            from agent.rules.ingestion_bridge import ingest_business_rules
+            from agent.rules.assessment_bridge import evaluate_canonical_registry
+            from agent.rules.rule_models import CanonicalRuleRegistry
+
+            if isinstance(business_rules, CanonicalRuleRegistry):
+                c_registry = business_rules
+            else:
+                ingest_res = ingest_business_rules(business_rules, dataset_name=next(iter(datasets.keys()), "default"))
+                c_registry = ingest_res.registry
+
+            mode = "pre_assessment"
+            if _ORCHESTRATOR_ENGINE3:
+                flags = _get_flags()
+                if hasattr(flags, "notes_assessment_mode"):
+                    mode = flags.notes_assessment_mode or "pre_assessment"
+
+            c_eval_res = evaluate_canonical_registry(
+                registry=c_registry,
+                datasets=datasets,
+                notes_assessment_mode=mode,
+                run_id=job_id,
+            )
+            canonical_assessment_bundle = {
+                "run_id": c_eval_res.run_id,
+                "evidence_records": [e.model_dump(mode="json") for e in c_eval_res.evidence_records],
+                "not_evaluated_rules": list(c_eval_res.not_evaluated_rules),
+                "summary": c_eval_res.summary,
+            }
+            # Merge projected legacy issues into per_dataset_dq
+            for ds_name, issues in c_eval_res.legacy_dq_issues.items():
+                if ds_name in per_dataset_dq:
+                    per_dataset_dq[ds_name]["issues"].extend(issues)
+                    per_dataset_dq[ds_name]["summary"]["issue_count"] = len(per_dataset_dq[ds_name]["issues"])
+                    per_dataset_dq[ds_name]["summary"]["medium_severity"] = sum(
+                        1 for i in per_dataset_dq[ds_name]["issues"] if i.get("severity") == "medium"
+                    )
+                    per_dataset_dq[ds_name]["summary"]["high_severity"] = sum(
+                        1 for i in per_dataset_dq[ds_name]["issues"] if i.get("severity") == "high"
+                    )
+        except Exception as e:
+            logger.warning("Canonical rules assessment bridge error: %s", e)
+
     global_issues = detect_global_issues(datasets, thresholds, relationships=relationships)
     global_issues["relationship_row_issues"] = rel_bundle["relationship_row_issues"]
     global_issues["relationship_warnings"] = rel_bundle["relationship_warnings"]
@@ -1085,6 +1131,7 @@ def load_and_profile(
             "global_issues": global_issues
         },
         "executive_summary_items": build_executive_summary_items(per_dataset_dq, global_issues, thresholds),
+        "canonical_assessment": canonical_assessment_bundle,
     }
 
     # ── Engine 3.0: Attach component manifest to every assessment output ───────

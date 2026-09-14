@@ -50,6 +50,9 @@ class FeatureFlags:
         self.component_manifest_in_report: bool = _env_bool("DHARA_COMPONENT_MANIFEST", True)
         self.reproducibility_hashes: bool = _env_bool("DHARA_REPRO_HASHES", True)
 
+        # ── Business Rules Pipeline ──────────────────────────────────────────────
+        self.notes_assessment_mode: str = os.environ.get("DHARA_NOTES_ASSESSMENT_MODE", "pre_assessment").strip().lower()
+
         self._log_startup()
 
     def _log_startup(self) -> None:
