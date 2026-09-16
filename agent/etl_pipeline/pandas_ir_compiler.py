@@ -49,10 +49,17 @@ from agent.etl_pipeline.transformation_ir import (
     ColumnRef,
     ConditionalReplaceExpression,
     DataType,
-    DateFormatSpec,
+    DatasetColumnSchema,
+    DatasetOutputSpec,
     DatasetSchema,
+    DeduplicateExpression,
+    DeduplicationTieBreaker,
+    DuplicateExportMode,
     ExistingColumnPolicy,
     Expression,
+    FilterDropPolicy,
+    FilterExpression,
+    FilterUnknownPolicy,
     FlagExpression,
     GroupKeyValue,
     GroupedImputationStrategy,
@@ -65,16 +72,32 @@ from agent.etl_pipeline.transformation_ir import (
     LiteralValue,
     MissingGroupPolicy,
     ModeTieBreaker,
+    MultiOutputArtifactError,
     NonexistentTimePolicy,
     NullCheck,
+    NullKeyPolicy,
     NumericFormatSpec,
+    OccurrenceIdentityScope,
+    OrderDirection,
+    OutputColumnCollisionError,
+    OutputProducerKind,
+    OutputPurpose,
+    OutputReferenceCollisionError,
     ParseExpression,
     ParseFailurePolicy,
     ParseOutputMode,
     PassThroughExpression,
     PredicateUnknownPolicy,
+    QuarantineExpression,
+    QuarantineUnknownPolicy,
+    RoutingIdentityPolicy,
+    RoutingMode,
+    RoutingPredicateUnknownError,
+    RoutingReconciliationError,
     ScalarMapExpression,
     ScalarMapOperation,
+    SortColumnSpec,
+    SourceStableIdentitySpec,
     StatisticalImputationStrategy,
     StepKind,
     TemporalParseTarget,
@@ -83,9 +106,15 @@ from agent.etl_pipeline.transformation_ir import (
     TransformationStepIR,
     UnboundedInfinityPolicy,
     UnmappedValuePolicy,
+    ValidateExpression,
+    ValidateSeverity,
+    ValidationExecutionSummary,
+    ValidationGateError,
+    ValidationUnknownPolicy,
     ValueVersion,
     bind_expression_to_schema,
     compute_model_snapshot_hash,
+    validate_output_registry,
     verify_imputation_model,
 )
 
@@ -120,7 +149,10 @@ class CompiledPandasArtifact(BaseModel):
     artifact_bytes: bytes
     artifact_hash: str
     entrypoint: str = "transform(df: pd.DataFrame) -> pd.DataFrame"
-    required_imports: Tuple[str, ...] = ("numpy", "pandas")
+    datasets_entrypoint: str = "transform_datasets(df: pd.DataFrame) -> Dict[str, pd.DataFrame]"
+    supports_single_output_entrypoint: bool = True
+    primary_output_ref: Optional[str] = None
+    required_imports: Tuple[str, ...] = ("collections", "numpy", "pandas")
     compiled_step_ids: Tuple[str, ...]
     control_only_step_ids: Tuple[str, ...]
     schema_snapshot_hash: str
@@ -165,6 +197,8 @@ class PandasIRCompiler:
     """
     Deterministic reference compiler converting TransformationIRGraph to Python/Pandas code.
     Increment 3A: MAP_VALUE, CONDITIONAL_REPLACE, CLIP, FLAG, PASS_THROUGH.
+    Increment 3B: IMPUTE, PARSE.
+    Increment 3C: QUARANTINE, FILTER, DEDUPLICATE, VALIDATE.
     """
 
     COMPILER_NAME = "pandas_reference"
@@ -177,6 +211,10 @@ class PandasIRCompiler:
         ActionFamily.FLAG,
         ActionFamily.IMPUTE,
         ActionFamily.PARSE,
+        ActionFamily.QUARANTINE,
+        ActionFamily.FILTER,
+        ActionFamily.DEDUPLICATE,
+        ActionFamily.VALIDATE,
     }
 
     CONTROL_FAMILIES = {
@@ -197,6 +235,23 @@ class PandasIRCompiler:
         compiled_step_ids: List[str] = []
         control_only_step_ids: List[str] = []
 
+        # 0. Output Registry Pre-Validation
+        if graph.output_specs or graph.primary_output_ref or graph.routing_identity_policy:
+            ds_name = graph.steps[0].dataset_name if graph.steps else None
+            ds_schema = self.schemas.get(ds_name) if (self.schemas and ds_name) else None
+            try:
+                validate_output_registry(graph, schema=ds_schema)
+            except Exception as e:
+                diagnostics.append(f"Output registry validation failed: {str(e)}")
+                return PandasCompilerResult(
+                    status=CodegenStatus.FAILED_COMPILATION,
+                    artifact=None,
+                    step_dispositions={s.step_id: CompilerStepDisposition.INVALID_IR for s in graph.steps},
+                    diagnostics=tuple(diagnostics),
+                    graph_id=graph.graph_id,
+                    ir_version=graph.ir_version,
+                )
+
         # 1. Bidirectional Accounting Pre-Check
         input_step_ids = {s.step_id for s in graph.steps}
         step_map = {s.step_id: s for s in graph.steps}
@@ -216,7 +271,7 @@ class PandasIRCompiler:
             # B. Supported Executable Families Check
             if family not in self.SUPPORTED_FAMILIES:
                 step_dispositions[sid] = CompilerStepDisposition.UNSUPPORTED
-                diagnostics.append(f"Step '{sid}' uses family '{family.value}' which is not supported in Increment 3A")
+                diagnostics.append(f"Step '{sid}' uses family '{family.value}' which is not supported by {self.COMPILER_NAME}")
                 continue
 
             # C. Schema Binding Validation
@@ -305,16 +360,52 @@ class PandasIRCompiler:
                                 )
 
         # 5. Assembly of Python Code Lines
+        identity_policy = graph.routing_identity_policy or RoutingIdentityPolicy()
+        internal_col = identity_policy.internal_column
+        published_col = identity_policy.published_column
+        scope = identity_policy.scope
+        spec = identity_policy.source_stable_spec
+        retain_in_primary = identity_policy.retain_in_primary_output
+        retain_in_secondary = identity_policy.retain_in_secondary_outputs
+        primary_ref = graph.primary_output_ref
+
         code_lines: List[str] = [
             "# Auto-generated by Agent Dhara Reference Pandas Compiler v1.0.0",
             "# Ir-Version: " + graph.ir_version,
             "# Graph-Id: " + graph.graph_id,
+            "from collections import Counter",
             "import numpy as np",
             "import pandas as pd",
             "",
-            "def transform(df: pd.DataFrame) -> pd.DataFrame:",
-            "    df = df.copy(deep=False)  # shallow container copy for column assignments",
+            "def transform_datasets(df: pd.DataFrame) -> dict[str, pd.DataFrame]:",
+            "    _working = df.copy(deep=False)  # isolated working frame",
+            "",
+            f"    # --- Occurrence Identity Lifecycle ({scope.value}) ---",
+            f"    _identity_col = {repr(internal_col)}",
         ]
+
+        if scope == OccurrenceIdentityScope.SOURCE_STABLE and spec:
+            extra_file = f" + '_' + _working[{repr(spec.source_file_column)}].astype(str)" if spec.source_file_column else ""
+            extra_ing = f" + '_' + _working[{repr(spec.ingestion_run_column)}].astype(str)" if spec.ingestion_run_column else ""
+            code_lines.append(
+                f"    _working[_identity_col] = ("
+                f"{repr(spec.snapshot_id)} + '_' + "
+                f"_working[{repr(spec.partition_column)}].astype(str) + '_' + "
+                f"_working[{repr(spec.row_offset_column)}].astype(str)"
+                f"{extra_file}{extra_ing}"
+                f")"
+            )
+            code_lines.append(f"    if bool(_working[_identity_col].duplicated().any()):")
+            code_lines.append(f"        raise ValueError('Duplicate source-stable coordinates detected in input DataFrame')")
+        else:
+            code_lines.append(f"    _working[_identity_col] = np.arange(len(_working))")
+
+        code_lines.append(f"    _input_ids = list(_working[_identity_col])")
+        code_lines.append(f"    if len(_input_ids) != len(set(_input_ids)):")
+        code_lines.append(f"        raise ValueError('Input occurrence identities are not unique')")
+        code_lines.append("")
+        code_lines.append("    outputs = {}")
+        code_lines.append("")
 
         # Preamble: Selective Series Pre-Images (Series copy only, never whole df.copy())
         if preimage_bindings:
@@ -333,13 +424,58 @@ class PandasIRCompiler:
                 code_lines.append(f"    # Step {step.step_id}: CONTROL_ONLY ({step.family.value})")
                 continue
 
-            step_code = self._emit_step_code(step, col_to_preimage, df_var="df")
+            step_code = self._emit_step_code(step, col_to_preimage, df_var="_working")
             code_lines.append(f"    # Step {step.step_id}: {step.family.value}")
             for line in step_code:
                 code_lines.append(f"    {line}")
             code_lines.append("")
 
-        code_lines.append("    return df")
+        # Final Primary Output Registration
+        if primary_ref:
+            code_lines.append(f"    # --- Primary Output Registration ---")
+            code_lines.append(f"    if {repr(primary_ref)} in outputs and outputs[{repr(primary_ref)}] is not _working:")
+            code_lines.append(f"        raise ValueError('Primary output already produced: ' + {repr(primary_ref)})")
+            code_lines.append(f"    outputs[{repr(primary_ref)}] = _working")
+        else:
+            code_lines.append(f"    # --- Default Primary Output Registration ---")
+            code_lines.append(f"    if 'primary' not in outputs:")
+            code_lines.append(f"        outputs['primary'] = _working")
+
+        # Identity Publication Stripping
+        code_lines.append(f"    # --- Publication Projection & Identity Stripping ---")
+        code_lines.append(f"    _primary_key = {repr(primary_ref)} if {repr(primary_ref)} else ('primary' if 'primary' in outputs else None)")
+        if not retain_in_primary:
+            code_lines.append(f"    if _primary_key and _primary_key in outputs and _identity_col in outputs[_primary_key].columns:")
+            if published_col:
+                code_lines.append(f"        outputs[_primary_key] = outputs[_primary_key].rename(columns={{_identity_col: {repr(published_col)}}})")
+            else:
+                code_lines.append(f"        outputs[_primary_key] = outputs[_primary_key].drop(columns=[_identity_col])")
+        else:
+            if published_col:
+                code_lines.append(f"    if _primary_key and _primary_key in outputs and _identity_col in outputs[_primary_key].columns:")
+                code_lines.append(f"        outputs[_primary_key] = outputs[_primary_key].rename(columns={{_identity_col: {repr(published_col)}}})")
+
+        if not retain_in_secondary:
+            code_lines.append(f"    for _sec_ref in list(outputs.keys()):")
+            code_lines.append(f"        if _sec_ref != _primary_key and _identity_col in outputs[_sec_ref].columns:")
+            code_lines.append(f"            outputs[_sec_ref] = outputs[_sec_ref].drop(columns=[_identity_col])")
+
+        code_lines.append("    return outputs")
+        code_lines.append("")
+
+        # Single-dataset entrypoint
+        code_lines.append("def transform(df: pd.DataFrame) -> pd.DataFrame:")
+        code_lines.append("    all_outputs = transform_datasets(df)")
+        if primary_ref:
+            code_lines.append(f"    return all_outputs[{repr(primary_ref)}]")
+        else:
+            code_lines.append("    if 'primary' in all_outputs:")
+            code_lines.append("        if len(all_outputs) > 1:")
+            code_lines.append("            raise ValueError('MultiOutputArtifactError: Multiple datasets produced in routing graph (' + ', '.join(all_outputs.keys()) + ') without a designated primary_output_ref. Use transform_datasets(df) to access all outputs.')")
+            code_lines.append("        return all_outputs['primary']")
+            code_lines.append("    if len(all_outputs) == 1:")
+            code_lines.append("        return next(iter(all_outputs.values()))")
+            code_lines.append("    raise ValueError('MultiOutputArtifactError: Multiple datasets produced without primary_output_ref')")
         code_lines.append("")
 
         full_source = "\n".join(code_lines)
@@ -360,11 +496,23 @@ class PandasIRCompiler:
                 ir_version=graph.ir_version,
             )
 
+        has_multiple_outputs = False
+        for s in graph.steps:
+            if isinstance(s.expression, (QuarantineExpression, FilterExpression, DeduplicateExpression)):
+                if isinstance(s.expression, QuarantineExpression) or (isinstance(s.expression, FilterExpression) and s.expression.dropped_output_ref) or (isinstance(s.expression, DeduplicateExpression) and s.expression.duplicates_output_ref):
+                    has_multiple_outputs = True
+                    break
+
+        supports_single = not (has_multiple_outputs and graph.primary_output_ref is None)
+
         artifact = CompiledPandasArtifact(
             artifact_bytes=artifact_bytes,
             artifact_hash=artifact_hash,
             entrypoint="transform(df: pd.DataFrame) -> pd.DataFrame",
-            required_imports=("numpy", "pandas"),
+            datasets_entrypoint="transform_datasets(df: pd.DataFrame) -> Dict[str, pd.DataFrame]",
+            supports_single_output_entrypoint=supports_single,
+            primary_output_ref=primary_ref,
+            required_imports=("collections", "numpy", "pandas"),
             compiled_step_ids=tuple(compiled_step_ids),
             control_only_step_ids=tuple(control_only_step_ids),
             schema_snapshot_hash=graph.schema_snapshot_hash,
@@ -416,6 +564,22 @@ class PandasIRCompiler:
         # 6. PARSE
         if isinstance(expr, ParseExpression):
             return self._emit_parse(expr, preimage_symbols, df_var, step_id=step.step_id)
+
+        # 7. QUARANTINE
+        if isinstance(expr, QuarantineExpression):
+            return self._emit_quarantine(expr, preimage_symbols, df_var, step_id=step.step_id)
+
+        # 8. FILTER
+        if isinstance(expr, FilterExpression):
+            return self._emit_filter(expr, preimage_symbols, df_var, step_id=step.step_id)
+
+        # 9. DEDUPLICATE
+        if isinstance(expr, DeduplicateExpression):
+            return self._emit_deduplicate(expr, preimage_symbols, df_var, step_id=step.step_id)
+
+        # 10. VALIDATE
+        if isinstance(expr, ValidateExpression):
+            return self._emit_validate(expr, preimage_symbols, df_var, step_id=step.step_id)
 
         return [f"# Unsupported expression: {type(expr).__name__}"]
 
@@ -844,6 +1008,257 @@ class PandasIRCompiler:
 
         return lines
 
+    def _emit_quarantine(
+        self,
+        expr: QuarantineExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        cond_expr = self._emit_expression(expr.predicate, preimages, df_var)
+        clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', step_id)
+        raw_var = f"_quar_raw_{clean_id}"
+        na_var = f"_quar_na_{clean_id}"
+        mask_var = f"_quar_mask_{clean_id}"
+
+        reads = expr.predicate.extract_reads()
+        if isinstance(expr.predicate, NullCheck):
+            na_check = f"({cond_expr}).isna()"
+        elif reads:
+            na_exprs = [f"{df_var}[{repr(r)}].isna()" for r in set(reads)]
+            na_check = f"({' | '.join(na_exprs)}) | ({cond_expr}).isna()"
+        else:
+            na_check = f"({cond_expr}).isna()"
+
+        lines: List[str] = [
+            f"{na_var} = ({na_check})",
+            f"{raw_var} = np.where({na_var}, pd.NA, ({cond_expr}))",
+            f"{raw_var} = pd.Series({raw_var}, index={df_var}.index, dtype='boolean')",
+        ]
+
+        if expr.unknown_policy == QuarantineUnknownPolicy.FAIL_STEP:
+            lines.append(f"if bool({na_var}.any()): raise ValueError(\"Quarantine predicate evaluated to unknown under FAIL_STEP: \" + str(int({na_var}.sum())) + \" unknown rows [step_id={step_id}]\")")
+            lines.append(f"{mask_var} = {raw_var}.astype(bool)")
+        elif expr.unknown_policy == QuarantineUnknownPolicy.ROUTE_TO_QUARANTINE:
+            lines.append(f"{mask_var} = {raw_var}.fillna(True).astype(bool)")
+        elif expr.unknown_policy == QuarantineUnknownPolicy.RETAIN_IN_CURATED:
+            lines.append(f"{mask_var} = {raw_var}.fillna(False).astype(bool)")
+        elif expr.unknown_policy == QuarantineUnknownPolicy.SEPARATE_OUTPUT:
+            lines.append(f"outputs[{repr(expr.unknown_output_ref)}] = {df_var}[{na_var}].copy()")
+            lines.append(f"{mask_var} = {raw_var}.fillna(False).astype(bool)")
+
+        if expr.routing_mode == RoutingMode.PARTITION:
+            if expr.unknown_policy == QuarantineUnknownPolicy.SEPARATE_OUTPUT:
+                lines.append(f"_quar_rows_{clean_id} = {df_var}[{mask_var} & (~{na_var})].copy()")
+                lines.append(f"_cur_rows_{clean_id} = {df_var}[(~{mask_var}) & (~{na_var})].copy()")
+            else:
+                lines.append(f"_quar_rows_{clean_id} = {df_var}[{mask_var}].copy()")
+                lines.append(f"_cur_rows_{clean_id} = {df_var}[~{mask_var}].copy()")
+
+            if expr.reason_column:
+                lines.append(f"_quar_rows_{clean_id}[{repr(expr.reason_column)}] = {repr(expr.reason_code)}")
+
+            lines.append(f"outputs[{repr(expr.quarantine_output_ref)}] = _quar_rows_{clean_id}")
+            lines.append(f"outputs[{repr(expr.curated_output_ref)}] = _cur_rows_{clean_id}")
+            lines.append(f"{df_var} = _cur_rows_{clean_id}")
+
+            lines.append(f"_q_ids = list(outputs[{repr(expr.quarantine_output_ref)}][_identity_col])")
+            lines.append(f"_c_ids = list(outputs[{repr(expr.curated_output_ref)}][_identity_col])")
+            if expr.unknown_policy == QuarantineUnknownPolicy.SEPARATE_OUTPUT:
+                lines.append(f"_u_ids = list(outputs[{repr(expr.unknown_output_ref)}][_identity_col])")
+            else:
+                lines.append(f"_u_ids = []")
+            lines.append(f"if set(_c_ids) & set(_q_ids): raise ValueError('Partition outputs contain overlapping occurrences between curated and quarantine')")
+            lines.append(f"if set(_c_ids) & set(_u_ids): raise ValueError('Partition outputs contain overlapping occurrences between curated and unknown')")
+            lines.append(f"if set(_q_ids) & set(_u_ids): raise ValueError('Partition outputs contain overlapping occurrences between quarantine and unknown')")
+            lines.append(f"if Counter(_c_ids) + Counter(_q_ids) + Counter(_u_ids) != Counter(_input_ids): raise ValueError('Partition outputs do not reconcile to input occurrences')")
+
+        elif expr.routing_mode == RoutingMode.COPY:
+            lines.append(f"_quar_rows_{clean_id} = {df_var}[{mask_var}].copy()")
+            if expr.reason_column:
+                lines.append(f"_quar_rows_{clean_id}[{repr(expr.reason_column)}] = {repr(expr.reason_code)}")
+            lines.append(f"outputs[{repr(expr.quarantine_output_ref)}] = _quar_rows_{clean_id}")
+            lines.append(f"outputs[{repr(expr.curated_output_ref)}] = {df_var}")
+
+            lines.append(f"_p_ids = list({df_var}[_identity_col])")
+            lines.append(f"_q_ids = list(_quar_rows_{clean_id}[_identity_col])")
+            lines.append(f"if Counter(_p_ids) != Counter(_input_ids): raise ValueError('Copy mode curated output does not match input occurrences')")
+            lines.append(f"if not (Counter(_q_ids) <= Counter(_input_ids)): raise ValueError('Copy mode quarantine occurrences exceed input occurrences')")
+
+        return lines
+
+    def _emit_filter(
+        self,
+        expr: FilterExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        cond_expr = self._emit_expression(expr.predicate, preimages, df_var)
+        clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', step_id)
+        raw_var = f"_filt_raw_{clean_id}"
+        na_var = f"_filt_na_{clean_id}"
+        cond_eff_var = f"_filt_eff_{clean_id}"
+        retain_mask_var = f"_filt_retain_{clean_id}"
+        dropped_mask_var = f"_filt_dropped_{clean_id}"
+
+        reads = expr.predicate.extract_reads()
+        if isinstance(expr.predicate, NullCheck):
+            na_check = f"({cond_expr}).isna()"
+        elif reads:
+            na_exprs = [f"{df_var}[{repr(r)}].isna()" for r in set(reads)]
+            na_check = f"({' | '.join(na_exprs)}) | ({cond_expr}).isna()"
+        else:
+            na_check = f"({cond_expr}).isna()"
+
+        lines: List[str] = [
+            f"{na_var} = ({na_check})",
+            f"{raw_var} = np.where({na_var}, pd.NA, ({cond_expr}))",
+            f"{raw_var} = pd.Series({raw_var}, index={df_var}.index, dtype='boolean')",
+        ]
+
+        if expr.unknown_policy == FilterUnknownPolicy.FAIL_STEP:
+            lines.append(f"if bool({na_var}.any()): raise ValueError(\"Filter predicate evaluated to unknown under FAIL_STEP: \" + str(int({na_var}.sum())) + \" unknown rows [step_id={step_id}]\")")
+            lines.append(f"{cond_eff_var} = {raw_var}.astype(bool)")
+        elif expr.unknown_policy == FilterUnknownPolicy.RETAIN:
+            fill_v = True if expr.retain_matching else False
+            lines.append(f"{cond_eff_var} = {raw_var}.fillna({fill_v}).astype(bool)")
+        elif expr.unknown_policy in (FilterUnknownPolicy.FILTER_OUT, FilterUnknownPolicy.ROUTE_TO_DROPPED_OUTPUT):
+            fill_v = False if expr.retain_matching else True
+            lines.append(f"{cond_eff_var} = {raw_var}.fillna({fill_v}).astype(bool)")
+        elif expr.unknown_policy == FilterUnknownPolicy.SEPARATE_OUTPUT:
+            lines.append(f"outputs[{repr(expr.unknown_output_ref)}] = {df_var}[{na_var}].copy()")
+            lines.append(f"{cond_eff_var} = {raw_var}.fillna(False).astype(bool)")
+
+        if expr.retain_matching:
+            lines.append(f"{retain_mask_var} = {cond_eff_var}")
+        else:
+            lines.append(f"{retain_mask_var} = ~{cond_eff_var}")
+
+        if expr.unknown_policy == FilterUnknownPolicy.SEPARATE_OUTPUT:
+            lines.append(f"{retain_mask_var} = {retain_mask_var} & (~{na_var})")
+            lines.append(f"{dropped_mask_var} = (~{retain_mask_var}) & (~{na_var})")
+        else:
+            lines.append(f"{dropped_mask_var} = ~{retain_mask_var}")
+
+        lines.append(f"_filter_accounting_{clean_id} = {{'step_id': {repr(step_id)}, 'input_count': len({df_var}), 'retained_count': int({retain_mask_var}.sum()), 'filtered_count': int({dropped_mask_var}.sum()), 'unknown_count': int({na_var}.sum())}}")
+
+        if expr.drop_policy == FilterDropPolicy.EXPORT_DROPPED:
+            lines.append(f"_dropped_df_{clean_id} = {df_var}[{dropped_mask_var}].copy()")
+            if expr.rejection_reason_code:
+                lines.append(f"_dropped_df_{clean_id}['_dhara_filter_reason'] = {repr(expr.rejection_reason_code)}")
+            lines.append(f"outputs[{repr(expr.dropped_output_ref)}] = _dropped_df_{clean_id}")
+
+        lines.append(f"{df_var} = {df_var}[{retain_mask_var}].copy()")
+        return lines
+
+    def _emit_deduplicate(
+        self,
+        expr: DeduplicateExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', step_id)
+        keys = list(expr.resolved_key_columns or expr.key_columns)
+        lines: List[str] = []
+
+        # Lowest-priority tie-breaker first (user correction 4)
+        if expr.use_occurrence_id_as_final_tie_breaker:
+            if expr.order_by:
+                lines.append(f"{df_var} = {df_var}.sort_values(by=_identity_col, ascending=True, na_position='last', kind='mergesort')")
+            else:
+                asc = (expr.tie_breaker != DeduplicationTieBreaker.PRESERVE_LAST)
+                lines.append(f"{df_var} = {df_var}.sort_values(by=_identity_col, ascending={asc}, na_position='last', kind='mergesort')")
+
+        if expr.order_by:
+            for spec in reversed(expr.order_by):
+                asc = (spec.direction == OrderDirection.ASCENDING)
+                na_pos = 'last' if spec.nulls_last else 'first'
+                lines.append(f"{df_var} = {df_var}.sort_values(by={repr(spec.column)}, ascending={asc}, na_position={repr(na_pos)}, kind='mergesort')")
+
+        keep = "last" if expr.tie_breaker == DeduplicationTieBreaker.PRESERVE_LAST else "first"
+        dup_mask_var = f"_dup_mask_{clean_id}"
+        all_dups_mask_var = f"_all_dups_mask_{clean_id}"
+
+        if expr.null_key_policy == NullKeyPolicy.TREAT_NULLS_AS_EQUAL:
+            lines.append(f"{dup_mask_var} = {df_var}.duplicated(subset={repr(keys)}, keep={repr(keep)})")
+            lines.append(f"{all_dups_mask_var} = {df_var}.duplicated(subset={repr(keys)}, keep=False)")
+        elif expr.null_key_policy == NullKeyPolicy.TREAT_EACH_NULL_AS_DISTINCT:
+            lines.append(f"_has_null_key_{clean_id} = {df_var}[{repr(keys)}].isna().any(axis=1)")
+            lines.append(f"_eff_dedup_key_{clean_id} = {df_var}[{repr(keys)}].astype(str).agg(':::'.join, axis=1)")
+            lines.append(f"_eff_dedup_key_{clean_id} = np.where(_has_null_key_{clean_id}, _eff_dedup_key_{clean_id} + ':::ID:::' + {df_var}[_identity_col].astype(str), _eff_dedup_key_{clean_id})")
+            lines.append(f"{dup_mask_var} = pd.Series(_eff_dedup_key_{clean_id}, index={df_var}.index).duplicated(keep={repr(keep)})")
+            lines.append(f"{all_dups_mask_var} = pd.Series(_eff_dedup_key_{clean_id}, index={df_var}.index).duplicated(keep=False)")
+        elif expr.null_key_policy == NullKeyPolicy.EXCLUDE_NULL_KEY_ROWS:
+            lines.append(f"_has_null_key_{clean_id} = {df_var}[{repr(keys)}].isna().any(axis=1)")
+            lines.append(f"{dup_mask_var} = {df_var}.duplicated(subset={repr(keys)}, keep={repr(keep)}) | _has_null_key_{clean_id}")
+            lines.append(f"{all_dups_mask_var} = {df_var}.duplicated(subset={repr(keys)}, keep=False) | _has_null_key_{clean_id}")
+
+        if expr.duplicates_output_ref:
+            if expr.duplicate_export_mode == DuplicateExportMode.REMOVED_OCCURRENCES_ONLY:
+                lines.append(f"outputs[{repr(expr.duplicates_output_ref)}] = {df_var}[{dup_mask_var}].copy()")
+            else:
+                lines.append(f"outputs[{repr(expr.duplicates_output_ref)}] = {df_var}[{all_dups_mask_var}].copy()")
+
+        lines.append(f"{df_var} = {df_var}[~{dup_mask_var}].copy()")
+        return lines
+
+    def _emit_validate(
+        self,
+        expr: ValidateExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        cond_expr = self._emit_expression(expr.predicate, preimages, df_var)
+        clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', step_id)
+        raw_var = f"_val_raw_{clean_id}"
+        cand_var = f"_cand_cnt_{clean_id}"
+        pass_var = f"_raw_pass_{clean_id}"
+        viol_var = f"_raw_viol_{clean_id}"
+        unk_var = f"_raw_unk_{clean_id}"
+        eff_viol_var = f"_eff_viol_{clean_id}"
+        summary_var = f"_val_summary_{clean_id}"
+        reason = expr.reason_code or expr.rejection_reason_code or "VALIDATION_RULE_VIOLATED"
+
+        reads = expr.predicate.extract_reads()
+        if isinstance(expr.predicate, NullCheck):
+            na_check = f"({cond_expr}).isna()"
+        elif reads:
+            na_exprs = [f"{df_var}[{repr(r)}].isna()" for r in set(reads)]
+            na_check = f"({' | '.join(na_exprs)}) | ({cond_expr}).isna()"
+        else:
+            na_check = f"({cond_expr}).isna()"
+
+        lines: List[str] = [
+            f"_val_na_{clean_id} = ({na_check})",
+            f"{raw_var} = np.where(_val_na_{clean_id}, pd.NA, ({cond_expr}))",
+            f"{raw_var} = pd.Series({raw_var}, index={df_var}.index, dtype='boolean')",
+            f"{cand_var} = len({df_var})",
+            f"{unk_var} = int({raw_var}.isna().sum())",
+            f"{pass_var} = int(({raw_var} == True).sum())",
+            f"{viol_var} = int(({raw_var} == False).sum())",
+        ]
+
+        if expr.unknown_policy == ValidationUnknownPolicy.COUNT_AS_VIOLATION:
+            lines.append(f"{eff_viol_var} = {viol_var} + {unk_var}")
+        elif expr.unknown_policy in (ValidationUnknownPolicy.COUNT_AS_PASS, ValidationUnknownPolicy.REPORT_SEPARATELY):
+            lines.append(f"{eff_viol_var} = {viol_var}")
+        elif expr.unknown_policy == ValidationUnknownPolicy.FAIL_STEP:
+            lines.append(f"if {unk_var} > 0: raise ValueError(\"Validation condition evaluated to unknown under FAIL_STEP: \" + str({unk_var}) + \" unknown rows [step_id={step_id}]\")")
+            lines.append(f"{eff_viol_var} = {viol_var}")
+
+        lines.append(f"{summary_var} = {{'step_id': {repr(step_id)}, 'candidate_count': {cand_var}, 'pass_count': {pass_var}, 'violation_count': {viol_var}, 'raw_unknown_count': {unk_var}, 'effective_violation_count': {eff_viol_var}, 'severity': {repr(expr.severity.value)}, 'reason_code': {repr(reason)}}}")
+
+        if expr.severity == ValidateSeverity.ERROR:
+            lines.append(f"if {eff_viol_var} > 0: raise ValueError(\"Validation assertion failed [step_id={step_id}]: \" + str({eff_viol_var}) + \" violations out of \" + str({cand_var}) + \" candidates (reason_code={reason})\")")
+            lines.append(f"{summary_var}['gate_outcome'] = 'PASS'")
+        else:
+            lines.append(f"{summary_var}['gate_outcome'] = 'WARN' if {eff_viol_var} > 0 else 'PASS'")
+
+        return lines
+
     # ------------------------------------------------------------------------
     # Expression Transpiler
     # ------------------------------------------------------------------------
@@ -938,13 +1353,13 @@ class PandasIRCompiler:
             if isinstance(node, ast.Call):
                 func = node.func
                 if isinstance(func, ast.Attribute) and func.attr == "copy":
-                    if isinstance(func.value, ast.Name) and func.value.id == "df":
+                    if isinstance(func.value, ast.Name) and func.value.id in ("df", "_working"):
                         is_shallow_df_copy = False
                         for kw in node.keywords:
                             if kw.arg == "deep" and isinstance(kw.value, ast.Constant) and kw.value.value is False:
                                 is_shallow_df_copy = True
                         if not is_shallow_df_copy:
-                            raise ValueError("Prohibited whole-DataFrame deep copy detected: 'df.copy()'")
+                            raise ValueError(f"Prohibited whole-DataFrame deep copy detected: '{func.value.id}.copy()'")
 
                 if isinstance(func, ast.Attribute) and func.attr in {"mean", "median", "mode", "quantile", "describe"}:
                     raise ValueError(f"Prohibited apply-time statistical recalculation detected: '.{func.attr}()'. Must bind fixed learned statistics.")
@@ -954,7 +1369,13 @@ class PandasIRCompiler:
                         raise ValueError(f"Prohibited built-in call: {func.id}")
 
             # Check Import
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name not in {"numpy", "pandas", "np", "pd"}:
+                    if alias.name not in {"numpy", "pandas", "np", "pd", "collections"}:
+                        raise ValueError(f"Prohibited import: {alias.name}")
+            elif isinstance(node, ast.ImportFrom):
+                if node.module not in {"collections"}:
+                    raise ValueError(f"Prohibited import module: {node.module}")
+                for alias in node.names:
+                    if alias.name not in {"Counter"}:
                         raise ValueError(f"Prohibited import: {alias.name}")

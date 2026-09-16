@@ -56,10 +56,192 @@ class UnmappedValuePolicy(str, Enum):
     QUARANTINE = "quarantine"
 
 
+class RoutingMode(str, Enum):
+    PARTITION = "partition"
+    COPY = "copy"
+
+
+class QuarantineUnknownPolicy(str, Enum):
+    ROUTE_TO_QUARANTINE = "route_to_quarantine"
+    RETAIN_IN_CURATED = "retain_in_curated"
+    SEPARATE_OUTPUT = "separate_output"
+    FAIL_STEP = "fail_step"
+
+
+class FilterUnknownPolicy(str, Enum):
+    RETAIN = "retain"
+    FILTER_OUT = "filter_out"
+    ROUTE_TO_DROPPED_OUTPUT = "route_to_dropped_output"
+    SEPARATE_OUTPUT = "separate_output"
+    FAIL_STEP = "fail_step"
+
+
+class ValidationUnknownPolicy(str, Enum):
+    COUNT_AS_VIOLATION = "count_as_violation"
+    COUNT_AS_PASS = "count_as_pass"
+    REPORT_SEPARATELY = "report_separately"
+    FAIL_STEP = "fail_step"
+
+
+class FilterDropPolicy(str, Enum):
+    DROP = "drop"
+    EXPORT_DROPPED = "export_dropped"
+
+
+class ValidateSeverity(str, Enum):
+    ERROR = "error"
+    WARNING = "warning"
+
+
+class OrderDirection(str, Enum):
+    ASCENDING = "ascending"
+    DESCENDING = "descending"
+
+
+class DeduplicationTieBreaker(str, Enum):
+    PRESERVE_FIRST = "preserve_first"
+    PRESERVE_LAST = "preserve_last"
+    EXPLICIT_ORDER = "explicit_order"
+
+
+class DuplicateExportMode(str, Enum):
+    REMOVED_OCCURRENCES_ONLY = "removed_occurrences_only"
+    ALL_GROUP_MEMBERS = "all_group_members"
+
+
+class NullKeyPolicy(str, Enum):
+    EXCLUDE_NULL_KEY_ROWS = "exclude_null_key_rows"
+    TREAT_NULLS_AS_EQUAL = "treat_nulls_as_equal"
+    TREAT_EACH_NULL_AS_DISTINCT = "treat_each_null_as_distinct"
+
+
+class OutputPurpose(str, Enum):
+    PRIMARY = "primary"
+    QUARANTINE = "quarantine"
+    UNKNOWN = "unknown"
+    DROPPED = "dropped"
+    DUPLICATES = "duplicates"
+    DIAGNOSTIC = "diagnostic"
+
+
+class OutputProducerKind(str, Enum):
+    STEP = "step"
+    GRAPH_FINAL = "graph_final"
+
+
+class OccurrenceIdentityScope(str, Enum):
+    EXECUTION_LOCAL = "execution_local"
+    SOURCE_STABLE = "source_stable"
+
+
 class RowIdentityStrategy(str, Enum):
     EXISTING_KEY = "existing_key"
     COMPOSITE_KEY = "composite_key"
     GENERATED_OCCURRENCE_ID = "generated_occurrence_id"
+    INDEX_BASED = "index_based"
+    PRESERVE_EXISTING_ID = "preserve_existing_id"
+    SOURCE_STABLE_COORDINATES = "source_stable_coordinates"
+
+
+class SortColumnSpec(BaseModel):
+    column: str
+    direction: OrderDirection = OrderDirection.ASCENDING
+    nulls_last: bool = True
+
+
+class SourceStableIdentitySpec(BaseModel):
+    snapshot_id: str
+    partition_column: str
+    row_offset_column: str
+    source_file_column: Optional[str] = None
+    ingestion_run_column: Optional[str] = None
+
+
+class RoutingIdentityPolicy(BaseModel):
+    strategy: RowIdentityStrategy = RowIdentityStrategy.GENERATED_OCCURRENCE_ID
+    internal_column: str = "__dhara_row_occurrence_0"
+    published_column: Optional[str] = None
+    scope: OccurrenceIdentityScope = OccurrenceIdentityScope.EXECUTION_LOCAL
+    source_stable_spec: Optional[SourceStableIdentitySpec] = None
+    retain_in_primary_output: bool = False
+    retain_in_secondary_outputs: bool = True
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "RoutingIdentityPolicy":
+        if self.scope == OccurrenceIdentityScope.EXECUTION_LOCAL and self.source_stable_spec is not None:
+            raise ValueError("EXECUTION_LOCAL scope forbids source_stable_spec")
+        if self.scope == OccurrenceIdentityScope.SOURCE_STABLE and self.source_stable_spec is None:
+            raise ValueError("SOURCE_STABLE scope requires source_stable_spec")
+        return self
+
+
+class DatasetOutputSpec(BaseModel):
+    output_ref: str
+    purpose: OutputPurpose
+    producer_kind: OutputProducerKind
+    produced_by_step_id: Optional[str] = None
+    is_primary: bool = False
+
+    @model_validator(mode="after")
+    def validate_producer(self) -> "DatasetOutputSpec":
+        if self.producer_kind == OutputProducerKind.STEP and not self.produced_by_step_id:
+            raise ValueError("STEP producer requires produced_by_step_id")
+        if self.producer_kind == OutputProducerKind.GRAPH_FINAL and self.produced_by_step_id:
+            raise ValueError("GRAPH_FINAL producer forbids produced_by_step_id")
+        return self
+
+
+class RoutingReconciliationEvidence(BaseModel):
+    step_id: str
+    mode: RoutingMode
+    input_occurrences: int
+    curated_occurrences: int
+    quarantine_occurrences: int
+    unknown_occurrences: int = 0
+    reconciled: bool
+    overlap_count: int = 0
+
+
+class ValidationExecutionSummary(BaseModel):
+    step_id: str
+    candidate_count: int
+    pass_count: int
+    violation_count: int
+    raw_unknown_count: int
+    effective_violation_count: int
+    severity: ValidateSeverity
+    gate_outcome: str  # "PASS" | "FAIL" | "WARN"
+    reason_code: str
+
+
+class OutputReferenceCollisionError(ValueError):
+    """Raised when an output reference collides with another output producer or reserved reference."""
+    pass
+
+
+class MultiOutputArtifactError(ValueError):
+    """Raised when single-output access is attempted on a pipeline producing multiple datasets without a singular primary output."""
+    pass
+
+
+class OutputColumnCollisionError(ValueError):
+    """Raised when a technical column collides with existing schema columns."""
+    pass
+
+
+class RoutingReconciliationError(ValueError):
+    """Raised when routed partition/copy outputs fail multiset conservation invariants."""
+    pass
+
+
+class RoutingPredicateUnknownError(ValueError):
+    """Raised when a routing predicate evaluates to unknown/NA under a FAIL_STEP policy."""
+    pass
+
+
+class ValidationGateError(ValueError):
+    """Raised when a validation step fails under ERROR severity."""
+    pass
 
 
 class ValueVersion(str, Enum):
@@ -510,8 +692,23 @@ class ValidateExpression(BaseModel):
     """Pure validation/assertion without row partitioning or row drops."""
     expression_type: Literal["validate"] = "validate"
     predicate: Expression
-    severity: str = "error"
+    severity: ValidateSeverity = ValidateSeverity.ERROR
+    unknown_policy: ValidationUnknownPolicy = ValidationUnknownPolicy.FAIL_STEP
     rejection_reason_code: Optional[str] = None
+    reason_code: str = "VALIDATION_RULE_VIOLATED"
+
+    @model_validator(mode="before")
+    @classmethod
+    def handle_legacy_severity(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "severity" in data:
+            s = data["severity"]
+            if isinstance(s, str):
+                s_lower = s.lower()
+                if s_lower == "warning":
+                    data["severity"] = ValidateSeverity.WARNING
+                else:
+                    data["severity"] = ValidateSeverity.ERROR
+        return data
 
     def derive_effects(self, dataset: str) -> TransformationEffects:
         reads = tuple(sorted(set(self.predicate.extract_reads())))
@@ -522,15 +719,19 @@ class QuarantineExpression(BaseModel):
     """Row routing and partitioning into distinct output destinations."""
     expression_type: Literal["quarantine"] = "quarantine"
     predicate: Expression
-    routing_mode: Literal["partition", "copy"] = "partition"
+    routing_mode: RoutingMode = RoutingMode.PARTITION
+    unknown_policy: QuarantineUnknownPolicy = QuarantineUnknownPolicy.FAIL_STEP
     curated_output_ref: str
     quarantine_output_ref: str
-    identity_strategy: RowIdentityStrategy = RowIdentityStrategy.EXISTING_KEY
-    identity_columns: Tuple[str, ...] = ()
-    generated_identity_column: Optional[str] = None
+    unknown_output_ref: Optional[str] = None
     reason_column: Optional[str] = None
+    reason_code: str = "QUARANTINE_POLICY_VIOLATION"
     policy_id: str = "DEFAULT_QUARANTINE_POLICY"
     retention_policy_id: Optional[str] = None
+    # Compatibility attributes
+    identity_strategy: Optional[RowIdentityStrategy] = None
+    identity_columns: Tuple[str, ...] = ()
+    generated_identity_column: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -540,10 +741,22 @@ class QuarantineExpression(BaseModel):
                 data["curated_output_ref"] = data.pop("accepted_output_ref")
             if "rejected_output_ref" in data and "quarantine_output_ref" not in data:
                 data["quarantine_output_ref"] = data.pop("rejected_output_ref")
+            if "routing_mode" in data and isinstance(data["routing_mode"], str):
+                mode_str = data["routing_mode"].lower()
+                if mode_str == "copy":
+                    data["routing_mode"] = RoutingMode.COPY
+                else:
+                    data["routing_mode"] = RoutingMode.PARTITION
+            if "record_identity_columns" in data and "identity_columns" not in data:
+                data["identity_columns"] = data.pop("record_identity_columns")
         return data
 
     @model_validator(mode="after")
-    def validate_identity(self) -> "QuarantineExpression":
+    def validate_unknown_output(self) -> "QuarantineExpression":
+        if self.unknown_policy == QuarantineUnknownPolicy.SEPARATE_OUTPUT and not self.unknown_output_ref:
+            raise ValueError("SEPARATE_OUTPUT requires unknown_output_ref")
+        if self.unknown_policy != QuarantineUnknownPolicy.SEPARATE_OUTPUT and self.unknown_output_ref is not None:
+            raise ValueError("unknown_output_ref is valid only with SEPARATE_OUTPUT")
         if self.identity_strategy == RowIdentityStrategy.GENERATED_OCCURRENCE_ID and not self.generated_identity_column:
             self.generated_identity_column = "_source_row_id"
         return self
@@ -554,12 +767,77 @@ class QuarantineExpression(BaseModel):
             id_cols.append(self.generated_identity_column)
         reads = tuple(sorted(set(self.predicate.extract_reads() + id_cols)))
         creates = (self.reason_column,) if self.reason_column else ()
-        is_partition = (self.routing_mode == "partition")
+        is_partition = (self.routing_mode == RoutingMode.PARTITION)
         return TransformationEffects(
             reads=reads,
             creates=creates,
             filters_rows=is_partition,
             partitions_rows=is_partition,
+        )
+
+
+class FilterExpression(BaseModel):
+    """Row filtering: retaining or removing rows from primary output."""
+    expression_type: Literal["filter"] = "filter"
+    predicate: Expression
+    retain_matching: bool = True
+    drop_policy: FilterDropPolicy = FilterDropPolicy.DROP
+    unknown_policy: FilterUnknownPolicy = FilterUnknownPolicy.FAIL_STEP
+    unknown_output_ref: Optional[str] = None
+    dropped_output_ref: Optional[str] = None
+    rejection_reason_code: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_filter_contract(self) -> "FilterExpression":
+        if self.drop_policy == FilterDropPolicy.EXPORT_DROPPED:
+            if not self.dropped_output_ref:
+                raise ValueError("EXPORT_DROPPED requires dropped_output_ref")
+            if not self.rejection_reason_code:
+                raise ValueError("EXPORT_DROPPED requires rejection_reason_code")
+        elif self.drop_policy == FilterDropPolicy.DROP:
+            if self.dropped_output_ref is not None:
+                raise ValueError("dropped_output_ref is valid only with EXPORT_DROPPED")
+        if self.unknown_policy == FilterUnknownPolicy.SEPARATE_OUTPUT and not self.unknown_output_ref:
+            raise ValueError("SEPARATE_OUTPUT requires unknown_output_ref")
+        if self.unknown_policy != FilterUnknownPolicy.SEPARATE_OUTPUT and self.unknown_output_ref is not None:
+            raise ValueError("unknown_output_ref is valid only with SEPARATE_OUTPUT")
+        return self
+
+    def derive_effects(self, dataset: str) -> TransformationEffects:
+        reads = tuple(sorted(set(self.predicate.extract_reads())))
+        return TransformationEffects(
+            reads=reads,
+            filters_rows=True,
+            partitions_rows=(self.drop_policy == FilterDropPolicy.EXPORT_DROPPED),
+        )
+
+
+class DeduplicateExpression(BaseModel):
+    """Deduplication: selecting survivors among duplicate occurrences."""
+    expression_type: Literal["deduplicate"] = "deduplicate"
+    key_columns: Tuple[str, ...] = ()
+    resolved_key_columns: Tuple[str, ...] = ()
+    tie_breaker: DeduplicationTieBreaker = DeduplicationTieBreaker.PRESERVE_FIRST
+    order_by: Tuple[SortColumnSpec, ...] = ()
+    null_key_policy: NullKeyPolicy = NullKeyPolicy.TREAT_NULLS_AS_EQUAL
+    use_occurrence_id_as_final_tie_breaker: bool = True
+    duplicates_output_ref: Optional[str] = None
+    duplicate_export_mode: DuplicateExportMode = DuplicateExportMode.REMOVED_OCCURRENCES_ONLY
+
+    @model_validator(mode="after")
+    def validate_dedup(self) -> "DeduplicateExpression":
+        if self.tie_breaker == DeduplicationTieBreaker.EXPLICIT_ORDER and not self.order_by:
+            raise ValueError("EXPLICIT_ORDER tie_breaker requires non-empty order_by specs")
+        return self
+
+    def derive_effects(self, dataset: str) -> TransformationEffects:
+        keys = self.resolved_key_columns or self.key_columns
+        order_cols = tuple(s.column for s in self.order_by)
+        reads = tuple(sorted(set(list(keys) + list(order_cols))))
+        return TransformationEffects(
+            reads=reads,
+            filters_rows=True,
+            partitions_rows=bool(self.duplicates_output_ref),
         )
 
 
@@ -1120,6 +1398,8 @@ TransformationExpression = Annotated[
     Union[
         ValidateExpression,
         QuarantineExpression,
+        FilterExpression,
+        DeduplicateExpression,
         FlagExpression,
         ClipExpression,
         ScalarMapExpression,
@@ -1253,6 +1533,23 @@ def bind_expression_to_schema(
                 raise TransformationIRInvariantError(
                     f"Parsed output column '{out_col}' already exists in schema (output_mode=CREATE_PARSED_COLUMN)"
                 )
+
+    # For DeduplicateExpression: resolve empty keys to business columns and validate sort specs
+    if isinstance(expression, DeduplicateExpression):
+        if not expression.key_columns:
+            # Resolve to all schema columns excluding internal technical columns
+            resolved = tuple(k for k in ds_schema.columns.keys() if not k.startswith("__"))
+            expression = expression.model_copy(update={"resolved_key_columns": resolved})
+        else:
+            for k in expression.key_columns:
+                if k not in ds_schema.columns:
+                    raise TransformationIRInvariantError(f"Deduplicate key column '{k}' does not exist in schema")
+            expression = expression.model_copy(update={"resolved_key_columns": expression.key_columns})
+
+        for spec in expression.order_by:
+            if spec.column not in ds_schema.columns:
+                raise TransformationIRInvariantError(f"Deduplicate sort column '{spec.column}' does not exist in schema")
+        eff = derive_effects(expression, dataset_name)
 
     # Check AFTER_STEP references
     def _check_after_step(obj: Any):
@@ -1474,6 +1771,10 @@ class TransformationIRGraph(BaseModel):
 
         return self
 
+    routing_identity_policy: Optional[RoutingIdentityPolicy] = None
+    primary_output_ref: Optional[str] = None
+    output_specs: Tuple[DatasetOutputSpec, ...] = ()
+
     @property
     def graph_hash(self) -> str:
         data = {
@@ -1483,9 +1784,76 @@ class TransformationIRGraph(BaseModel):
             "policy_version": self.policy_version,
             "steps": [s.plan_node_hash for s in self.steps],
             "dependencies": [dep.model_dump() for dep in self.dependencies],
+            "primary_output_ref": self.primary_output_ref,
+            "output_specs": [o.model_dump() for o in self.output_specs],
         }
         dumped = json.dumps(data, sort_keys=True, default=str)
         return hashlib.sha256(dumped.encode("utf-8")).hexdigest()
+
+
+def validate_output_registry(graph: TransformationIRGraph, schema: Optional[DatasetSchema] = None) -> None:
+    """
+    Validates graph-wide output ownership, collision safety, and source-stable binding.
+    """
+    seen_refs: Dict[str, str] = {}
+    normalized_refs: Dict[str, str] = {}
+    primary_count = 0
+
+    for spec in graph.output_specs:
+        ref = spec.output_ref
+        norm_ref = ref.lower()
+
+        # Case normalization collision check
+        if norm_ref in normalized_refs and normalized_refs[norm_ref] != ref:
+            raise OutputReferenceCollisionError(
+                f"Output reference '{ref}' collides with existing reference '{normalized_refs[norm_ref]}' under case-normalization"
+            )
+        normalized_refs[norm_ref] = ref
+
+        # Unique producer check
+        producer_key = spec.produced_by_step_id or "__graph_final__"
+        if ref in seen_refs:
+            raise OutputReferenceCollisionError(
+                f"Output reference '{ref}' has multiple producers: '{seen_refs[ref]}' and '{producer_key}'"
+            )
+        seen_refs[ref] = producer_key
+
+        if spec.is_primary:
+            primary_count += 1
+
+    if graph.primary_output_ref:
+        if primary_count > 1:
+            raise OutputReferenceCollisionError(f"Multiple primary outputs declared in graph: {primary_count}")
+        # Verify no secondary step overwrites primary_output_ref
+        for step in graph.steps:
+            expr = step.expression
+            if isinstance(expr, QuarantineExpression):
+                if expr.quarantine_output_ref == graph.primary_output_ref:
+                    raise OutputReferenceCollisionError(f"Secondary output '{expr.quarantine_output_ref}' cannot overwrite primary output")
+                if expr.unknown_output_ref == graph.primary_output_ref:
+                    raise OutputReferenceCollisionError(f"Secondary unknown output '{expr.unknown_output_ref}' cannot overwrite primary output")
+            elif isinstance(expr, FilterExpression):
+                if expr.dropped_output_ref == graph.primary_output_ref:
+                    raise OutputReferenceCollisionError(f"Secondary dropped output '{expr.dropped_output_ref}' cannot overwrite primary output")
+                if expr.unknown_output_ref == graph.primary_output_ref:
+                    raise OutputReferenceCollisionError(f"Secondary unknown output '{expr.unknown_output_ref}' cannot overwrite primary output")
+            elif isinstance(expr, DeduplicateExpression):
+                if expr.duplicates_output_ref == graph.primary_output_ref:
+                    raise OutputReferenceCollisionError(f"Secondary duplicates output '{expr.duplicates_output_ref}' cannot overwrite primary output")
+
+    # Source-stable coordinates schema check
+    if graph.routing_identity_policy and graph.routing_identity_policy.scope == OccurrenceIdentityScope.SOURCE_STABLE:
+        spec = graph.routing_identity_policy.source_stable_spec
+        if not spec:
+            raise ValueError("SOURCE_STABLE policy requires source_stable_spec")
+        if schema:
+            for c in [spec.partition_column, spec.row_offset_column]:
+                if c not in schema.columns:
+                    raise ValueError(f"Source-stable coordinate column '{c}' not found in schema")
+            if spec.source_file_column and spec.source_file_column not in schema.columns:
+                raise ValueError(f"Source-stable coordinate column '{spec.source_file_column}' not found in schema")
+            if spec.ingestion_run_column and spec.ingestion_run_column not in schema.columns:
+                raise ValueError(f"Source-stable coordinate column '{spec.ingestion_run_column}' not found in schema")
 
 
 # ============================================================================
@@ -1779,13 +2147,46 @@ def plan_step_to_ir_steps(step: Dict[str, Any], dataset_name: Optional[str] = No
             predicate=NullCheck(operand=col_ref, is_null=True),
             curated_output_ref=ds,
             quarantine_output_ref=f"{ds}_quarantine",
-            record_identity_columns=(col,) if col else (),
+            identity_columns=(col,) if col else (),
             reason_column="quarantine_reason",
         )
         return [TransformationStepIR(
             step_id=sid, dataset_name=ds, target_column=col,
             family=ActionFamily.QUARANTINE, kind=StepKind.QUARANTINE_ROUTING,
             expression=quar_expr, effects=quar_expr.derive_effects(ds),
+            supporting_rule_ids=rule_ids, supporting_evidence_ids=ev_ids,
+            legacy_action_name=action, risk_class=ActionRisk.DESTRUCTIVE,
+        )]
+
+    # 2b. FILTER
+    if action in ("drop_rows", "filter_rows", "filter_null_rows"):
+        cond = NullCheck(operand=col_ref, is_null=True) if "null" in action else BinaryOp(left=col_ref, op=BinaryOperator.NEQ, right=LiteralValue(value=None))
+        filt_expr = FilterExpression(
+            predicate=cond,
+            retain_matching=False,
+            drop_policy=FilterDropPolicy.DROP,
+        )
+        return [TransformationStepIR(
+            step_id=sid, dataset_name=ds, target_column=col,
+            family=ActionFamily.FILTER, kind=StepKind.DATASET_FILTER,
+            expression=filt_expr, effects=filt_expr.derive_effects(ds),
+            supporting_rule_ids=rule_ids, supporting_evidence_ids=ev_ids,
+            legacy_action_name=action, risk_class=ActionRisk.DESTRUCTIVE,
+        )]
+
+    # 2c. DEDUPLICATE
+    if action in ("deduplicate", "drop_duplicates", "deduplicate_rows"):
+        keys = tuple(params.get("key_columns") or ([col] if col else []))
+        dedup_expr = DeduplicateExpression(
+            key_columns=keys,
+            resolved_key_columns=keys,
+            tie_breaker=DeduplicationTieBreaker.PRESERVE_FIRST,
+            null_key_policy=NullKeyPolicy.TREAT_NULLS_AS_EQUAL,
+        )
+        return [TransformationStepIR(
+            step_id=sid, dataset_name=ds, target_column=col,
+            family=ActionFamily.DEDUPLICATE, kind=StepKind.DATASET_FILTER,
+            expression=dedup_expr, effects=dedup_expr.derive_effects(ds),
             supporting_rule_ids=rule_ids, supporting_evidence_ids=ev_ids,
             legacy_action_name=action, risk_class=ActionRisk.DESTRUCTIVE,
         )]
