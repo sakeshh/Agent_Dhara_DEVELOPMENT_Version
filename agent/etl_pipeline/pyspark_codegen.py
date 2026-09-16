@@ -6,7 +6,11 @@ import os
 from typing import Any, Dict, List, Optional, Set
 
 from agent.etl_pipeline.codegen_policy import plan_policy_block
-from agent.etl_pipeline.codegen_shared import outlier_multiplier, step_params
+from agent.etl_pipeline.codegen_shared import (
+    UnsupportedCodegenActionError,
+    outlier_multiplier,
+    step_params,
+)
 from agent.etl_pipeline.join_emitters import (
     emit_pyspark_joins,
     emit_pyspark_load,
@@ -782,7 +786,8 @@ def _emit_spark(
             f"# Cross-field violation: flag rows where numeric '{col}' is negative (Phase 1 safeguard).",
             f"{df} = {df}.withColumn({flag_col}, F.col({c}).cast('double') < F.lit(0))",
         ]
-    return [f"# Unsupported in pyspark template v1: {act} on {col}"]
+    step_id_str = str((step_meta or {}).get("id") or (step_meta or {}).get("step_id") or "unknown")
+    raise UnsupportedCodegenActionError(step_id=step_id_str, action=act, engine="pyspark")
 
 
 def _emit_valid_values_spark(df: str, ds_name: str, rules: Dict[str, Any]) -> List[str]:

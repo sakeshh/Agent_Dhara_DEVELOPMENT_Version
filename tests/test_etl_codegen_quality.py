@@ -318,9 +318,14 @@ class TestPythonCodegenSafeActions:
         assert "amount_numeric" in code
         assert "pd.to_numeric" in code
 
-    @pytest.mark.xfail(strict=True, reason="Legacy sentinel parameter layout superseded by capability registry - tracked by ADR-006")
     def test_replace_sentinel_values_default_params_are_populated(self):
+        """
+        ADR-006 Retirement (Phase 2 Increment 3B):
+        Verifies that replace_sentinel_values populates default parameters and
+        adapts cleanly into typed ConditionalReplaceExpression.
+        """
         from agent.etl_pipeline.issue_to_step_compiler import compile_issues_to_steps
+        from agent.etl_pipeline.transformation_ir import adapt_legacy_action_to_ir, ConditionalReplaceExpression, ActionFamily
 
         suggestions = [
             {
@@ -329,6 +334,7 @@ class TestPythonCodegenSafeActions:
                 "issue_type": "sentinel_numeric_value",
                 "suggested_action": "replace_sentinel_values",
                 "params": {},
+                "approved": True,
             }
         ]
         steps_map, manual = compile_issues_to_steps(suggestions, {}, {})
@@ -336,6 +342,12 @@ class TestPythonCodegenSafeActions:
         assert step["action"] == "replace_sentinel_values"
         assert "sentinel_values" in step["params"]
         assert -999.0 in step["params"]["sentinel_values"]
+
+        # Confirm compilation to typed ConditionalReplaceExpression
+        ir_step = adapt_legacy_action_to_ir(step, dataset_name="sales.xml")
+        assert ir_step.family == ActionFamily.CONDITIONAL_REPLACE
+        assert isinstance(ir_step.expression, ConditionalReplaceExpression)
+        assert ir_step.expression.target_column.column_name == "Age"
 
 
 # ─── Test 6: Readiness % improves after resolution ───────────────────────────────

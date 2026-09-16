@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Dict, List, Optional
 
-from agent.etl_pipeline.codegen_shared import step_params
+from agent.etl_pipeline.codegen_shared import UnsupportedCodegenActionError, step_params
 from agent.etl_pipeline.join_emitters import emit_python_load_and_join
 from agent.etl_pipeline.io_snippets import python_read_snippet, resolve_path_python_helper
 
@@ -427,8 +427,8 @@ def _emit_at_least_one(col: str, ds_var: str, _p: Dict[str, Any]) -> List[str]:
     ]
 
 
-def _emit_unsupported(action: str, col: str, ds_var: str, _p: Dict[str, Any]) -> List[str]:
-    return [f"# Unsupported in codegen v1: {action} ({col})"]
+def _emit_unsupported(action: str, col: str, ds_var: str, _p: Dict[str, Any], step_id: str = "unknown") -> List[str]:
+    raise UnsupportedCodegenActionError(step_id=step_id, action=action, engine="python")
 
 
 def _emit_review_manually(col: str, ds_var: str, _p: Dict[str, Any]) -> List[str]:
@@ -556,7 +556,8 @@ def _emit_step(
     handler = _ACTION_REGISTRY.get(act)
     if handler:
         return handler(col, ds_var, params)
-    return _emit_unsupported(act, col, ds_var, params)
+    step_id_str = str((step_meta or {}).get("id") or (step_meta or {}).get("step_id") or "unknown")
+    raise UnsupportedCodegenActionError(step_id=step_id_str, action=act, engine="python")
 
 
 def _emit_valid_values(ds_var: str, ds_name: str, rules: Dict[str, Any]) -> List[str]:

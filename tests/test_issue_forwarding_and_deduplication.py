@@ -302,9 +302,12 @@ def test_llm_resolution_fallback_budget_and_validation():
     ]
     validated = validate_resolution_options(raw_llm_output)
 
-    # DROP_TABLE_EXEC is not in ACTION_REGISTRY, mapped to noop
+    # DROP_TABLE_EXEC is not in ACTION_REGISTRY, preserved as unsupported advisory proposal
     drop_opt = next(o for o in validated if o["id"] == "fix_1")
-    assert drop_opt["action"] == "noop"
+    assert drop_opt["action"] == "unsupported_action"
+    assert drop_opt["raw_action"] == "DROP_TABLE_EXEC"
+    assert drop_opt["execution_eligible"] is False
+    assert drop_opt["resolution_status"] == "unsupported_action"
 
     # quarantine_row is destructive, so requires_human_approval must be True
     quarantine_opt = next(o for o in validated if o["id"] == "fix_3")

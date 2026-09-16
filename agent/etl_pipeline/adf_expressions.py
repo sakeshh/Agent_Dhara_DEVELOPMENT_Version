@@ -6,7 +6,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from agent.etl_pipeline.codegen_shared import outlier_multiplier, step_params
+from agent.etl_pipeline.codegen_shared import (
+    UnsupportedCodegenActionError,
+    outlier_multiplier,
+    step_params,
+)
 
 
 def _col(name: Optional[str]) -> str:
@@ -185,12 +189,15 @@ def adf_expression_for_step(action: str, col: Optional[str], st: Dict[str, Any])
                 "description": f"referential integrity {c}",
             }
         )
-    else:
+    elif act in ("noop", "keep_as_is"):
         out.append(
             {
                 "targetColumn": c,
-                "expression": f"/* unsupported in v1: {act} */ {c}",
-                "description": f"unsupported {act}",
+                "expression": c,
+                "description": "keep as-is (noop)",
             }
         )
+    else:
+        step_id_str = str((st or {}).get("id") or (st or {}).get("step_id") or "unknown")
+        raise UnsupportedCodegenActionError(step_id=step_id_str, action=act, engine="adf")
     return out

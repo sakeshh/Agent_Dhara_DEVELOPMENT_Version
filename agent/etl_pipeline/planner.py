@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import Enum
 import hashlib
 import json
 import os
@@ -8,6 +9,22 @@ import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 _PLANNER_LOCK = threading.Lock()
+
+
+from pydantic import BaseModel
+from typing import Literal
+
+
+class PlanningInputMode(str, Enum):
+    CANONICAL_ONLY = "canonical_only"
+    LEGACY_NOTES_ONLY = "legacy_notes_only"
+    HYBRID_COMPATIBILITY = "hybrid_compatibility"
+
+
+class PlanningModeMetadata(BaseModel):
+    input_mode: PlanningInputMode
+    authoritative_source: Literal["canonical_registry", "legacy_notes"]
+    legacy_shadow_only: bool = False
 
 from agent.transformation_suggester import suggest_transformations
 from agent.etl_pipeline.business_rules import normalize_business_rules, column_is_excluded
@@ -513,6 +530,44 @@ class PlanBuilder:
         rules = normalize_business_rules(business_rules_raw)
         exclude = set(rules.get("exclude_columns") or [])
 
+        canonical_registry = self.kwargs.get("canonical_registry") or (
+            business_rules_raw.get("canonical_registry") if isinstance(business_rules_raw, dict) else None
+        )
+        raw_mode = self.kwargs.get("planning_input_mode") or (
+            business_rules_raw.get("planning_input_mode") if isinstance(business_rules_raw, dict) else None
+        )
+        if isinstance(raw_mode, PlanningInputMode):
+            planning_input_mode = raw_mode
+        elif isinstance(raw_mode, str):
+            try:
+                planning_input_mode = PlanningInputMode(raw_mode.lower())
+            except ValueError:
+                planning_input_mode = PlanningInputMode.HYBRID_COMPATIBILITY
+        elif canonical_registry:
+            planning_input_mode = PlanningInputMode.CANONICAL_ONLY
+        else:
+            planning_input_mode = PlanningInputMode.LEGACY_NOTES_ONLY
+
+        if planning_input_mode == PlanningInputMode.CANONICAL_ONLY:
+            mode_meta = PlanningModeMetadata(
+                input_mode=planning_input_mode,
+                authoritative_source="canonical_registry",
+                legacy_shadow_only=False,
+            )
+        elif planning_input_mode == PlanningInputMode.LEGACY_NOTES_ONLY:
+            mode_meta = PlanningModeMetadata(
+                input_mode=planning_input_mode,
+                authoritative_source="legacy_notes",
+                legacy_shadow_only=False,
+            )
+        else:
+            # HYBRID_COMPATIBILITY: canonical is authoritative, legacy is shadow-only
+            mode_meta = PlanningModeMetadata(
+                input_mode=planning_input_mode,
+                authoritative_source="canonical_registry",
+                legacy_shadow_only=True,
+            )
+
         # Build explicit semantic schema layer
         sem_schema = {}
         from agent.etl_pipeline.semantic_classifier import classify_column_semantic, SemanticDescriptor
@@ -914,40 +969,123 @@ class PlanBuilder:
                 else:
                     step_map[key] = entry
 
-        for ds, col, act, note in _steps_from_business_notes(rules, assessment):
-            if column_is_excluded(col, exclude):
-                continue
-            key = step_identity(ds, col, act)
-            cstats = _col_stats_for_step(assessment, ds, col)
-            if ds and col:
-                col_key = f"{ds}.{col}"
-                desc = sem_schema.get(col_key)
-                if desc:
-                    cstats = dict(cstats)
-                    cstats["semantic_type"] = desc.get("semantic_type")
-                    cstats["sub_type"] = desc.get("sub_type")
-                    cstats["pii_level"] = desc.get("pii_level")
-                    cstats["fill_strategy"] = desc.get("fill_strategy")
-            ev = {"why_this_action": note, "confidence": 0.9}
-            b_entry = {
-                "step_id": make_step_id(ds, col, act),
-                "dataset": ds or "_global",
-                "column": col,
-                "action": act,
-                "source_issue_type": "business_notes",
-                "source_issue_types": ["business_notes"],
-                "source_issue_ids": [make_issue_id(ds, col, "business_notes")],
-                "severity": "medium",
-                "priority": _ACTION_PRIORITY.get(act, 56),
-                "note": note,
-                "params": build_step_params(act, column=col, col_stats=cstats, evidence=ev, rules=rules),
-                "evidence": ev,
-                "message": note,
-            }
-            if key in step_map:
-                step_map[key] = merge_steps(step_map[key], b_entry)
+        # 1. Canonical Rules Intake
+        if canonical_registry and planning_input_mode != PlanningInputMode.LEGACY_NOTES_ONLY:
+            rule_dict = getattr(canonical_registry, "rules", None)
+            if isinstance(rule_dict, dict):
+                rules_iter = list(rule_dict.values())
+            elif isinstance(canonical_registry, (list, tuple)):
+                rules_iter = list(canonical_registry)
             else:
-                step_map[key] = b_entry
+                rules_iter = []
+
+            for rule in rules_iter:
+                mat = getattr(rule, "material", None)
+                if not mat:
+                    continue
+                # CRITICAL INVARIANT: Condition-only assertions NEVER generate transformation steps!
+                act_enum = getattr(mat, "action", None)
+                act_str = str(getattr(act_enum, "value", act_enum) or "").lower()
+                if act_str in ("assert", "assertion"):
+                    continue
+
+                rule_id = str(getattr(rule, "rule_id", None) or getattr(rule, "id", "rule"))
+                params_dict = dict(getattr(mat, "normalized_parameters", {}) or {})
+                etl_action = str(params_dict.get("action") or act_str)
+                if etl_action == "replace":
+                    etl_action = "replace_values"
+                elif etl_action == "impute":
+                    etl_action = "fill_nulls_simple"
+                elif etl_action == "standardize":
+                    etl_action = str(params_dict.get("standardize_type") or "trim")
+                elif etl_action == "drop":
+                    etl_action = "drop_column"
+                elif etl_action == "quarantine":
+                    etl_action = "quarantine_missing_key"
+
+                scope = getattr(mat, "scope", None)
+                ds_target = getattr(scope, "dataset", None) if scope else "_global"
+                target_cols = getattr(scope, "columns", None) or ("all",)
+
+                target_datasets = [ds_target] if ds_target and ds_target != "_global" and ds_target in datasets_known else datasets_known
+
+                for ds in target_datasets:
+                    cols_to_process = [c for c in target_cols if c != "all"]
+                    if not cols_to_process:
+                        cols_to_process = list(_dataset_columns(assessment, ds).keys())
+
+                    for col in cols_to_process:
+                        if column_is_excluded(col, exclude):
+                            continue
+                        key = step_identity(ds, col, etl_action)
+                        cstats = _col_stats_for_step(assessment, ds, col)
+                        ev = {
+                            "why_this_action": f"Canonical rule {rule_id}: {getattr(rule, 'name', rule_id)}",
+                            "confidence": 1.0,
+                            "rule_id": rule_id,
+                        }
+                        can_entry = {
+                            "step_id": make_step_id(ds, col, etl_action),
+                            "dataset": ds,
+                            "column": col,
+                            "action": etl_action,
+                            "source_issue_type": "canonical_rule",
+                            "source_issue_types": ["canonical_rule"],
+                            "source_issue_ids": [f"rule_{rule_id}"],
+                            "rule_id": rule_id,
+                            "supporting_rule_ids": [rule_id],
+                            "severity": "medium",
+                            "priority": _ACTION_PRIORITY.get(etl_action, 50),
+                            "note": f"Canonical rule: {getattr(rule, 'name', rule_id)}",
+                            "params": build_step_params(etl_action, column=col, col_stats=cstats, evidence=ev, rules=rules),
+                            "evidence": ev,
+                            "message": f"Canonical rule {rule_id} enforced",
+                        }
+                        if key in step_map:
+                            step_map[key] = merge_steps(step_map[key], can_entry)
+                        else:
+                            step_map[key] = can_entry
+
+        # 2. Legacy Free-Text Notes Intake (bypassed in CANONICAL_ONLY mode)
+        legacy_shadow_steps: List[Dict[str, Any]] = []
+        if planning_input_mode != PlanningInputMode.CANONICAL_ONLY:
+            for ds, col, act, note in _steps_from_business_notes(rules, assessment):
+                if column_is_excluded(col, exclude):
+                    continue
+                key = step_identity(ds, col, act)
+                cstats = _col_stats_for_step(assessment, ds, col)
+                if ds and col:
+                    col_key = f"{ds}.{col}"
+                    desc = sem_schema.get(col_key)
+                    if desc:
+                        cstats = dict(cstats)
+                        cstats["semantic_type"] = desc.get("semantic_type")
+                        cstats["sub_type"] = desc.get("sub_type")
+                        cstats["pii_level"] = desc.get("pii_level")
+                        cstats["fill_strategy"] = desc.get("fill_strategy")
+                ev = {"why_this_action": note, "confidence": 0.9}
+                b_entry = {
+                    "step_id": make_step_id(ds, col, act),
+                    "dataset": ds or "_global",
+                    "column": col,
+                    "action": act,
+                    "source_issue_type": "business_notes",
+                    "source_issue_types": ["business_notes"],
+                    "source_issue_ids": [make_issue_id(ds, col, "business_notes")],
+                    "severity": "medium",
+                    "priority": _ACTION_PRIORITY.get(act, 56),
+                    "note": note,
+                    "params": build_step_params(act, column=col, col_stats=cstats, evidence=ev, rules=rules),
+                    "evidence": ev,
+                    "message": note,
+                }
+                if mode_meta.legacy_shadow_only:
+                    legacy_shadow_steps.append(b_entry)
+                else:
+                    if key in step_map:
+                        step_map[key] = merge_steps(step_map[key], b_entry)
+                    else:
+                        step_map[key] = b_entry
 
         # Per-dataset ordered steps
         datasets_out: Dict[str, Any] = {ds: [] for ds in datasets_known}
@@ -1314,6 +1452,10 @@ class PlanBuilder:
         except Exception as e:
             logger.warning(f"Plan step consolidation/canonicalization during build_etl_plan skipped: {e}")
 
+        plan["planning_input_mode"] = planning_input_mode.value if isinstance(planning_input_mode, PlanningInputMode) else str(planning_input_mode)
+        plan["planning_mode_metadata"] = mode_meta.model_dump()
+        if legacy_shadow_steps:
+            plan["legacy_shadow_steps"] = legacy_shadow_steps
         return plan
 
 
@@ -1327,6 +1469,9 @@ def build_etl_plan(
     generation_mode: Optional[str] = "full",
     dq_recommendations: Optional[Dict[str, Any]] = None,
     semantic_context: Optional[Dict[str, Any]] = None,
+    planning_input_mode: Optional[PlanningInputMode | str] = None,
+    canonical_registry: Optional[Any] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
     """
     Build versioned ETL plan JSON from assessment + normalized business rules.
@@ -1338,7 +1483,10 @@ def build_etl_plan(
             source_context=source_context,
             generation_mode=generation_mode,
             dq_recommendations=dq_recommendations,
-            semantic_context=semantic_context
+            semantic_context=semantic_context,
+            planning_input_mode=planning_input_mode,
+            canonical_registry=canonical_registry,
+            **kwargs,
         )
         return builder.build()
 

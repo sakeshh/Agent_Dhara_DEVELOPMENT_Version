@@ -4,11 +4,103 @@ Each option maps to a codegen action (or noop for keep-as-is).
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Any, Dict, List, Literal, Optional
+from pydantic import BaseModel, Field, model_validator
 
 ResolutionOption = Dict[str, Any]
 
 _SKIP_ACTIONS = frozenset({"noop", "keep_as_is"})
+
+
+class OptionReadiness(str, Enum):
+    ADVISORY_ONLY = "advisory_only"
+    REQUIRES_PARAMETERS = "requires_parameters"
+    REQUIRES_HUMAN_APPROVAL = "requires_human_approval"
+    REQUIRES_POLICY_APPROVAL = "requires_policy_approval"
+    READY_FOR_PLAN_PROPOSAL = "ready_for_plan_proposal"
+    INVALID_PROPOSAL = "invalid_proposal"
+
+
+class RemediationIntent(BaseModel):
+    intent_id: str
+    review_item_id: str
+    decision_id: str
+    action: str
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    authorized: bool = False
+    authorized_by: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ManualReviewDecision(BaseModel):
+    review_item_id: str
+    selected_option_id: str
+    selected_action: str
+    readiness: OptionReadiness
+    approved_by: Optional[str] = None
+    approval_timestamp: Optional[datetime] = None
+    decision_rationale: Optional[str] = None
+    proposal_eligible: bool = False
+    execution_eligible: bool = False
+
+    @model_validator(mode="after")
+    def validate_decision(self) -> "ManualReviewDecision":
+        if self.execution_eligible:
+            raise ValueError("Manual review decisions cannot be executed directly; they must promote to RemediationIntent")
+        if self.readiness == OptionReadiness.ADVISORY_ONLY and self.proposal_eligible:
+            raise ValueError("Advisory-only decisions cannot be plan proposal eligible")
+        if self.readiness in (OptionReadiness.REQUIRES_HUMAN_APPROVAL, OptionReadiness.REQUIRES_POLICY_APPROVAL) and not self.approved_by:
+            raise ValueError("Items requiring approval must specify approved_by before proposal promotion")
+        return self
+
+    def to_remediation_intent(self) -> RemediationIntent:
+        """Promotes an approved decision to a typed RemediationIntent (does NOT execute directly)."""
+        if not self.proposal_eligible or self.readiness == OptionReadiness.ADVISORY_ONLY:
+            raise ValueError("Decision is not eligible for remediation intent promotion")
+        return RemediationIntent(
+            intent_id=f"intent_{self.review_item_id}",
+            review_item_id=self.review_item_id,
+            decision_id=self.selected_option_id,
+            action=self.selected_action,
+            authorized=bool(self.approved_by),
+            authorized_by=self.approved_by,
+        )
+
+
+class SourceSystemDeferral(BaseModel):
+    deferral_id: str
+    evidence_id: str
+    source_system: str
+    target_ticket_id: Optional[str] = None
+    expected_fix_version: Optional[str] = None
+    deferred_by: str
+    deferred_at: datetime
+    rationale: str
+    status: Literal["active", "resolved", "re-evaluated"] = "active"
+
+
+def tag_option_readiness(opt: Dict[str, Any]) -> Dict[str, Any]:
+    action = str(opt.get("action") or "").strip()
+    if opt.get("proposal_eligible") is False or action == "unsupported_action" or opt.get("readiness") == OptionReadiness.ADVISORY_ONLY.value:
+        opt["readiness"] = OptionReadiness.ADVISORY_ONLY.value
+        opt["proposal_eligible"] = False
+        opt["execution_eligible"] = False
+    elif (
+        opt.get("requires_human_approval")
+        or opt.get("destructive")
+        or action in ("deduplicate", "quarantine_row", "quarantine_missing_key", "quarantine_null_rows", "drop_column", "exclude_column")
+        or opt.get("readiness") == OptionReadiness.REQUIRES_HUMAN_APPROVAL.value
+    ):
+        opt["readiness"] = OptionReadiness.REQUIRES_HUMAN_APPROVAL.value
+        opt["proposal_eligible"] = True
+        opt["execution_eligible"] = False
+    else:
+        opt["readiness"] = opt.get("readiness") or OptionReadiness.READY_FOR_PLAN_PROPOSAL.value
+        opt["proposal_eligible"] = True
+        opt["execution_eligible"] = False
+    return opt
 
 RESOLUTION_TO_ACTION_MAP: Dict[str, str] = {
     # ── Deduplication resolution IDs → Phase 1 preparation actions ───────────────────
@@ -83,14 +175,18 @@ def _opt(
     *,
     recommended: bool = False,
     description: str = "",
+    requires_human_approval: bool = False,
 ) -> ResolutionOption:
-    return {
+    opt: ResolutionOption = {
         "id": opt_id,
         "label": label,
         "action": action,
         "recommended": recommended,
         "description": description,
     }
+    if requires_human_approval:
+        opt["requires_human_approval"] = True
+    return tag_option_readiness(opt)
 
 
 _DEFAULT_OPTIONS: List[ResolutionOption] = [
@@ -642,6 +738,7 @@ def enrich_manual_review_item(
     if (out.get("resolution_options")
         and not llm_recommendation
         and not conflict):
+        out["resolution_options"] = [tag_option_readiness(dict(o)) for o in out["resolution_options"]]
         default = next((o["id"] for o in out["resolution_options"] if o.get("recommended")),
                        out["resolution_options"][0]["id"] if out["resolution_options"] else "keep_as_is")
         out.setdefault("default_resolution", default)
@@ -854,6 +951,8 @@ def enrich_manual_review_item(
 
         out["resolution_options"] = opts
 
+    opts = [tag_option_readiness(dict(o)) for o in out.get("resolution_options", [])]
+    out["resolution_options"] = opts
     default = next((o["id"] for o in opts if o.get("recommended")), opts[0]["id"] if opts else "keep_as_is")
     out.setdefault("default_resolution", default)
     out.setdefault("status", "pending")

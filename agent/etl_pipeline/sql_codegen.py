@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, List
 
 from agent.etl_pipeline.codegen_shared import (
+    UnsupportedCodegenActionError,
     get_sql_cast_type,
     outlier_multiplier,
     sql_fill_update_lines,
@@ -340,6 +341,16 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
                     case_expr += f" WHEN {_wrap_string_cast(expr)} = N'{ov}' THEN N'{nv}'"
                 case_expr += f" ELSE {expr} END"
                 expr = case_expr
+        elif action in (
+            "noop", "keep_as_is", "fill_nulls_simple", "fill_or_drop", "cast_type",
+            "deduplicate", "flag_business_key_duplicate", "flag_duplicate_candidates",
+            "flag_near_duplicate_cluster", "validate_referential_integrity_or_stage",
+            "at_least_one", "validate_and_partition_relationship", "drop_column", "exclude_column",
+        ):
+            pass
+        else:
+            step_id_str = str(st.get("id") or st.get("step_id") or "unknown")
+            raise UnsupportedCodegenActionError(step_id=step_id_str, action=str(action or "unknown"), engine="sql")
                 
     return expr
 
@@ -518,6 +529,27 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     business_rules: Dict[str, Any] = plan.get("business_rules") or {}
     excluded_columns: List[str] = business_rules.get("exclude_columns") or []
     valid_values = business_rules.get("valid_values") or {}
+
+    _SQL_SUPPORTED_ACTIONS = frozenset({
+        "trim", "lowercase", "uppercase", "sanitize_email", "normalize_phone",
+        "hash_phone", "mask_phone", "standardize_boolean", "regex_replace",
+        "range_clip", "clip_outliers", "cap_outliers", "flag_outliers", "clip_or_flag",
+        "replace_sentinel_values", "normalize_registered_placeholder", "nullify_sentinels",
+        "nullify_dummy_dates", "nullify_punctuation", "nullify_date", "nullify_future_dates",
+        "coerce_numeric", "cast_type", "replace_values", "zero_to_null",
+        "parse_dates", "parse_dates_safe",
+        "fill_nulls_simple", "fill_or_drop",
+        "deduplicate", "flag_business_key_duplicate", "flag_duplicate_candidates",
+        "flag_near_duplicate_cluster", "validate_referential_integrity_or_stage",
+        "validate_and_partition_relationship", "at_least_one",
+        "drop_column", "exclude_column", "noop", "keep_as_is",
+    })
+    for ds_val in (plan.get("datasets") or {}).values():
+        for st in (ds_val.get("steps") or []):
+            st_act = str(st.get("action") or "").lower()
+            if st_act and st_act not in _SQL_SUPPORTED_ACTIONS:
+                st_id = str(st.get("id") or st.get("step_id") or "unknown")
+                raise UnsupportedCodegenActionError(step_id=st_id, action=st_act, engine="sql")
 
     lines: List[str] = [
         f"-- ETL SQL — Agent Dhara — plan_id={plan_id}",

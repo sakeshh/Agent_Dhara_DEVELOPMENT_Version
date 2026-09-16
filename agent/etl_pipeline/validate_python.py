@@ -95,8 +95,6 @@ def _action_reflected_in_source(source: str, action: str) -> bool:
             f"Compatibility warning: skipping raw-text check for action '{action}', validated via Conformance Validator"
         )
         return True
-    if f"Unsupported in codegen v1: {action}" in source:
-        return True
     src_lower = source.lower()
     act_lower = str(action or "").lower()
     if act_lower in src_lower or act_lower.replace("_", " ") in src_lower or act_lower.replace("_", "") in src_lower:

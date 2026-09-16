@@ -11,14 +11,47 @@ Features:
 """
 from __future__ import annotations
 
+from enum import Enum
 import asyncio
 import json
 import logging
 import os
 import threading
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
+from pydantic import BaseModel, model_validator
 
 from agent.etl_pipeline.action_registry import ACTION_REGISTRY
+
+
+class ResolutionStatus(str, Enum):
+    SUPPORTED = "supported"
+    UNSUPPORTED_ACTION = "unsupported_action"
+    MANUAL_REVIEW_REQUIRED = "manual_review_required"
+    INVALID_RECOMMENDATION = "invalid_recommendation"
+
+
+class AdvisoryExtensionProposal(BaseModel):
+    proposal_id: str
+    issue_id: str
+    raw_proposed_action: str
+    normalized_action_label: Optional[str] = None
+    proposed_parameters: Dict[str, Any] = {}
+    rationale: Optional[str] = None
+    resolution_status: ResolutionStatus = ResolutionStatus.UNSUPPORTED_ACTION
+    execution_eligible: Literal[False] = False
+    requires_human_approval: Literal[True] = True
+    source: str = "llm_resolution_fallback"
+    source_model: Optional[str] = None
+    interpretation_id: Optional[str] = None
+    reason_code: str = "unmapped_action"
+
+    @model_validator(mode="after")
+    def validate_proposal(self) -> "AdvisoryExtensionProposal":
+        if self.execution_eligible is not False:
+            raise ValueError("Advisory proposals must never be execution eligible")
+        if self.resolution_status == ResolutionStatus.SUPPORTED:
+            raise ValueError("Supported actions must use typed action models, not AdvisoryExtensionProposal")
+        return self
 from agent.etl_pipeline.issue_identity import (
     make_resolution_signature,
     normalize_action,
@@ -116,7 +149,8 @@ _VALID_ACTION_NAMES = set(ACTION_REGISTRY.keys())
 def validate_resolution_options(raw_options: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Validates and sanitizes options returned by LLM.
-    1. action MUST be in ACTION_REGISTRY.
+    1. action MUST be in ACTION_REGISTRY. Unmapped actions are preserved as UNSUPPORTED_ACTION
+       advisory proposals with execution_eligible=False (never silently overwritten to noop).
     2. confidence must be float between 0 and 1.
     3. Destructive actions set requires_human_approval = True.
     """
@@ -128,13 +162,39 @@ def validate_resolution_options(raw_options: List[Dict[str, Any]]) -> List[Dict[
             continue
         opt_id = str(opt.get("id") or "").strip()
         label = str(opt.get("label") or opt_id).strip()
-        action = normalize_action(opt.get("action"))
+        raw_action_val = opt.get("action")
+        action = normalize_action(raw_action_val)
         if not opt_id or not label:
             continue
 
+        confidence = opt.get("confidence")
+        try:
+            confidence = float(confidence) if confidence is not None else 0.8
+            confidence = max(0.0, min(1.0, confidence))
+        except (ValueError, TypeError):
+            confidence = 0.8
+
         if action not in _VALID_ACTION_NAMES:
-            logger.warning("Rejecting LLM resolution action '%s' not in ACTION_REGISTRY", action)
-            action = "noop"
+            logger.warning(
+                "LLM resolution action '%s' not in ACTION_REGISTRY; recording as unsupported advisory proposal (never noop)",
+                action,
+            )
+            valid_options.append({
+                "id": opt_id,
+                "label": f"[Advisory] {label}",
+                "action": "unsupported_action",
+                "raw_action": str(raw_action_val or action),
+                "recommended": False,
+                "description": str(opt.get("description") or f"Proposed action '{raw_action_val}' is outside the supported action catalog."),
+                "confidence": confidence,
+                "requires_human_approval": True,
+                "resolution_source": "llm_fallback",
+                "resolution_status": ResolutionStatus.UNSUPPORTED_ACTION.value,
+                "execution_eligible": False,
+                "proposed_parameters": opt.get("parameters") or opt.get("params") or {},
+                "rationale": opt.get("rationale") or opt.get("description"),
+            })
+            continue
 
         act_def = ACTION_REGISTRY.get(action, {})
         is_destructive = bool(act_def.get("destructive"))
@@ -146,22 +206,18 @@ def validate_resolution_options(raw_options: List[Dict[str, Any]]) -> List[Dict[
         elif recommended and has_recommended:
             recommended = False
 
-        confidence = opt.get("confidence")
-        try:
-            confidence = float(confidence) if confidence is not None else 0.8
-            confidence = max(0.0, min(1.0, confidence))
-        except (ValueError, TypeError):
-            confidence = 0.8
-
         valid_options.append({
             "id": opt_id,
             "label": label,
             "action": action,
+            "raw_action": str(raw_action_val or action),
             "recommended": recommended,
             "description": str(opt.get("description") or ""),
             "confidence": confidence,
             "requires_human_approval": requires_review,
             "resolution_source": "llm_fallback",
+            "resolution_status": ResolutionStatus.SUPPORTED.value,
+            "execution_eligible": True,
         })
 
     # Ensure at least one keep_as_is or noop option exists
@@ -170,15 +226,22 @@ def validate_resolution_options(raw_options: List[Dict[str, Any]]) -> List[Dict[
             "id": "keep_as_is",
             "label": "Keep as-is (skip in ETL)",
             "action": "noop",
+            "raw_action": "noop",
             "recommended": not has_recommended,
             "description": "No transformation applied; accept data as-is.",
             "confidence": 1.0,
             "requires_human_approval": False,
             "resolution_source": "default_safe",
+            "resolution_status": ResolutionStatus.SUPPORTED.value,
+            "execution_eligible": True,
         })
 
     if valid_options and not any(o.get("recommended") for o in valid_options):
-        valid_options[0]["recommended"] = True
+        eligible = [o for o in valid_options if o.get("execution_eligible") is True]
+        if eligible:
+            eligible[0]["recommended"] = True
+        else:
+            valid_options[0]["recommended"] = True
 
     return valid_options
 

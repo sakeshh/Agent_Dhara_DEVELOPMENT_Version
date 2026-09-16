@@ -2351,7 +2351,8 @@ def _consolidate_and_filter_datasets(
                 is_cat = any(k in col_lower for k in ("region", "channel", "location", "category", "status", "country", "state", "city", "zone", "segment", "type"))
 
                 # A. Convert lowercase/uppercase on business keys/metric/date/metadata columns to trim
-                if col and action in ("lowercase", "uppercase"):
+                # (Skip heuristic conversion if step originates from an explicit canonical business rule)
+                if col and action in ("lowercase", "uppercase") and not step.get("rule_id") and step.get("source_issue_type") != "canonical_rule":
                     col_meta = _get_col_meta(col, step)
                     col_class = _classify_column(col, col_meta, sem_schema, ds_name)
                     if is_key or col_class in ("metric", "date", "metadata") or _is_numeric_column(col, col_meta):

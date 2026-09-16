@@ -1,7 +1,92 @@
-"""Shared helpers for reading plan step params across codegen engines."""
-from __future__ import annotations
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, Tuple
+from pydantic import BaseModel
 
-from typing import Any, Dict, List, Optional, Tuple
+
+class UnsupportedCodegenActionError(RuntimeError):
+    def __init__(self, *, step_id: str, action: str, engine: str, action_version: Optional[str] = None):
+        super().__init__(f"Step {step_id} action '{action}' is unsupported for engine '{engine}'")
+        self.step_id = step_id
+        self.action = action
+        self.engine = engine
+        self.action_version = action_version
+
+
+class CodegenStatus(str, Enum):
+    SUCCEEDED = "succeeded"
+    FAILED_UNSUPPORTED_ACTION = "failed_unsupported_action"
+    FAILED_INVALID_PLAN = "failed_invalid_plan"
+    FAILED_COMPILATION = "failed_compilation"
+
+
+class GeneratedArtifact(BaseModel):
+    engine: str
+    code: str
+    metadata: Dict[str, Any] = {}
+
+
+class CodegenResult(BaseModel):
+    status: CodegenStatus
+    artifact: Optional[GeneratedArtifact] = None
+    failed_step_ids: Tuple[str, ...] = ()
+    partial_artifact_count: int = 0
+    persisted_artifact_count: int = 0
+    signed_artifact_count: int = 0
+    execution_eligible: bool = False
+
+
+def generate_codegen_result(
+    generator_fn: Callable[..., Any],
+    plan: Dict[str, Any],
+    assessment: Dict[str, Any],
+    engine: str,
+    signing_fn: Optional[Callable[[str], str]] = None,
+    persister_fn: Optional[Callable[[str], Any]] = None,
+    **kwargs,
+) -> CodegenResult:
+    try:
+        raw_code = generator_fn(plan, assessment, **kwargs)
+        code_str = raw_code if isinstance(raw_code, str) else str(raw_code)
+
+        signed_count = 0
+        if signing_fn:
+            code_str = signing_fn(code_str)
+            signed_count = 1
+
+        persisted_count = 0
+        if persister_fn:
+            persister_fn(code_str)
+            persisted_count = 1
+
+        return CodegenResult(
+            status=CodegenStatus.SUCCEEDED,
+            artifact=GeneratedArtifact(engine=engine, code=code_str, metadata={"plan_id": plan.get("plan_id")}),
+            failed_step_ids=(),
+            partial_artifact_count=1,
+            persisted_artifact_count=persisted_count,
+            signed_artifact_count=signed_count,
+            execution_eligible=True,
+        )
+    except UnsupportedCodegenActionError as err:
+        return CodegenResult(
+            status=CodegenStatus.FAILED_UNSUPPORTED_ACTION,
+            artifact=None,
+            failed_step_ids=(err.step_id,) if err.step_id else ("unknown",),
+            partial_artifact_count=0,
+            persisted_artifact_count=0,
+            signed_artifact_count=0,
+            execution_eligible=False,
+        )
+    except Exception:
+        return CodegenResult(
+            status=CodegenStatus.FAILED_COMPILATION,
+            artifact=None,
+            failed_step_ids=(),
+            partial_artifact_count=0,
+            persisted_artifact_count=0,
+            signed_artifact_count=0,
+            execution_eligible=False,
+        )
 
 
 def step_params(st: Optional[Dict[str, Any]]) -> Dict[str, Any]:
