@@ -14,6 +14,7 @@ Defines an engine-neutral, strictly typed AST for ETL transformations:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from enum import Enum
 import hashlib
 import json
@@ -31,6 +32,11 @@ class TransformationIRInvariantError(ValueError):
 
 class SchemaBindingError(TransformationIRInvariantError):
     """Raised when an expression fails validation against a schema."""
+    pass
+
+
+class CanonicalSerializationError(TransformationIRInvariantError):
+    """Raised when a scalar value or type fails canonical scalar serialization."""
     pass
 
 
@@ -527,6 +533,8 @@ class StepKind(str, Enum):
     CONTROL = "control"
     QUARANTINE_ROUTING = "quarantine_routing"
     SCHEMA_MUTATION = "schema_mutation"
+    MULTI_DATASET_JOIN = "multi_dataset_join"
+    DATASET_AGGREGATION = "dataset_aggregation"
 
 
 # ============================================================================
@@ -1348,6 +1356,11 @@ class HashInputEncoding(str, Enum):
     RAW_BYTES = "raw_bytes"
 
 
+class DecimalCanonicalizationMode(str, Enum):
+    NUMERIC_VALUE = "numeric_value"
+    PRESERVE_DECLARED_SCALE = "preserve_declared_scale"
+
+
 class DigestEncoding(str, Enum):
     HEX = "hex"
     BASE64URL = "base64url"
@@ -1632,7 +1645,9 @@ class CastFailurePolicy(str, Enum):
 class NumericOverflowPolicy(str, Enum):
     FAIL_STEP = "fail_step"
     CLIP = "clip"
+    CLIP_TO_RANGE = "clip"
     SET_NULL = "set_null"
+    WRAP = "wrap"
 
 
 class StepAuthorization(BaseModel):
@@ -1828,6 +1843,512 @@ class CastColumnExpression(SchemaMutationExpression):
         return data
 
 
+
+# ============================================================================
+# Derivation & Extraction Enums & Models (Increment 3E)
+# ============================================================================
+
+class ArithmeticDomain(str, Enum):
+    INT64 = "int64"
+    FLOAT64 = "float64"
+    DECIMAL = "decimal"
+
+
+class ArithmeticOperator(str, Enum):
+    ADD = "add"
+    SUBTRACT = "subtract"
+    MULTIPLY = "multiply"
+    DIVIDE = "divide"
+    FLOOR_DIVIDE = "floor_divide"
+    MODULO = "modulo"
+    POWER = "power"
+
+
+class DivisionByZeroPolicy(str, Enum):
+    SET_NULL = "set_null"
+    FAIL_STEP = "fail_step"
+    FAIL = "fail_step"
+    RETURN_INFINITY = "return_infinity"
+    USE_FALLBACK = "use_fallback"
+
+
+class ConditionalUnknownPolicy(str, Enum):
+    SET_NULL = "set_null"
+    USE_THEN = "use_then"
+    USE_ELSE = "use_else"
+    USE_FALLBACK = "use_fallback"
+    FAIL_STEP = "fail_step"
+
+
+class ConcatNullPolicy(str, Enum):
+    IGNORE_NULLS = "ignore_nulls"
+    IGNORE = "ignore_nulls"
+    PRESERVE_AS_EMPTY = "preserve_as_empty"
+    COALESCE_EMPTY = "coalesce_empty"
+    SET_RESULT_NULL = "set_result_null"
+    PROPAGATE_NULL = "propagate_null"
+
+
+class DateArithmeticUnit(str, Enum):
+    DAY = "day"
+    MONTH = "month"
+    YEAR = "year"
+    HOUR = "hour"
+    MINUTE = "minute"
+    SECOND = "second"
+
+
+class DateDiffUnit(str, Enum):
+    DAY = "day"
+    MONTH = "month"
+    YEAR = "year"
+    HOUR = "hour"
+    SECOND = "second"
+
+
+class NumericOperand(BaseModel):
+    column_name: Optional[str] = None
+    literal_value: Optional[Union[int, float, Decimal]] = None
+    value: Optional[Union[int, float, Decimal]] = None
+
+    @model_validator(mode="after")
+    def validate_operand(self) -> "NumericOperand":
+        if self.literal_value is None and self.value is not None:
+            self.literal_value = self.value
+        elif self.value is None and self.literal_value is not None:
+            self.value = self.literal_value
+        if self.column_name is None and self.literal_value is None:
+            raise ValueError("NumericOperand must specify either column_name or literal_value")
+        return self
+
+
+class ArithmeticDerivation(BaseModel):
+    expression_type: Literal["derive"] = "derive"
+    derivation_type: Literal["arithmetic"] = "arithmetic"
+    operator: ArithmeticOperator
+    left: NumericOperand
+    right: Optional[NumericOperand] = None
+    domain: ArithmeticDomain = ArithmeticDomain.FLOAT64
+    output_column: str
+    output_type: DataType = DataType.FLOAT
+    division_by_zero_policy: DivisionByZeroPolicy = DivisionByZeroPolicy.SET_NULL
+    fallback_value: Optional[Union[int, float, Decimal]] = None
+    overflow_policy: NumericOverflowPolicy = NumericOverflowPolicy.FAIL_STEP
+    existing_column_policy: ExistingColumnPolicy = ExistingColumnPolicy.ERROR
+
+    def derive_effects(self, dataset: str) -> TransformationEffects:
+        reads = []
+        if self.left.column_name:
+            reads.append(self.left.column_name)
+        if self.right and self.right.column_name:
+            reads.append(self.right.column_name)
+        return TransformationEffects(reads=tuple(reads), creates=(self.output_column,), filters_rows=False, partitions_rows=False)
+
+
+class ConditionalDerivation(BaseModel):
+    expression_type: Literal["derive"] = "derive"
+    derivation_type: Literal["conditional"] = "conditional"
+    condition: Union[BinaryOp, InSetPredicate, NullCheck, ColumnRef, Expression]
+    then_column: Optional[str] = None
+    then_value: Optional[Any] = None
+    else_column: Optional[str] = None
+    else_value: Optional[Any] = None
+    fallback_value: Optional[Any] = None
+    unknown_policy: ConditionalUnknownPolicy = ConditionalUnknownPolicy.SET_NULL
+    output_column: str
+    output_type: Optional[DataType] = None
+    existing_column_policy: ExistingColumnPolicy = ExistingColumnPolicy.ERROR
+
+    def derive_effects(self, dataset: str) -> TransformationEffects:
+        reads = []
+        if hasattr(self.condition, "extract_reads"):
+            reads.extend(self.condition.extract_reads())
+        elif hasattr(self.condition, "column"):
+            col_val = self.condition.column
+            reads.append(col_val.column_name if hasattr(col_val, "column_name") else str(col_val))
+        if self.then_column:
+            reads.append(self.then_column)
+        if self.else_column:
+            reads.append(self.else_column)
+        return TransformationEffects(reads=tuple(reads), creates=(self.output_column,), filters_rows=False, partitions_rows=False)
+
+
+class CoalesceDerivation(BaseModel):
+    expression_type: Literal["derive"] = "derive"
+    derivation_type: Literal["coalesce"] = "coalesce"
+    columns: List[str]
+    fallback_value: Optional[Any] = None
+    output_column: str
+    output_type: Optional[DataType] = None
+    existing_column_policy: ExistingColumnPolicy = ExistingColumnPolicy.ERROR
+
+    def derive_effects(self, dataset: str) -> TransformationEffects:
+        return TransformationEffects(reads=tuple(self.columns), creates=(self.output_column,), filters_rows=False, partitions_rows=False)
+
+
+class ConcatDerivation(BaseModel):
+    expression_type: Literal["derive"] = "derive"
+    derivation_type: Literal["concat"] = "concat"
+    columns: List[str]
+    delimiter: str = ""
+    null_policy: ConcatNullPolicy = ConcatNullPolicy.IGNORE_NULLS
+    output_column: str
+    existing_column_policy: ExistingColumnPolicy = ExistingColumnPolicy.ERROR
+
+    def derive_effects(self, dataset: str) -> TransformationEffects:
+        return TransformationEffects(reads=tuple(self.columns), creates=(self.output_column,), filters_rows=False, partitions_rows=False)
+
+
+class DateArithmeticDerivation(BaseModel):
+    expression_type: Literal["derive"] = "derive"
+    derivation_type: Literal["date_arithmetic"] = "date_arithmetic"
+    source_column: str
+    operation: Literal["add", "subtract", "diff"] = "diff"
+    target_column: Optional[str] = None
+    amount: Optional[int] = None
+    unit: DateArithmeticUnit = DateArithmeticUnit.DAY
+    output_column: str
+    existing_column_policy: ExistingColumnPolicy = ExistingColumnPolicy.ERROR
+
+    def derive_effects(self, dataset: str) -> TransformationEffects:
+        reads = [self.source_column]
+        if self.target_column:
+            reads.append(self.target_column)
+        return TransformationEffects(reads=tuple(reads), creates=(self.output_column,), filters_rows=False, partitions_rows=False)
+
+
+DeriveExpression = Annotated[
+    Union[ArithmeticDerivation, ConditionalDerivation, CoalesceDerivation, ConcatDerivation, DateArithmeticDerivation],
+    Field(discriminator="derivation_type"),
+]
+
+
+# Extraction models
+class ExtractFailurePolicy(str, Enum):
+    SET_NULL = "set_null"
+    FAIL_STEP = "fail_step"
+    USE_FALLBACK = "use_fallback"
+
+
+class MultipleMatchPolicy(str, Enum):
+    FIRST = "first"
+    LAST = "last"
+    FAIL_STEP = "fail_step"
+
+
+class DatePart(str, Enum):
+    YEAR = "year"
+    MONTH = "month"
+    DAY = "day"
+    HOUR = "hour"
+    MINUTE = "minute"
+    SECOND = "second"
+    DAY_OF_WEEK = "day_of_week"
+    QUARTER = "quarter"
+
+
+class BoundedJsonPath(BaseModel):
+    path: str
+    max_depth: int = 10
+    max_array_index: int = 1000
+
+    @model_validator(mode="after")
+    def validate_path_syntax(self) -> "BoundedJsonPath":
+        p = self.path.strip()
+        if not p:
+            raise ValueError("BoundedJsonPath path cannot be empty")
+        if ".." in p or "*" in p or "?" in p or "(" in p:
+            raise ValueError(f"Prohibited recursive, wildcard, or filter expression in BoundedJsonPath: '{self.path}'")
+        parts = p.replace("[", ".").replace("]", "").split(".")
+        parts = [pt for pt in parts if pt]
+        if len(parts) > self.max_depth:
+            raise ValueError(f"JSON path depth {len(parts)} exceeds maximum permitted depth {self.max_depth}")
+        for pt in parts:
+            if pt.isdigit():
+                idx = int(pt)
+                if idx > self.max_array_index:
+                    raise ValueError(f"JSON array index {idx} exceeds maximum permitted index {self.max_array_index}")
+        return self
+
+
+class RegexExtract(BaseModel):
+    expression_type: Literal["extract"] = "extract"
+    extraction_type: Literal["regex"] = "regex"
+    source_column: str
+    pattern: str
+    group_index: int = 1
+    group_name: Optional[str] = None
+    multiple_match_policy: MultipleMatchPolicy = MultipleMatchPolicy.FIRST
+    failure_policy: ExtractFailurePolicy = ExtractFailurePolicy.SET_NULL
+    fallback_value: Optional[str] = None
+    output_column: str
+    existing_column_policy: ExistingColumnPolicy = ExistingColumnPolicy.ERROR
+
+    def derive_effects(self, dataset: str) -> TransformationEffects:
+        return TransformationEffects(reads=(self.source_column,), creates=(self.output_column,), filters_rows=False, partitions_rows=False)
+
+
+class JsonPathExtract(BaseModel):
+    expression_type: Literal["extract"] = "extract"
+    extraction_type: Literal["json_path"] = "json_path"
+    source_column: str
+    path: Union[BoundedJsonPath, str]
+    failure_policy: ExtractFailurePolicy = ExtractFailurePolicy.SET_NULL
+    fallback_value: Optional[Any] = None
+    output_column: str
+    existing_column_policy: ExistingColumnPolicy = ExistingColumnPolicy.ERROR
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_path(cls, data: Any) -> Any:
+        if isinstance(data, dict) and isinstance(data.get("path"), str):
+            data["path"] = {"path": data["path"]}
+        return data
+
+    def derive_effects(self, dataset: str) -> TransformationEffects:
+        return TransformationEffects(reads=(self.source_column,), creates=(self.output_column,), filters_rows=False, partitions_rows=False)
+
+
+class DelimiterExtract(BaseModel):
+    expression_type: Literal["extract"] = "extract"
+    extraction_type: Literal["delimiter"] = "delimiter"
+    source_column: str
+    delimiter: str
+    index: int = 0
+    failure_policy: ExtractFailurePolicy = ExtractFailurePolicy.SET_NULL
+    fallback_value: Optional[str] = None
+    output_column: str
+    existing_column_policy: ExistingColumnPolicy = ExistingColumnPolicy.ERROR
+
+    def derive_effects(self, dataset: str) -> TransformationEffects:
+        return TransformationEffects(reads=(self.source_column,), creates=(self.output_column,), filters_rows=False, partitions_rows=False)
+
+
+class DatePartExtract(BaseModel):
+    expression_type: Literal["extract"] = "extract"
+    extraction_type: Literal["date_part"] = "date_part"
+    source_column: str
+    part: DatePart
+    failure_policy: ExtractFailurePolicy = ExtractFailurePolicy.SET_NULL
+    output_column: str
+    existing_column_policy: ExistingColumnPolicy = ExistingColumnPolicy.ERROR
+
+    def derive_effects(self, dataset: str) -> TransformationEffects:
+        return TransformationEffects(reads=(self.source_column,), creates=(self.output_column,), filters_rows=False, partitions_rows=False)
+
+
+ExtractExpression = Annotated[
+    Union[RegexExtract, JsonPathExtract, DelimiterExtract, DatePartExtract],
+    Field(discriminator="extraction_type"),
+]
+
+
+# Multi-Dataset Join Models
+class JoinType(str, Enum):
+    INNER = "inner"
+    LEFT = "left"
+    RIGHT = "right"
+    FULL_OUTER = "full_outer"
+    CROSS = "cross"
+    SEMI = "semi"
+    ANTI = "anti"
+
+
+class JoinCardinality(str, Enum):
+    ONE_TO_ONE = "one_to_one"
+    ONE_TO_MANY = "one_to_many"
+    MANY_TO_ONE = "many_to_one"
+    MANY_TO_MANY = "many_to_many"
+
+
+class JoinNullPolicy(str, Enum):
+    DROP_NULL_MATCHES = "drop_null_matches"
+    MATCH_NULLS_TOGETHER = "match_nulls_together"
+    FAIL_STEP_ON_NULL_KEY = "fail_step_on_null_key"
+
+
+class UnmatchedRowDisposition(str, Enum):
+    DROP = "drop"
+    RETAIN = "retain"
+    ROUTE_TO_UNMATCHED_OUTPUT = "route_to_unmatched_output"
+
+
+class JoinCollisionPolicy(str, Enum):
+    RENAME_WITH_SUFFIX = "rename_with_suffix"
+    FAIL_ON_COLLISION = "fail_on_collision"
+    SELECT_LEFT = "select_left"
+    SELECT_RIGHT = "select_right"
+
+
+class JoinKeyPair(BaseModel):
+    left: Union[ColumnRef, str]
+    right: Union[ColumnRef, str]
+    comparison_type: str = "eq"
+    normalization_ref: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if isinstance(data.get("left"), str):
+                data["left"] = {"column_name": data["left"]}
+            if isinstance(data.get("right"), str):
+                data["right"] = {"column_name": data["right"]}
+        return data
+
+
+class JoinUnmatchedPolicy(BaseModel):
+    left_unmatched: UnmatchedRowDisposition = UnmatchedRowDisposition.DROP
+    right_unmatched: UnmatchedRowDisposition = UnmatchedRowDisposition.DROP
+    left_output_ref: Optional[str] = None
+    right_output_ref: Optional[str] = None
+
+
+class JoinExecutionAccounting(BaseModel):
+    left_input_count: int
+    right_input_count: int
+    left_matched_count: int
+    right_matched_count: int
+    left_unmatched_count: int
+    right_unmatched_count: int
+    output_count: int
+    expansion_ratio: float
+
+
+class JoinExpression(BaseModel):
+    expression_type: Literal["join"] = "join"
+    left_dataset: str
+    right_dataset: str
+    join_type: JoinType
+    key_pairs: List[JoinKeyPair] = Field(default_factory=list)
+    cardinality: JoinCardinality = JoinCardinality.MANY_TO_ONE
+    null_policy: JoinNullPolicy = JoinNullPolicy.DROP_NULL_MATCHES
+    unmatched_policy: JoinUnmatchedPolicy = Field(default_factory=JoinUnmatchedPolicy)
+    collision_policy: JoinCollisionPolicy = JoinCollisionPolicy.RENAME_WITH_SUFFIX
+    left_suffix: str = "_left"
+    right_suffix: str = "_right"
+    max_output_row_count: Optional[int] = None
+    max_row_expansion_ratio: Optional[float] = None
+    output_dataset: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_join(self) -> "JoinExpression":
+        if self.join_type == JoinType.CROSS:
+            if self.key_pairs:
+                raise ValueError("CROSS join cannot declare key_pairs")
+        else:
+            if not self.key_pairs:
+                raise ValueError(f"Join type {self.join_type.value} requires at least one key_pair")
+        return self
+
+    def derive_effects(self, dataset: str) -> TransformationEffects:
+        left_reads = tuple(k.left.column_name if hasattr(k.left, "column_name") else str(k.left) for k in self.key_pairs)
+        filters = self.join_type in (JoinType.INNER, JoinType.SEMI, JoinType.ANTI)
+        return TransformationEffects(reads=left_reads, filters_rows=filters, partitions_rows=False)
+
+
+# Aggregation Models
+class GroupKeyNullPolicy(str, Enum):
+    INCLUDE_NULL_GROUP = "include_null_group"
+    DROP_NULL_GROUP = "drop_null_group"
+    FAIL_STEP = "fail_step"
+
+
+class AggregateOp(str, Enum):
+    SUM = "sum"
+    AVG = "avg"
+    MIN = "min"
+    MAX = "max"
+    COUNT = "count"
+    COUNT_DISTINCT = "count_distinct"
+    STDDEV_SAMPLE = "stddev_sample"
+    STDDEV_POPULATION = "stddev_population"
+    MEDIAN = "median"
+
+
+class AggregateValueNullPolicy(str, Enum):
+    EXCLUDE_NULLS = "exclude_nulls"
+    PROPAGATE_NULL = "propagate_null"
+    TREAT_AS_ZERO = "treat_as_zero"
+    FAIL_STEP = "fail_step"
+
+
+class EmptyInputPolicy(str, Enum):
+    EMIT_EMPTY_DATASET = "emit_empty_dataset"
+    EMIT_SINGLE_NULL_ROW = "emit_single_null_row"
+    FAIL_STEP = "fail_step"
+
+
+class AggregateColumnSpec(BaseModel):
+    source_column: Optional[str] = None  # None for COUNT(*)
+    operation: AggregateOp
+    output_column: str
+    output_type: Optional[DataType] = None
+    null_policy: AggregateValueNullPolicy = AggregateValueNullPolicy.EXCLUDE_NULLS
+    precision: Optional[int] = None
+    scale: Optional[int] = None
+
+
+class AggregateExpression(BaseModel):
+    expression_type: Literal["aggregate"] = "aggregate"
+    group_by: List[str] = Field(default_factory=list)
+    aggregates: List[AggregateColumnSpec]
+    group_key_null_policy: GroupKeyNullPolicy = GroupKeyNullPolicy.INCLUDE_NULL_GROUP
+    empty_input_policy: EmptyInputPolicy = EmptyInputPolicy.EMIT_EMPTY_DATASET
+    order_by: List[SortColumnSpec] = Field(default_factory=list)
+    output_dataset: Optional[str] = None
+
+    def derive_effects(self, dataset: str) -> TransformationEffects:
+        reads = list(self.group_by)
+        for a in self.aggregates:
+            if a.source_column:
+                reads.append(a.source_column)
+        creates = tuple(a.output_column for a in self.aggregates)
+        return TransformationEffects(reads=tuple(reads), creates=creates, partitions_rows=True)
+
+
+# Publication Models
+class PublicationStageHandle(BaseModel):
+    staging_id: str
+    output_refs: List[str]
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class PublicationValidationResult(BaseModel):
+    is_valid: bool
+    passed_postconditions: int = 0
+    failed_postconditions: int = 0
+    errors: List[str] = Field(default_factory=list)
+
+
+class PublicationCommitResult(BaseModel):
+    is_committed: bool
+    published_output_count: int
+    manifest_version: str
+    diagnostics: Dict[str, Any] = Field(default_factory=dict)
+
+
+class StagedExecutionResult(BaseModel):
+    staging_id: str
+    outputs: Dict[str, Any]
+    is_ready_for_publication: bool
+    postcondition_errors: List[str] = Field(default_factory=list)
+
+
+class PublicationAdapter(Protocol):
+    def stage(self, staging_id: str, outputs: Mapping[str, Any]) -> PublicationStageHandle:
+        ...
+
+    def validate(self, handle: PublicationStageHandle) -> PublicationValidationResult:
+        ...
+
+    def commit(self, handle: PublicationStageHandle) -> PublicationCommitResult:
+        ...
+
+    def abort(self, handle: PublicationStageHandle) -> None:
+        ...
+
+
 TransformationExpression = Annotated[
     Union[
         ValidateExpression,
@@ -1844,6 +2365,10 @@ TransformationExpression = Annotated[
         HashExpression,
         MaskExpression,
         SchemaMutationExpression,
+        DeriveExpression,
+        ExtractExpression,
+        JoinExpression,
+        AggregateExpression,
     ],
     Field(discriminator="expression_type"),
 ]

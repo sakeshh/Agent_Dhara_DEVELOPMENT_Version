@@ -29,11 +29,17 @@ Core Architectural Invariants:
 from __future__ import annotations
 
 import ast
-import hashlib
-import re
+import datetime as _dt
 from datetime import datetime, timezone
+from decimal import Decimal
 from enum import Enum
-from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
+import hashlib
+import hmac
+import json
+import re
+import struct
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
+import unicodedata
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
@@ -41,40 +47,67 @@ from agent.etl_pipeline.codegen_shared import CodegenStatus
 from agent.etl_pipeline.transformation_ir import (
     TRANSFORMATION_IR_VERSION,
     ActionFamily,
+    AggregateColumnSpec,
+    AggregateExpression,
+    AggregateOp,
+    AggregateValueNullPolicy,
     AmbiguousTimePolicy,
+    ArithmeticDerivation,
+    ArithmeticDomain,
+    ArithmeticOperator,
     BinaryOp,
     BinaryOperator,
     BooleanFormatSpec,
-    ClipExpression,
-    ClipNullPolicy,
-    ColumnRef,
+    BoundedJsonPath,
+    CanonicalSerializationError,
     CastColumnExpression,
     CastFailurePolicy,
+    ClipExpression,
+    ClipNullPolicy,
+    CoalesceDerivation,
     CollisionPolicy,
     ColumnDropSpec,
     ColumnMetadata,
     ColumnProjectSpec,
+    ColumnRef,
     ColumnRenameSpec,
     ColumnRole,
+    ConcatDerivation,
+    ConcatNullPolicy,
+    ConditionalDerivation,
     ConditionalReplaceExpression,
+    ConditionalUnknownPolicy,
     CreateColumnExpression,
     DataType,
     DatasetColumnSchema,
     DatasetOutputSpec,
     DatasetSchema,
+    DateArithmeticDerivation,
+    DateArithmeticUnit,
+    DateDiffUnit,
+    DatePart,
+    DatePartExtract,
+    DecimalCanonicalizationMode,
     DeduplicateExpression,
     DeduplicationTieBreaker,
+    DelimiterExtract,
+    DeriveExpression,
     DigestEncoding,
+    DivisionByZeroPolicy,
     DropColumnsExpression,
     DuplicateExportMode,
     EmailMaskDomainPolicy,
+    EmptyInputPolicy,
     ExecutionKeyProvider,
     ExistingColumnPolicy,
     Expression,
+    ExtractExpression,
+    ExtractFailurePolicy,
     FilterDropPolicy,
     FilterExpression,
     FilterUnknownPolicy,
     FlagExpression,
+    GroupKeyNullPolicy,
     GroupKeyValue,
     GroupedImputationStrategy,
     GroupedImputationValue,
@@ -87,6 +120,15 @@ from agent.etl_pipeline.transformation_ir import (
     ImputeExpression,
     InfinityPolicy,
     InSetPredicate,
+    JoinCardinality,
+    JoinCollisionPolicy,
+    JoinExecutionAccounting,
+    JoinExpression,
+    JoinKeyPair,
+    JoinNullPolicy,
+    JoinType,
+    JoinUnmatchedPolicy,
+    JsonPathExtract,
     KeyProviderRequiredError,
     LearnedImputationModel,
     LiteralValue,
@@ -96,10 +138,12 @@ from agent.etl_pipeline.transformation_ir import (
     MissingGroupPolicy,
     ModeTieBreaker,
     MultiOutputArtifactError,
+    MultipleMatchPolicy,
     NonexistentTimePolicy,
     NullCheck,
     NullKeyPolicy,
     NumericFormatSpec,
+    NumericOperand,
     NumericOverflowPolicy,
     OccurrenceIdentityScope,
     OrderDirection,
@@ -113,8 +157,13 @@ from agent.etl_pipeline.transformation_ir import (
     PassThroughExpression,
     PredicateUnknownPolicy,
     ProjectColumnsExpression,
+    PublicationAdapter,
+    PublicationCommitResult,
+    PublicationStageHandle,
+    PublicationValidationResult,
     QuarantineExpression,
     QuarantineUnknownPolicy,
+    RegexExtract,
     RenameColumnsExpression,
     ReorderColumnsExpression,
     RoutingIdentityPolicy,
@@ -122,6 +171,7 @@ from agent.etl_pipeline.transformation_ir import (
     RoutingPredicateUnknownError,
     RoutingReconciliationError,
     ScalarMapExpression,
+    ScalarMapOperation,
     SchemaMutationEvidence,
     SchemaMutationExpression,
     SchemaMutationOp,
@@ -130,20 +180,20 @@ from agent.etl_pipeline.transformation_ir import (
     SecretReference,
     SecretResolutionError,
     ShortValuePolicy,
-    StepAuthorization,
-    UnauthorizedDestructiveActionError,
-    compute_canonical_schema_hash,
-    ScalarMapOperation,
     SortColumnSpec,
     SourceStableIdentitySpec,
+    StagedExecutionResult,
     StatisticalImputationStrategy,
+    StepAuthorization,
     StepKind,
     TemporalParseTarget,
     TransformationEffects,
     TransformationIRGraph,
     TransformationStepIR,
+    UnauthorizedDestructiveActionError,
     UnboundedInfinityPolicy,
     UnmappedValuePolicy,
+    UnmatchedRowDisposition,
     ValidateExpression,
     ValidateSeverity,
     ValidationExecutionSummary,
@@ -151,10 +201,187 @@ from agent.etl_pipeline.transformation_ir import (
     ValidationUnknownPolicy,
     ValueVersion,
     bind_expression_to_schema,
+    compute_canonical_schema_hash,
     compute_model_snapshot_hash,
     validate_output_registry,
     verify_imputation_model,
 )
+
+
+class RowExpansionLimitExceededError(ValueError):
+    """Raised when join row expansion exceeds the absolute cap or ratio cap."""
+    pass
+
+
+class PublicationPostconditionError(ValueError):
+    """Raised when a postcondition or schema assertion fails during publication validation."""
+    pass
+
+
+class PublicationAbortError(RuntimeError):
+    """Raised when publication cannot proceed or is aborted."""
+    pass
+
+
+def canonical_encode_scalar_v1(
+    v: Any,
+    mode: DecimalCanonicalizationMode = DecimalCanonicalizationMode.NUMERIC_VALUE,
+    norm_form: str = "NFC",
+    declared_scale: Optional[int] = None,
+    dataset_tz: Optional[str] = None,
+) -> bytes:
+    """
+    Contract 1, 2, 3 canonical scalar encoder.
+    Produces unambiguous binary encoding for scalar types:
+    - Domain tag separation (NULL, BOOL, INT, FLOAT, DEC, STR, TS, BYTES, NAT, DATE)
+    - Rejects unsupported scalar types (CanonicalSerializationError) - zero string fallback
+    - Bounded 4-byte length prefix (uint32)
+    - Decimal:
+        * NUMERIC_VALUE: trailing zeros normalized, canonical zero for all zeros (-0, 0.00, etc.),
+          minimal unsigned magnitude bytes.
+        * PRESERVE_DECLARED_SCALE: declared precision/scale preserved.
+        * Rejects non-finite decimals (NaN, Infinity).
+        * Validates 4-byte signed scale range.
+    - Timestamps:
+        * pd.NaT has dedicated domain tag b'\\x09NAT\\x00'
+        * Rejects out-of-range epoch nanoseconds (signed 64-bit int)
+        * Timezone-aware timestamps normalized to UTC epoch nanoseconds
+        * Naive timestamps require explicit dataset_tz or raise CanonicalSerializationError
+        * Calendar dates use b'\\x0aDATE\\x00' and are not timezone-shifted
+    - Integers:
+        * Signed 64-bit range validation (-2^63 <= v <= 2^63 - 1)
+    - Floats:
+        * Normalizes -0.0 to 0.0
+        * Canonical NaN, +inf, -inf
+    - Bounded lengths:
+        * Length <= 2^32 - 1 for strings and bytes
+    """
+    import pandas as pd
+    import numpy as np
+
+    # 0. pd.NaT (must precede generic null check because pd.isna(NaT) is True)
+    if v is pd.NaT or (isinstance(v, (pd.Timestamp, np.datetime64)) and pd.isna(v)):
+        return b"\x09NAT\x00"
+
+    # 1. Null / None
+    if v is None:
+        return b"\x00DHARA_NULL_V1"
+
+    # 2. Boolean (must precede int, because bool is subclass of int in Python!)
+    if isinstance(v, (bool, np.bool_)):
+        return b"\x01BOOL\x01" if v else b"\x01BOOL\x00"
+
+    # 3. Integer
+    if isinstance(v, (int, np.integer)):
+        int_v = int(v)
+        if int_v < -9223372036854775808 or int_v > 9223372036854775807:
+            raise CanonicalSerializationError(f"Integer {int_v} exceeds signed 64-bit range")
+        return b"\x02INT\x00" + int_v.to_bytes(8, byteorder="big", signed=True)
+
+    # 4. Float
+    if isinstance(v, (float, np.floating)):
+        f_val = float(v)
+        if np.isnan(f_val):
+            return b"\x03FLOAT\x00\x7f\xf8\x00\x00\x00\x00\x00\x00"  # canonical quiet NaN
+        if np.isneginf(f_val):
+            return b"\x03FLOAT\x00\xff\xf0\x00\x00\x00\x00\x00\x00"  # canonical -inf
+        if np.isposinf(f_val):
+            return b"\x03FLOAT\x00\x7f\xf0\x00\x00\x00\x00\x00\x00"  # canonical +inf
+        if f_val == 0.0:
+            f_val = 0.0  # normalize -0.0 to +0.0
+        return b"\x03FLOAT\x00" + struct.pack(">d", f_val)
+
+    # 5. Decimal
+    if isinstance(v, Decimal):
+        if not v.is_finite():
+            raise CanonicalSerializationError(f"Non-finite Decimal '{v}' is not supported in canonical serialization")
+
+        if v.is_zero():
+            scale = 0 if mode == DecimalCanonicalizationMode.NUMERIC_VALUE else (declared_scale if declared_scale is not None else 0)
+            if scale < -2147483648 or scale > 2147483647:
+                raise CanonicalSerializationError(f"Decimal scale {scale} overflows signed 32-bit int")
+            return b"\x04DEC\x00" + bytes([0]) + struct.pack(">i", scale) + struct.pack(">I", 0)
+
+        sign, digits, exp = v.as_tuple()
+        int_mag = 0
+        for d in digits:
+            int_mag = int_mag * 10 + d
+
+        if mode == DecimalCanonicalizationMode.NUMERIC_VALUE:
+            scale = -exp
+            while scale > 0 and int_mag % 10 == 0:
+                int_mag //= 10
+                scale -= 1
+            if scale < 0:
+                int_mag *= (10 ** (-scale))
+                scale = 0
+        else:
+            scale = declared_scale if declared_scale is not None else -exp
+            current_scale = -exp
+            if current_scale < scale:
+                int_mag *= (10 ** (scale - current_scale))
+            elif current_scale > scale:
+                pass
+
+        if scale < -2147483648 or scale > 2147483647:
+            raise CanonicalSerializationError(f"Decimal scale {scale} overflows signed 32-bit int")
+
+        if int_mag == 0:
+            mag_bytes = b""
+        else:
+            mag_len = (int_mag.bit_length() + 7) // 8
+            mag_bytes = int_mag.to_bytes(mag_len, byteorder="big", signed=False)
+
+        if len(mag_bytes) > 2**32 - 1:
+            raise CanonicalSerializationError("Decimal magnitude exceeds uint32 length limit")
+
+        return b"\x04DEC\x00" + bytes([sign]) + struct.pack(">i", scale) + struct.pack(">I", len(mag_bytes)) + mag_bytes
+
+    # 6. Calendar Date (datetime.date but not datetime.datetime)
+    if isinstance(v, _dt.date) and not isinstance(v, _dt.datetime):
+        s = v.isoformat().encode("ascii")
+        if len(s) > 2**32 - 1:
+            raise CanonicalSerializationError("Date string length exceeds uint32 limit")
+        return b"\x0aDATE\x00" + struct.pack(">I", len(s)) + s
+
+    # 7. Timestamp / Datetime
+    if isinstance(v, _dt.datetime):
+        if v.tzinfo is None or v.tzinfo.utcoffset(v) is None:
+            if dataset_tz is None:
+                raise CanonicalSerializationError("Naive timestamp encountered without an explicit dataset timezone policy")
+            import zoneinfo
+            try:
+                tz_obj = zoneinfo.ZoneInfo(dataset_tz)
+                utc_dt = v.replace(tzinfo=tz_obj).astimezone(timezone.utc)
+            except Exception as tz_err:
+                raise CanonicalSerializationError(f"Invalid dataset timezone policy '{dataset_tz}': {tz_err}")
+        else:
+            utc_dt = v.astimezone(timezone.utc)
+
+        epoch = _dt.datetime(1970, 1, 1, tzinfo=timezone.utc)
+        delta = utc_dt - epoch
+        epoch_nanos = (delta.days * 86400 + delta.seconds) * 1_000_000_000 + (delta.microseconds * 1000)
+        if epoch_nanos < -9223372036854775808 or epoch_nanos > 9223372036854775807:
+            raise CanonicalSerializationError(f"Timestamp nanoseconds {epoch_nanos} exceeds signed 64-bit range")
+        return b"\x06TS\x00" + epoch_nanos.to_bytes(8, byteorder="big", signed=True)
+
+    # 8. String
+    if isinstance(v, str):
+        norm = unicodedata.normalize(norm_form, v)
+        b = norm.encode("utf-8")
+        if len(b) > 2**32 - 1:
+            raise CanonicalSerializationError("String byte length exceeds canonical uint32 length limit")
+        return b"\x05STR\x00" + struct.pack(">I", len(b)) + b
+
+    # 9. Bytes / bytearray
+    if isinstance(v, (bytes, bytearray)):
+        b = bytes(v)
+        if len(b) > 2**32 - 1:
+            raise CanonicalSerializationError("Byte value exceeds canonical uint32 length limit")
+        return b"\x07BYTES\x00" + struct.pack(">I", len(b)) + b
+
+    # 10. Unsupported type: reject explicitly! Zero string fallback.
+    raise CanonicalSerializationError(f"Unsupported scalar type for canonical serialization: {type(v).__name__}")
 
 
 # ============================================================================
@@ -257,6 +484,10 @@ class PandasIRCompiler:
         ActionFamily.HASH,
         ActionFamily.MASK,
         ActionFamily.SCHEMA_MUTATION,
+        ActionFamily.DERIVE,
+        ActionFamily.EXTRACT,
+        ActionFamily.JOIN,
+        ActionFamily.AGGREGATE,
     }
 
     CONTROL_FAMILIES = {
@@ -331,6 +562,30 @@ class PandasIRCompiler:
                     step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
                     diagnostics.append(f"Step '{sid}' StepAuthorization step_hash mismatch (UnauthorizedDestructiveActionError)")
                     continue
+
+            # B3. Elevated Authorization for Cross and Many-to-Many Joins (Contract 9)
+            if isinstance(step.expression, JoinExpression):
+                if step.expression.join_type == JoinType.CROSS or step.expression.cardinality == JoinCardinality.MANY_TO_MANY:
+                    auth = step.authorization
+                    if not auth:
+                        step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                        diagnostics.append(f"Step '{sid}' {step.expression.join_type.value}/{step.expression.cardinality.value} join requires elevated StepAuthorization (UnauthorizedDestructiveActionError)")
+                        continue
+                    if auth.expires_at < datetime.now(timezone.utc):
+                        step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                        diagnostics.append(f"Step '{sid}' StepAuthorization is expired")
+                        continue
+
+                # Cross join mandatory caps
+                if step.expression.join_type == JoinType.CROSS:
+                    if step.expression.max_output_row_count is None:
+                        step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                        diagnostics.append(f"Step '{sid}' CROSS join requires mandatory max_output_row_count")
+                        continue
+                    if step.expression.max_row_expansion_ratio is None:
+                        step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                        diagnostics.append(f"Step '{sid}' CROSS join requires mandatory max_row_expansion_ratio")
+                        continue
 
             # C. Schema Binding Validation
             if self.schemas:
@@ -432,15 +687,31 @@ class PandasIRCompiler:
             "# Ir-Version: " + graph.ir_version,
             "# Graph-Id: " + graph.graph_id,
             "from collections import Counter",
+            "from decimal import Decimal, ROUND_HALF_UP",
             "import hashlib",
             "import hmac",
+            "import json",
             "import numpy as np",
             "import pandas as pd",
+            "import re",
             "import struct",
             "import unicodedata",
+            "try:",
+            "    OutputColumnCollisionError",
+            "except NameError:",
+            "    class OutputColumnCollisionError(ValueError): pass",
+            "try:",
+            "    RowExpansionLimitExceededError",
+            "except NameError:",
+            "    class RowExpansionLimitExceededError(ValueError): pass",
             "",
-            "def transform_datasets(df: pd.DataFrame, key_provider=None) -> dict[str, pd.DataFrame]:",
-            "    _working = df.copy(deep=False)  # isolated working frame",
+            "def transform_datasets(df, key_provider=None) -> dict[str, pd.DataFrame]:",
+            "    if isinstance(df, dict):",
+            "        _datasets = {k: v.copy(deep=False) for k, v in df.items()}",
+            "        _working = next(iter(_datasets.values())).copy(deep=False) if _datasets else pd.DataFrame()",
+            "    else:",
+            "        _working = df.copy(deep=False)  # isolated working frame",
+            "        _datasets = {'primary': _working}",
             "",
             f"    # --- Occurrence Identity Lifecycle ({scope.value}) ---",
             f"    _identity_col = {repr(internal_col)}",
@@ -545,8 +816,9 @@ class PandasIRCompiler:
         artifact_hash = hashlib.sha256(artifact_bytes).hexdigest()
 
         # 6. AST Safety Validation
+        has_aggregates = any(s.family == ActionFamily.AGGREGATE for s in graph.steps)
         try:
-            self._validate_ast_safety(full_source)
+            self._validate_ast_safety(full_source, has_aggregates=has_aggregates)
         except Exception as e:
             diagnostics.append(f"AST safety inspection failed: {str(e)}")
             return PandasCompilerResult(
@@ -654,6 +926,22 @@ class PandasIRCompiler:
         # 13. SCHEMA_MUTATION
         if isinstance(expr, SchemaMutationExpression):
             return self._emit_schema_mutation(expr, preimage_symbols, df_var, step_id=step.step_id)
+
+        # 14. DERIVE
+        if isinstance(expr, (ArithmeticDerivation, ConditionalDerivation, CoalesceDerivation, ConcatDerivation, DateArithmeticDerivation)):
+            return self._emit_derive(expr, preimage_symbols, df_var, step_id=step.step_id)
+
+        # 15. EXTRACT
+        if isinstance(expr, (RegexExtract, JsonPathExtract, DelimiterExtract, DatePartExtract)):
+            return self._emit_extract(expr, preimage_symbols, df_var, step_id=step.step_id)
+
+        # 16. JOIN
+        if isinstance(expr, JoinExpression):
+            return self._emit_join(expr, preimage_symbols, df_var, step_id=step.step_id)
+
+        # 17. AGGREGATE
+        if isinstance(expr, AggregateExpression):
+            return self._emit_aggregate(expr, preimage_symbols, df_var, step_id=step.step_id)
 
         return [f"# Unsupported expression: {type(expr).__name__}"]
 
@@ -902,7 +1190,7 @@ class PandasIRCompiler:
             val = expr.constant_value.value if hasattr(expr.constant_value, "value") else expr.constant_value
             if val is None and expr.learned_model:
                 val = expr.learned_model.learned_value
-            lines.append(f"{df_var}[{repr(out_col)}] = {df_var}[{repr(col)}].fillna({repr(val)})")
+            lines.append(f"{df_var}[{repr(out_col)}] = pd.Series(np.where({df_var}[{repr(col)}].isna(), {repr(val)}, {df_var}[{repr(col)}]), index={df_var}.index).infer_objects(copy=False)")
 
         # Invariant 1 & 5: Fitted Scalar Statistical Imputation (MEAN, MEDIAN, MODE)
         elif expr.strategy in ("mean", "median", "mode", StatisticalImputationStrategy.MEAN, StatisticalImputationStrategy.MEDIAN, StatisticalImputationStrategy.MODE):
@@ -913,7 +1201,7 @@ class PandasIRCompiler:
 
             learned_val = expr.learned_model.learned_value
             # Binds fixed constant; zero runtime recalculation
-            lines.append(f"{df_var}[{repr(out_col)}] = {df_var}[{repr(col)}].fillna({repr(learned_val)})")
+            lines.append(f"{df_var}[{repr(out_col)}] = pd.Series(np.where({df_var}[{repr(col)}].isna(), {repr(learned_val)}, {df_var}[{repr(col)}]), index={df_var}.index).infer_objects(copy=False)")
 
         # Invariant 1, 3, 4: Fitted Grouped Statistical Imputation (GROUPED_MEAN, GROUPED_MEDIAN)
         elif expr.strategy in ("grouped_mean", "grouped_median", GroupedImputationStrategy.GROUPED_MEAN, GroupedImputationStrategy.GROUPED_MEDIAN):
@@ -954,20 +1242,20 @@ class PandasIRCompiler:
 
             # Handle missing/unseen groups
             if missing_policy == MissingGroupPolicy.USE_GLOBAL_FALLBACK:
-                lines.append(f"{series_var} = {series_var}.fillna({repr(fallback_val)})")
-                lines.append(f"{df_var}[{repr(out_col)}] = {df_var}[{repr(col)}].fillna({series_var})")
+                lines.append(f"{series_var} = pd.Series(np.where({series_var}.isna(), {repr(fallback_val)}, {series_var}), index={df_var}.index).infer_objects(copy=False)")
+                lines.append(f"{df_var}[{repr(out_col)}] = pd.Series(np.where({df_var}[{repr(col)}].isna(), {series_var}, {df_var}[{repr(col)}]), index={df_var}.index).infer_objects(copy=False)")
             elif missing_policy == MissingGroupPolicy.FAIL_STEP:
                 unseen_var = f"_unseen_{clean_name}"
                 lines.append(f"{unseen_var} = {df_var}[{repr(col)}].isna() & {series_var}.isna()")
                 lines.append(f"if bool({unseen_var}.any()): raise ValueError(\"Grouped imputation step failure [step_id={step_id}]: column={out_col} - Unseen group encountered with \" + str(int({unseen_var}.sum())) + \" rows under FAIL_STEP (reason_code=UNSEEN_GROUP)\")")
-                lines.append(f"{df_var}[{repr(out_col)}] = {df_var}[{repr(col)}].fillna({series_var})")
+                lines.append(f"{df_var}[{repr(out_col)}] = pd.Series(np.where({df_var}[{repr(col)}].isna(), {series_var}, {df_var}[{repr(col)}]), index={df_var}.index).infer_objects(copy=False)")
             elif missing_policy == MissingGroupPolicy.FLAG:
                 unseen_var = f"_unseen_{clean_name}"
                 lines.append(f"{unseen_var} = {df_var}[{repr(col)}].isna() & {series_var}.isna()")
                 lines.append(f"{df_var}[{repr(f'{out_col}_unseen_group')}] = {unseen_var}.astype('boolean')")
-                lines.append(f"{df_var}[{repr(out_col)}] = {df_var}[{repr(col)}].fillna({series_var})")
+                lines.append(f"{df_var}[{repr(out_col)}] = pd.Series(np.where({df_var}[{repr(col)}].isna(), {series_var}, {df_var}[{repr(col)}]), index={df_var}.index).infer_objects(copy=False)")
             else:  # KEEP_NULL
-                lines.append(f"{df_var}[{repr(out_col)}] = {df_var}[{repr(col)}].fillna({series_var})")
+                lines.append(f"{df_var}[{repr(out_col)}] = pd.Series(np.where({df_var}[{repr(col)}].isna(), {series_var}, {df_var}[{repr(col)}]), index={df_var}.index).infer_objects(copy=False)")
 
         # Invariant 12: Assign imputation indicator AFTER filling
         if expr.emit_indicator:
@@ -1608,6 +1896,610 @@ class PandasIRCompiler:
 
         return lines
 
+    def _emit_derive(
+        self,
+        expr: Any,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        clean_id = step_id.replace("-", "_").replace(".", "_")
+        lines: List[str] = []
+
+        if isinstance(expr, ArithmeticDerivation):
+            out_col = expr.output_column
+            if expr.existing_column_policy == ExistingColumnPolicy.ERROR:
+                lines.append(f"if {repr(out_col)} in {df_var}.columns:")
+                lines.append(f"    raise OutputColumnCollisionError('Target column already exists: ' + {repr(out_col)})")
+
+            domain = expr.domain
+            op = expr.operator
+            div_zero = expr.division_by_zero_policy
+            overflow = expr.overflow_policy
+
+            l_val_code = f"row[{repr(expr.left.column_name)}]" if expr.left.column_name is not None else repr(expr.left.literal_value if expr.left.literal_value is not None else expr.left.value)
+            lines.append(f"def _arith_{clean_id}(row):")
+            lines.append(f"    l_val = {l_val_code}")
+            if expr.right:
+                r_val_code = f"row[{repr(expr.right.column_name)}]" if expr.right.column_name is not None else repr(expr.right.literal_value if expr.right.literal_value is not None else expr.right.value)
+                lines.append(f"    r_val = {r_val_code}")
+            else:
+                lines.append(f"    r_val = None")
+            lines.append(f"    if pd.isna(l_val) or (r_val is not None and pd.isna(r_val)):")
+            lines.append(f"        return np.nan")
+
+            if domain == ArithmeticDomain.INT64:
+                lines.append(f"    try:")
+                lines.append(f"        l_int = int(l_val)")
+                lines.append(f"        r_int = int(r_val) if r_val is not None else 0")
+                if op in (ArithmeticOperator.DIVIDE, ArithmeticOperator.FLOOR_DIVIDE, ArithmeticOperator.MODULO):
+                    lines.append(f"        if r_int == 0:")
+                    if div_zero == DivisionByZeroPolicy.FAIL_STEP:
+                        lines.append(f"            raise ZeroDivisionError('Division by zero in arithmetic derivation')")
+                    elif div_zero == DivisionByZeroPolicy.SET_NULL:
+                        lines.append(f"            return np.nan")
+                    else:
+                        lines.append(f"            return np.nan")
+                if op == ArithmeticOperator.ADD:
+                    lines.append(f"        res = l_int + r_int")
+                elif op == ArithmeticOperator.SUBTRACT:
+                    lines.append(f"        res = l_int - r_int")
+                elif op == ArithmeticOperator.MULTIPLY:
+                    lines.append(f"        res = l_int * r_int")
+                elif op == ArithmeticOperator.DIVIDE:
+                    lines.append(f"        res = l_int // r_int")
+                elif op == ArithmeticOperator.FLOOR_DIVIDE:
+                    lines.append(f"        res = l_int // r_int")
+                elif op == ArithmeticOperator.MODULO:
+                    lines.append(f"        res = l_int % r_int")
+                elif op == ArithmeticOperator.POWER:
+                    lines.append(f"        if r_int < 0:")
+                    lines.append(f"            return np.nan")
+                    lines.append(f"        res = l_int ** r_int")
+                else:
+                    lines.append(f"        res = l_int + r_int")
+
+                lines.append(f"        if res < -9223372036854775808 or res > 9223372036854775807:")
+                if overflow == NumericOverflowPolicy.FAIL_STEP:
+                    lines.append(f"            raise OverflowError('Integer overflow outside signed 64-bit range')")
+                elif overflow == NumericOverflowPolicy.SET_NULL:
+                    lines.append(f"            return np.nan")
+                elif overflow == NumericOverflowPolicy.CLIP_TO_RANGE:
+                    lines.append(f"            return 9223372036854775807 if res > 9223372036854775807 else -9223372036854775808")
+                else:
+                    lines.append(f"            raise OverflowError('Integer overflow')")
+                lines.append(f"        return res")
+                lines.append(f"    except (OverflowError, ZeroDivisionError) as e:")
+                lines.append(f"        if {repr(div_zero.value)} == 'fail_step' or {repr(overflow.value)} == 'fail_step':")
+                lines.append(f"            raise ValueError(f'Arithmetic error in step {step_id}: ' + str(e))")
+                lines.append(f"        return np.nan")
+
+            elif domain == ArithmeticDomain.FLOAT64:
+                lines.append(f"    try:")
+                lines.append(f"        l_f = float(l_val)")
+                lines.append(f"        r_f = float(r_val) if r_val is not None else 0.0")
+                if op in (ArithmeticOperator.DIVIDE, ArithmeticOperator.FLOOR_DIVIDE, ArithmeticOperator.MODULO):
+                    lines.append(f"        if r_f == 0.0:")
+                    if div_zero == DivisionByZeroPolicy.FAIL_STEP:
+                        lines.append(f"            raise ZeroDivisionError('Division by zero in float arithmetic')")
+                    elif div_zero == DivisionByZeroPolicy.RETURN_INFINITY:
+                        lines.append(f"            return np.inf if l_f >= 0.0 else -np.inf")
+                    else:
+                        lines.append(f"            return np.nan")
+                if op == ArithmeticOperator.ADD:
+                    lines.append(f"        res = l_f + r_f")
+                elif op == ArithmeticOperator.SUBTRACT:
+                    lines.append(f"        res = l_f - r_f")
+                elif op == ArithmeticOperator.MULTIPLY:
+                    lines.append(f"        res = l_f * r_f")
+                elif op == ArithmeticOperator.DIVIDE:
+                    lines.append(f"        res = l_f / r_f")
+                elif op == ArithmeticOperator.FLOOR_DIVIDE:
+                    lines.append(f"        res = l_f // r_f")
+                elif op == ArithmeticOperator.MODULO:
+                    lines.append(f"        res = l_f % r_f")
+                elif op == ArithmeticOperator.POWER:
+                    lines.append(f"        if l_f < 0.0 and int(r_f) != r_f:")
+                    lines.append(f"            return np.nan")
+                    lines.append(f"        res = l_f ** r_f")
+                else:
+                    lines.append(f"        res = l_f + r_f")
+
+                lines.append(f"        if np.isinf(res):")
+                if overflow == NumericOverflowPolicy.FAIL_STEP:
+                    lines.append(f"            raise OverflowError('Float overflow to infinity under FAIL_STEP')")
+                elif overflow == NumericOverflowPolicy.SET_NULL:
+                    lines.append(f"            return np.nan")
+                elif overflow == NumericOverflowPolicy.CLIP_TO_RANGE:
+                    lines.append(f"            max_f = np.finfo(np.float64).max")
+                    lines.append(f"            return max_f if res > 0 else -max_f")
+                lines.append(f"        return res")
+                lines.append(f"    except Exception as e:")
+                lines.append(f"        if {repr(div_zero.value)} == 'fail_step' or {repr(overflow.value)} == 'fail_step':")
+                lines.append(f"            raise ValueError(f'Float arithmetic error in step {step_id}: ' + str(e))")
+                lines.append(f"        return np.nan")
+
+            else:
+                prec = expr.precision or 28
+                scale = expr.scale or 4
+                lines.append(f"    from decimal import Decimal, ROUND_HALF_UP")
+                lines.append(f"    try:")
+                lines.append(f"        l_d = Decimal(str(l_val))")
+                lines.append(f"        r_d = Decimal(str(r_val)) if r_val is not None else Decimal('0')")
+                lines.append(f"        if not l_d.is_finite() or not r_d.is_finite():")
+                lines.append(f"            raise ValueError('Non-finite Decimal operand')")
+                if op in (ArithmeticOperator.DIVIDE, ArithmeticOperator.FLOOR_DIVIDE, ArithmeticOperator.MODULO):
+                    lines.append(f"        if r_d.is_zero():")
+                    if div_zero == DivisionByZeroPolicy.FAIL_STEP:
+                        lines.append(f"            raise ZeroDivisionError('Decimal division by zero')")
+                    else:
+                        lines.append(f"            return np.nan")
+                if op == ArithmeticOperator.ADD:
+                    lines.append(f"        res = l_d + r_d")
+                elif op == ArithmeticOperator.SUBTRACT:
+                    lines.append(f"        res = l_d - r_d")
+                elif op == ArithmeticOperator.MULTIPLY:
+                    lines.append(f"        res = l_d * r_d")
+                elif op == ArithmeticOperator.DIVIDE:
+                    lines.append(f"        res = l_d / r_d")
+                elif op == ArithmeticOperator.FLOOR_DIVIDE:
+                    lines.append(f"        res = l_d // r_d")
+                elif op == ArithmeticOperator.MODULO:
+                    lines.append(f"        res = l_d % r_d")
+                elif op == ArithmeticOperator.POWER:
+                    lines.append(f"        res = l_d ** r_d")
+                else:
+                    lines.append(f"        res = l_d + r_d")
+
+                lines.append(f"        q = Decimal('10') ** -{scale}")
+                lines.append(f"        res = res.quantize(q, rounding=ROUND_HALF_UP)")
+                lines.append(f"        return res")
+                lines.append(f"    except Exception as e:")
+                lines.append(f"        if {repr(div_zero.value)} == 'fail_step' or {repr(overflow.value)} == 'fail_step':")
+                lines.append(f"            raise ValueError(f'Decimal arithmetic error in step {step_id}: ' + str(e))")
+                lines.append(f"        return np.nan")
+
+            lines.append(f"{df_var}[{repr(out_col)}] = {df_var}.apply(_arith_{clean_id}, axis=1)")
+            return lines
+
+        elif isinstance(expr, ConditionalDerivation):
+            out_col = expr.output_column
+            if expr.existing_column_policy == ExistingColumnPolicy.ERROR:
+                lines.append(f"if {repr(out_col)} in {df_var}.columns:")
+                lines.append(f"    raise OutputColumnCollisionError('Target column already exists: ' + {repr(out_col)})")
+
+            cond_expr = self._emit_expression(expr.condition, preimages, df_var)
+            then_code = f"{df_var}[{repr(expr.then_column)}]" if expr.then_column else repr(expr.then_value)
+            else_code = f"{df_var}[{repr(expr.else_column)}]" if expr.else_column else repr(expr.else_value)
+
+            lines.append(f"_cond_{clean_id} = {cond_expr}")
+            cond_reads = expr.condition.extract_reads() if hasattr(expr.condition, "extract_reads") else []
+            if cond_reads and not isinstance(expr.condition, NullCheck):
+                lines.append(f"_cond_null_{clean_id} = " + " | ".join([f"{df_var}[{repr(c)}].isna()" for c in set(cond_reads)]))
+                lines.append(f"_unknown_mask_{clean_id} = _cond_{clean_id}.isna() | _cond_null_{clean_id}")
+                lines.append(f"_true_mask_{clean_id} = _cond_{clean_id}.eq(True) & ~_unknown_mask_{clean_id}")
+                lines.append(f"_false_mask_{clean_id} = _cond_{clean_id}.eq(False) & ~_unknown_mask_{clean_id}")
+            else:
+                lines.append(f"_true_mask_{clean_id} = _cond_{clean_id}.eq(True)")
+                lines.append(f"_false_mask_{clean_id} = _cond_{clean_id}.eq(False)")
+                lines.append(f"_unknown_mask_{clean_id} = _cond_{clean_id}.isna() | (~_true_mask_{clean_id} & ~_false_mask_{clean_id})")
+
+            policy = expr.unknown_policy
+            if policy == ConditionalUnknownPolicy.FAIL_STEP:
+                lines.append(f"if bool(_unknown_mask_{clean_id}.any()):")
+                lines.append(f"    raise ValueError('Conditional derivation step failure [step_id={step_id}]: Unknown predicate under FAIL_STEP')")
+
+            lines.append(f"_then_s_{clean_id} = {then_code}")
+            lines.append(f"if not isinstance(_then_s_{clean_id}, pd.Series):")
+            lines.append(f"    _then_s_{clean_id} = pd.Series(_then_s_{clean_id}, index={df_var}.index)")
+            lines.append(f"_else_s_{clean_id} = {else_code}")
+            lines.append(f"if not isinstance(_else_s_{clean_id}, pd.Series):")
+            lines.append(f"    _else_s_{clean_id} = pd.Series(_else_s_{clean_id}, index={df_var}.index)")
+
+            lines.append(f"_res_{clean_id} = _then_s_{clean_id}.where(_true_mask_{clean_id}, _else_s_{clean_id})")
+
+            if policy == ConditionalUnknownPolicy.SET_NULL:
+                lines.append(f"_res_{clean_id} = _res_{clean_id}.mask(_unknown_mask_{clean_id}, np.nan)")
+            elif policy == ConditionalUnknownPolicy.USE_THEN:
+                lines.append(f"_res_{clean_id} = _res_{clean_id}.mask(_unknown_mask_{clean_id}, _then_s_{clean_id})")
+            elif policy == ConditionalUnknownPolicy.USE_ELSE:
+                lines.append(f"_res_{clean_id} = _res_{clean_id}.mask(_unknown_mask_{clean_id}, _else_s_{clean_id})")
+            elif policy == ConditionalUnknownPolicy.USE_FALLBACK:
+                lines.append(f"_res_{clean_id} = _res_{clean_id}.mask(_unknown_mask_{clean_id}, {repr(expr.fallback_value)})")
+
+            lines.append(f"{df_var}[{repr(out_col)}] = _res_{clean_id}.infer_objects(copy=False)")
+            return lines
+
+        elif isinstance(expr, CoalesceDerivation):
+            out_col = expr.output_column
+            if expr.existing_column_policy == ExistingColumnPolicy.ERROR:
+                lines.append(f"if {repr(out_col)} in {df_var}.columns:")
+                lines.append(f"    raise OutputColumnCollisionError('Target column already exists: ' + {repr(out_col)})")
+
+            lines.append(f"_coalesce_res_{clean_id} = {df_var}[{repr(expr.columns[0])}].copy()")
+            for col in expr.columns[1:]:
+                lines.append(f"_coalesce_res_{clean_id} = _coalesce_res_{clean_id}.combine_first({df_var}[{repr(col)}])")
+            if expr.fallback_value is not None:
+                lines.append(f"_coalesce_res_{clean_id} = pd.Series(np.where(_coalesce_res_{clean_id}.isna(), {repr(expr.fallback_value)}, _coalesce_res_{clean_id}), index={df_var}.index).infer_objects(copy=False)")
+            lines.append(f"{df_var}[{repr(out_col)}] = _coalesce_res_{clean_id}")
+            return lines
+
+        elif isinstance(expr, ConcatDerivation):
+            out_col = expr.output_column
+            if expr.existing_column_policy == ExistingColumnPolicy.ERROR:
+                lines.append(f"if {repr(out_col)} in {df_var}.columns:")
+                lines.append(f"    raise OutputColumnCollisionError('Target column already exists: ' + {repr(out_col)})")
+
+            sep = repr(expr.delimiter)
+            lines.append(f"def _concat_{clean_id}(row):")
+            lines.append(f"    vals = [row[c] for c in {repr(expr.columns)}]")
+            if expr.null_policy == ConcatNullPolicy.PROPAGATE_NULL:
+                lines.append(f"    if any(pd.isna(v) for v in vals):")
+                lines.append(f"        return np.nan")
+                lines.append(f"    return {sep}.join(str(v) for v in vals)")
+            elif expr.null_policy == ConcatNullPolicy.IGNORE_NULLS:
+                lines.append(f"    non_null = [str(v) for v in vals if not pd.isna(v)]")
+                lines.append(f"    return {sep}.join(non_null) if non_null else np.nan")
+            else:
+                lines.append(f"    return {sep}.join('' if pd.isna(v) else str(v) for v in vals)")
+            lines.append(f"{df_var}[{repr(out_col)}] = {df_var}.apply(_concat_{clean_id}, axis=1)")
+            return lines
+
+        elif isinstance(expr, DateArithmeticDerivation):
+            out_col = expr.output_column
+            if expr.existing_column_policy == ExistingColumnPolicy.ERROR:
+                lines.append(f"if {repr(out_col)} in {df_var}.columns:")
+                lines.append(f"    raise OutputColumnCollisionError('Target column already exists: ' + {repr(out_col)})")
+
+            src = expr.source_column
+            tgt = expr.target_column
+            amt = expr.amount or 0
+            unit = expr.unit.value
+
+            if expr.operation == "diff":
+                lines.append(f"_s_dt = pd.to_datetime({df_var}[{repr(src)}])")
+                lines.append(f"_t_dt = pd.to_datetime({df_var}[{repr(tgt)}])")
+                lines.append(f"_diff = _s_dt - _t_dt")
+                if unit == "day":
+                    lines.append(f"{df_var}[{repr(out_col)}] = _diff.dt.days")
+                elif unit == "hour":
+                    lines.append(f"{df_var}[{repr(out_col)}] = _diff.dt.total_seconds() / 3600.0")
+                elif unit == "minute":
+                    lines.append(f"{df_var}[{repr(out_col)}] = _diff.dt.total_seconds() / 60.0")
+                elif unit == "second":
+                    lines.append(f"{df_var}[{repr(out_col)}] = _diff.dt.total_seconds()")
+                elif unit == "month":
+                    lines.append(f"{df_var}[{repr(out_col)}] = (_s_dt.dt.year - _t_dt.dt.year) * 12 + (_s_dt.dt.month - _t_dt.dt.month)")
+                elif unit == "year":
+                    lines.append(f"{df_var}[{repr(out_col)}] = _s_dt.dt.year - _t_dt.dt.year")
+            else:
+                sign = 1 if expr.operation == "add" else -1
+                eff_amt = amt * sign
+                lines.append(f"_base_dt = pd.to_datetime({df_var}[{repr(src)}])")
+                if unit == "day":
+                    lines.append(f"{df_var}[{repr(out_col)}] = _base_dt + pd.Timedelta(days={eff_amt})")
+                elif unit == "hour":
+                    lines.append(f"{df_var}[{repr(out_col)}] = _base_dt + pd.Timedelta(hours={eff_amt})")
+                elif unit == "month":
+                    lines.append(f"{df_var}[{repr(out_col)}] = _base_dt + pd.DateOffset(months={eff_amt})")
+                elif unit == "year":
+                    lines.append(f"{df_var}[{repr(out_col)}] = _base_dt + pd.DateOffset(years={eff_amt})")
+            return lines
+
+        return []
+
+    def _emit_extract(
+        self,
+        expr: Any,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        clean_id = step_id.replace("-", "_").replace(".", "_")
+        lines: List[str] = []
+        out_col = expr.output_column
+
+        if expr.existing_column_policy == ExistingColumnPolicy.ERROR:
+            lines.append(f"if {repr(out_col)} in {df_var}.columns:")
+            lines.append(f"    raise OutputColumnCollisionError('Target column already exists: ' + {repr(out_col)})")
+
+        src = expr.source_column
+
+        if isinstance(expr, RegexExtract):
+            lines.append(f"def _regex_ext_{clean_id}(v):")
+            lines.append(f"    if pd.isna(v) or v is None:")
+            lines.append(f"        return np.nan")
+            lines.append(f"    m_all = list(re.finditer({repr(expr.pattern)}, str(v)))")
+            lines.append(f"    if not m_all:")
+            if expr.failure_policy == ExtractFailurePolicy.FAIL_STEP:
+                lines.append(f"        raise ValueError('Regex extract failed on value: ' + str(v))")
+            elif expr.failure_policy == ExtractFailurePolicy.USE_FALLBACK:
+                lines.append(f"        return {repr(expr.fallback_value)}")
+            else:
+                lines.append(f"        return np.nan")
+
+            if expr.multiple_match_policy == MultipleMatchPolicy.FAIL_STEP:
+                lines.append(f"    if len(m_all) > 1:")
+                lines.append(f"        raise ValueError('Multiple regex matches encountered under FAIL_STEP policy: ' + str(v))")
+
+            match = "m_all[-1]" if expr.multiple_match_policy == MultipleMatchPolicy.LAST else "m_all[0]"
+            lines.append(f"    m = {match}")
+            if expr.group_name:
+                lines.append(f"    try:")
+                lines.append(f"        return m.group({repr(expr.group_name)})")
+                lines.append(f"    except (IndexError, KeyError):")
+                lines.append(f"        return np.nan")
+            else:
+                lines.append(f"    try:")
+                lines.append(f"        return m.group({expr.group_index})")
+                lines.append(f"    except (IndexError, KeyError):")
+                lines.append(f"        return np.nan")
+
+            lines.append(f"{df_var}[{repr(out_col)}] = {df_var}[{repr(src)}].apply(_regex_ext_{clean_id})")
+            return lines
+
+        elif isinstance(expr, JsonPathExtract):
+            path_str = expr.path.path if hasattr(expr.path, "path") else str(expr.path)
+            tokens = path_str.replace("[", ".").replace("]", "").split(".")
+            tokens = [t.strip() for t in tokens if t.strip()]
+
+            lines.append(f"def _json_ext_{clean_id}(v):")
+            lines.append(f"    if pd.isna(v) or v is None:")
+            lines.append(f"        return np.nan")
+            lines.append(f"    data = v")
+            lines.append(f"    if isinstance(v, (str, bytes)):")
+            lines.append(f"        try:")
+            lines.append(f"            data = json.loads(v)")
+            lines.append(f"        except Exception:")
+            if expr.failure_policy == ExtractFailurePolicy.FAIL_STEP:
+                lines.append(f"            raise ValueError('Malformed JSON in step {step_id}: ' + str(v))")
+            elif expr.failure_policy == ExtractFailurePolicy.USE_FALLBACK:
+                lines.append(f"            return {repr(expr.fallback_value)}")
+            else:
+                lines.append(f"            return np.nan")
+
+            lines.append(f"    cur = data")
+            for tok in tokens:
+                if tok.isdigit():
+                    idx = int(tok)
+                    lines.append(f"    if not isinstance(cur, list) or {idx} >= len(cur):")
+                    if expr.failure_policy == ExtractFailurePolicy.FAIL_STEP:
+                        lines.append(f"        raise ValueError('JSON array index {idx} out of range in step {step_id}')")
+                    elif expr.failure_policy == ExtractFailurePolicy.USE_FALLBACK:
+                        lines.append(f"        return {repr(expr.fallback_value)}")
+                    else:
+                        lines.append(f"        return np.nan")
+                    lines.append(f"    cur = cur[{idx}]")
+                else:
+                    lines.append(f"    if not isinstance(cur, dict) or {repr(tok)} not in cur:")
+                    if expr.failure_policy == ExtractFailurePolicy.FAIL_STEP:
+                        lines.append(f"        raise ValueError('JSON key {repr(tok)} not found in step {step_id}')")
+                    elif expr.failure_policy == ExtractFailurePolicy.USE_FALLBACK:
+                        lines.append(f"        return {repr(expr.fallback_value)}")
+                    else:
+                        lines.append(f"        return np.nan")
+                    lines.append(f"    cur = cur[{repr(tok)}]")
+            lines.append(f"    return cur")
+            lines.append(f"{df_var}[{repr(out_col)}] = {df_var}[{repr(src)}].apply(_json_ext_{clean_id})")
+            return lines
+
+        elif isinstance(expr, DelimiterExtract):
+            lines.append(f"def _delim_ext_{clean_id}(v):")
+            lines.append(f"    if pd.isna(v) or v is None:")
+            lines.append(f"        return np.nan")
+            lines.append(f"    parts = str(v).split({repr(expr.delimiter)})")
+            lines.append(f"    idx = {expr.index}")
+            lines.append(f"    if idx < 0 or idx >= len(parts):")
+            if expr.failure_policy == ExtractFailurePolicy.FAIL_STEP:
+                lines.append(f"        raise ValueError('Delimiter index ' + str(idx) + ' out of bounds: ' + str(v))")
+            elif expr.failure_policy == ExtractFailurePolicy.USE_FALLBACK:
+                lines.append(f"        return {repr(expr.fallback_value)}")
+            else:
+                lines.append(f"        return np.nan")
+            lines.append(f"    return parts[idx]")
+            lines.append(f"{df_var}[{repr(out_col)}] = {df_var}[{repr(src)}].apply(_delim_ext_{clean_id})")
+            return lines
+
+        elif isinstance(expr, DatePartExtract):
+            part = expr.part.value
+            lines.append(f"_dt_series = pd.to_datetime({df_var}[{repr(src)}])")
+            if part == "year":
+                lines.append(f"{df_var}[{repr(out_col)}] = _dt_series.dt.year")
+            elif part == "month":
+                lines.append(f"{df_var}[{repr(out_col)}] = _dt_series.dt.month")
+            elif part == "day":
+                lines.append(f"{df_var}[{repr(out_col)}] = _dt_series.dt.day")
+            elif part == "hour":
+                lines.append(f"{df_var}[{repr(out_col)}] = _dt_series.dt.hour")
+            elif part == "minute":
+                lines.append(f"{df_var}[{repr(out_col)}] = _dt_series.dt.minute")
+            elif part == "second":
+                lines.append(f"{df_var}[{repr(out_col)}] = _dt_series.dt.second")
+            elif part == "day_of_week":
+                lines.append(f"{df_var}[{repr(out_col)}] = _dt_series.dt.dayofweek")
+            elif part == "quarter":
+                lines.append(f"{df_var}[{repr(out_col)}] = _dt_series.dt.quarter")
+            return lines
+
+        return []
+
+    def _emit_join(
+        self,
+        expr: JoinExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        clean_id = step_id.replace("-", "_").replace(".", "_")
+        lines: List[str] = []
+
+        l_ds = expr.left_dataset
+        r_ds = expr.right_dataset
+        target_out = expr.output_dataset or l_ds
+
+        lines.append(f"# Multi-Dataset Join Step {step_id} ({l_ds} {expr.join_type.value} {r_ds})")
+        lines.append(f"_l_frame = _datasets.get({repr(l_ds)}, {df_var})")
+        lines.append(f"_r_frame = _datasets.get({repr(r_ds)}, {df_var})")
+
+        lines.append(f"_l_in_count = len(_l_frame)")
+        lines.append(f"_r_in_count = len(_r_frame)")
+
+        l_keys = [k.left.column_name if hasattr(k.left, "column_name") else str(k.left) for k in expr.key_pairs]
+        r_keys = [k.right.column_name if hasattr(k.right, "column_name") else str(k.right) for k in expr.key_pairs]
+
+        if expr.join_type != JoinType.CROSS:
+            for lk in l_keys:
+                lines.append(f"if {repr(lk)} not in _l_frame.columns: raise ValueError('Left join key {lk} not found in {l_ds}')")
+            for rk in r_keys:
+                lines.append(f"if {repr(rk)} not in _r_frame.columns: raise ValueError('Right join key {rk} not found in {r_ds}')")
+
+            if expr.null_policy == JoinNullPolicy.FAIL_STEP_ON_NULL_KEY:
+                lines.append(f"if _l_frame[{repr(l_keys)}].isna().any().any() or _r_frame[{repr(r_keys)}].isna().any().any():")
+                lines.append(f"    raise ValueError('Null join keys encountered under FAIL_STEP_ON_NULL_KEY policy')")
+
+            if expr.cardinality == JoinCardinality.ONE_TO_ONE:
+                lines.append(f"if _l_frame.duplicated(subset={repr(l_keys)}).any(): raise ValueError('Left table has duplicate keys under ONE_TO_ONE join')")
+                lines.append(f"if _r_frame.duplicated(subset={repr(r_keys)}).any(): raise ValueError('Right table has duplicate keys under ONE_TO_ONE join')")
+            elif expr.cardinality == JoinCardinality.ONE_TO_MANY:
+                lines.append(f"if _l_frame.duplicated(subset={repr(l_keys)}).any(): raise ValueError('Left table has duplicate keys under ONE_TO_MANY join')")
+            elif expr.cardinality == JoinCardinality.MANY_TO_ONE:
+                lines.append(f"if _r_frame.duplicated(subset={repr(r_keys)}).any(): raise ValueError('Right table has duplicate keys under MANY_TO_ONE join')")
+
+        if expr.join_type == JoinType.CROSS:
+            lines.append(f"_joined_{clean_id} = pd.merge(_l_frame, _r_frame, how='cross', suffixes=({repr(expr.left_suffix)}, {repr(expr.right_suffix)}))")
+        elif expr.join_type == JoinType.SEMI:
+            lines.append(f"_right_keys = _r_frame[{repr(r_keys)}].drop_duplicates()")
+            lines.append(f"_merged_idx = pd.merge(_l_frame[{repr(l_keys)}].reset_index(), _right_keys, left_on={repr(l_keys)}, right_on={repr(r_keys)}, how='inner')['index']")
+            lines.append(f"_joined_{clean_id} = _l_frame.loc[_merged_idx].copy()")
+        elif expr.join_type == JoinType.ANTI:
+            lines.append(f"_right_keys = _r_frame[{repr(r_keys)}].drop_duplicates()")
+            lines.append(f"_merged_idx = pd.merge(_l_frame[{repr(l_keys)}].reset_index(), _right_keys, left_on={repr(l_keys)}, right_on={repr(r_keys)}, how='inner')['index']")
+            lines.append(f"_joined_{clean_id} = _l_frame.loc[~_l_frame.index.isin(_merged_idx)].copy()")
+        else:
+            how_val = {
+                JoinType.INNER: "inner",
+                JoinType.LEFT: "left",
+                JoinType.RIGHT: "right",
+                JoinType.FULL_OUTER: "outer",
+            }.get(expr.join_type, "inner")
+            lines.append(f"_joined_{clean_id} = pd.merge(_l_frame, _r_frame, left_on={repr(l_keys)}, right_on={repr(r_keys)}, how={repr(how_val)}, suffixes=({repr(expr.left_suffix)}, {repr(expr.right_suffix)}), indicator='__dhara_join_ind_{clean_id}')")
+
+        unmatched = expr.unmatched_policy
+        if expr.join_type not in (JoinType.SEMI, JoinType.ANTI, JoinType.CROSS):
+            if unmatched.left_unmatched == UnmatchedRowDisposition.ROUTE_TO_UNMATCHED_OUTPUT and unmatched.left_output_ref:
+                lines.append(f"_left_unmatched_{clean_id} = _l_frame[~_l_frame[{repr(l_keys[0])}].isin(_r_frame[{repr(r_keys[0])}])].copy()")
+                lines.append(f"outputs[{repr(unmatched.left_output_ref)}] = _left_unmatched_{clean_id}")
+            if unmatched.right_unmatched == UnmatchedRowDisposition.ROUTE_TO_UNMATCHED_OUTPUT and unmatched.right_output_ref:
+                lines.append(f"_right_unmatched_{clean_id} = _r_frame[~_r_frame[{repr(r_keys[0])}].isin(_l_frame[{repr(l_keys[0])}])].copy()")
+                lines.append(f"outputs[{repr(unmatched.right_output_ref)}] = _right_unmatched_{clean_id}")
+
+            lines.append(f"if '__dhara_join_ind_{clean_id}' in _joined_{clean_id}.columns:")
+            lines.append(f"    _joined_{clean_id} = _joined_{clean_id}.drop(columns=['__dhara_join_ind_{clean_id}'])")
+
+        lines.append(f"_out_count_{clean_id} = len(_joined_{clean_id})")
+        lines.append(f"_denom_{clean_id} = max(_l_in_count, _r_in_count, 1)")
+        lines.append(f"_exp_ratio_{clean_id} = _out_count_{clean_id} / _denom_{clean_id}")
+
+        if expr.max_output_row_count is not None:
+            lines.append(f"if _out_count_{clean_id} > {expr.max_output_row_count}:")
+            lines.append(f"    raise RowExpansionLimitExceededError(f'Join step {step_id} output rows ' + str(_out_count_{clean_id}) + ' exceeds max_output_row_count {expr.max_output_row_count}')")
+
+        if expr.max_row_expansion_ratio is not None:
+            lines.append(f"if max(_l_in_count, _r_in_count) > 0 and _exp_ratio_{clean_id} > {float(expr.max_row_expansion_ratio)}:")
+            lines.append(f"    raise RowExpansionLimitExceededError(f'Join step {step_id} expansion ratio ' + str(_exp_ratio_{clean_id}) + ' exceeds max_row_expansion_ratio {expr.max_row_expansion_ratio}')")
+
+        lines.append(f"_accounting_{clean_id} = {{'left_input_count': _l_in_count, 'right_input_count': _r_in_count, 'output_count': _out_count_{clean_id}, 'expansion_ratio': _exp_ratio_{clean_id}}}")
+        lines.append(f"outputs[{repr(target_out)}] = _joined_{clean_id}")
+        lines.append(f"_datasets[{repr(target_out)}] = _joined_{clean_id}")
+        lines.append(f"{df_var} = _joined_{clean_id}")
+        return lines
+
+    def _emit_aggregate(
+        self,
+        expr: AggregateExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        clean_id = step_id.replace("-", "_").replace(".", "_")
+        lines: List[str] = []
+        target_out = expr.output_dataset or "aggregated"
+
+        lines.append(f"if len({df_var}) == 0:")
+        if expr.empty_input_policy == EmptyInputPolicy.FAIL_STEP:
+            lines.append(f"    raise ValueError('Empty input dataset under FAIL_STEP empty_input_policy in step {step_id}')")
+        else:
+            out_cols = list(expr.group_by) + [a.output_column for a in expr.aggregates]
+            lines.append(f"    outputs[{repr(target_out)}] = pd.DataFrame(columns={repr(out_cols)})")
+            lines.append(f"    {df_var} = outputs[{repr(target_out)}]")
+        lines.append("else:")
+
+        if expr.group_by:
+            if expr.group_key_null_policy == GroupKeyNullPolicy.FAIL_STEP:
+                lines.append(f"    if {df_var}[{repr(expr.group_by)}].isna().any().any():")
+                lines.append(f"        raise ValueError('Null group key encountered under FAIL_STEP policy in step {step_id}')")
+            dropna_flag = "True" if expr.group_key_null_policy == GroupKeyNullPolicy.DROP_NULL_GROUP else "False"
+
+        lines.append(f"    def _compute_aggs_{clean_id}(sub_df):")
+        lines.append(f"        res = {{}}")
+        for a in expr.aggregates:
+            out_c = a.output_column
+            op = a.operation
+            src_c = a.source_column
+            null_pol = a.null_policy
+
+            if op == AggregateOp.COUNT and src_c is None:
+                lines.append(f"        res[{repr(out_c)}] = len(sub_df)")
+            elif op == AggregateOp.COUNT:
+                lines.append(f"        res[{repr(out_c)}] = sub_df[{repr(src_c)}].count()")
+            elif op == AggregateOp.COUNT_DISTINCT:
+                if null_pol == AggregateValueNullPolicy.PROPAGATE_NULL:
+                    lines.append(f"        res[{repr(out_c)}] = sub_df[{repr(src_c)}].nunique(dropna=False)")
+                else:
+                    lines.append(f"        res[{repr(out_c)}] = sub_df[{repr(src_c)}].nunique(dropna=True)")
+            elif op == AggregateOp.SUM:
+                lines.append(f"        s = sub_df[{repr(src_c)}]")
+                lines.append(f"        if s.isna().all():")
+                if null_pol == AggregateValueNullPolicy.TREAT_AS_ZERO:
+                    lines.append(f"            res[{repr(out_c)}] = 0")
+                elif null_pol == AggregateValueNullPolicy.PROPAGATE_NULL:
+                    lines.append(f"            res[{repr(out_c)}] = np.nan")
+                else:
+                    lines.append(f"            res[{repr(out_c)}] = 0")
+                lines.append(f"        else:")
+                lines.append(f"            res[{repr(out_c)}] = s.sum()")
+            elif op == AggregateOp.AVG:
+                lines.append(f"        res[{repr(out_c)}] = sub_df[{repr(src_c)}].mean()")
+            elif op == AggregateOp.MIN:
+                lines.append(f"        res[{repr(out_c)}] = sub_df[{repr(src_c)}].min()")
+            elif op == AggregateOp.MAX:
+                lines.append(f"        res[{repr(out_c)}] = sub_df[{repr(src_c)}].max()")
+            elif op == AggregateOp.STDDEV_SAMPLE:
+                lines.append(f"        res[{repr(out_c)}] = sub_df[{repr(src_c)}].std(ddof=1)")
+            elif op == AggregateOp.STDDEV_POPULATION:
+                lines.append(f"        res[{repr(out_c)}] = sub_df[{repr(src_c)}].std(ddof=0)")
+            elif op == AggregateOp.MEDIAN:
+                lines.append(f"        res[{repr(out_c)}] = sub_df[{repr(src_c)}].median()")
+        lines.append(f"        return res")
+
+        if expr.group_by:
+            lines.append(f"    _records_{clean_id} = []")
+            lines.append(f"    for _g_keys, _sub_df in {df_var}.groupby({repr(expr.group_by)}, dropna={dropna_flag}):")
+            lines.append(f"        _key_tuple = _g_keys if isinstance(_g_keys, tuple) else (_g_keys,)")
+            lines.append(f"        _rec = dict(zip({repr(expr.group_by)}, _key_tuple))")
+            lines.append(f"        _rec.update(_compute_aggs_{clean_id}(_sub_df))")
+            lines.append(f"        _records_{clean_id}.append(_rec)")
+            lines.append(f"    _grouped_{clean_id} = pd.DataFrame(_records_{clean_id})")
+            lines.append(f"    if len(_grouped_{clean_id}) > 0:")
+            lines.append(f"        _grouped_{clean_id} = _grouped_{clean_id}.sort_values(by={repr(expr.group_by)}).reset_index(drop=True)")
+        else:
+            lines.append(f"    _grouped_{clean_id} = pd.DataFrame([_compute_aggs_{clean_id}({df_var})])")
+
+        lines.append(f"    outputs[{repr(target_out)}] = _grouped_{clean_id}")
+        lines.append(f"    _datasets[{repr(target_out)}] = _grouped_{clean_id}")
+        lines.append(f"    {df_var} = _grouped_{clean_id}")
+        return lines
+
     # ------------------------------------------------------------------------
     # Expression Transpiler
     # ------------------------------------------------------------------------
@@ -1687,11 +2579,14 @@ class PandasIRCompiler:
                 results.update(self._extract_original_column_refs(it))
         return results
 
-    def _validate_ast_safety(self, code: str) -> None:
+    def _validate_ast_safety(self, code: str, has_aggregates: bool = False) -> None:
         """
-        Parses code into AST and ensures no forbidden nodes, calls, or attributes exist.
-        Permits only pandas and numpy transformations, strictly forbidding:
-        - Whole dataframe copies (df.copy())
+        Increment 3A+ AST safety validator.
+        Prohibits:
+        - Whole-DataFrame deep copies
+        - Apply-time statistical recalculations (allowed only if graph explicitly contains Aggregations)
+        - Global Pandas option mutation (pd.set_option, pd.reset_option)
+        - Prohibited modules or imports
         - Reflection or dynamic execution (eval, exec, __import__, getattr, setattr)
         - Subprocess, os, sys, network, or file system access
         """
@@ -1710,8 +2605,13 @@ class PandasIRCompiler:
                         if not is_shallow_df_copy:
                             raise ValueError(f"Prohibited whole-DataFrame deep copy detected: '{func.value.id}.copy()'")
 
+                allowed_attrs = {"mean", "median"} if has_aggregates else set()
                 if isinstance(func, ast.Attribute) and func.attr in {"mean", "median", "mode", "quantile", "describe"}:
-                    raise ValueError(f"Prohibited apply-time statistical recalculation detected: '.{func.attr}()'. Must bind fixed learned statistics.")
+                    if func.attr not in allowed_attrs:
+                        raise ValueError(f"Prohibited apply-time statistical recalculation detected: '.{func.attr}()'. Must bind fixed learned statistics.")
+
+                if isinstance(func, ast.Attribute) and func.attr in {"set_option", "reset_option"}:
+                    raise ValueError(f"Prohibited global Pandas option mutation detected: '.{func.attr}()'")
 
                 if isinstance(func, ast.Name):
                     if func.id in {"eval", "exec", "compile", "open", "__import__", "globals", "locals"}:
@@ -1720,11 +2620,145 @@ class PandasIRCompiler:
             # Check Import
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name not in {"numpy", "pandas", "np", "pd", "collections", "hashlib", "hmac", "struct", "unicodedata"}:
+                    if alias.name not in {"numpy", "pandas", "np", "pd", "collections", "hashlib", "hmac", "struct", "unicodedata", "json", "decimal", "re"}:
                         raise ValueError(f"Prohibited import: {alias.name}")
             elif isinstance(node, ast.ImportFrom):
-                if node.module not in {"collections", "hashlib", "hmac", "struct", "unicodedata"}:
+                if node.module not in {"collections", "hashlib", "hmac", "struct", "unicodedata", "json", "decimal", "re"}:
                     raise ValueError(f"Prohibited import module: {node.module}")
                 for alias in node.names:
-                    if alias.name not in {"Counter"}:
+                    if alias.name not in {"Counter", "Decimal", "ROUND_HALF_UP"}:
                         raise ValueError(f"Prohibited import: {alias.name}")
+
+
+# ============================================================================
+# 3. Publication Layer: Protocol Implementation & Atomic Coordinator (Contract 12)
+# ============================================================================
+
+class InMemoryPublicationAdapter:
+    """
+    Reference in-memory publication adapter implementing the PublicationAdapter protocol.
+    Provides strict 2-phase staged execution, validation, and atomic commit semantics.
+    """
+    def __init__(self):
+        self._staged: Dict[str, Mapping[str, pd.DataFrame]] = {}
+        self._published: Dict[str, pd.DataFrame] = {}
+        self._manifest_version: str = "v0"
+        self._commit_log: List[Dict[str, Any]] = []
+
+    def stage(self, staging_id: str, outputs: Mapping[str, Any]) -> PublicationStageHandle:
+        self._staged[staging_id] = {k: v.copy(deep=True) if hasattr(v, "copy") else v for k, v in outputs.items()}
+        return PublicationStageHandle(staging_id=staging_id, output_refs=list(outputs.keys()))
+
+    def validate(self, handle: PublicationStageHandle) -> PublicationValidationResult:
+        if handle.staging_id not in self._staged:
+            return PublicationValidationResult(is_valid=False, errors=[f"Staging handle '{handle.staging_id}' not found"])
+        staged_outputs = self._staged[handle.staging_id]
+        if not staged_outputs:
+            return PublicationValidationResult(is_valid=False, errors=["Staged outputs empty"])
+        return PublicationValidationResult(is_valid=True, passed_postconditions=len(staged_outputs))
+
+    def commit(self, handle: PublicationStageHandle) -> PublicationCommitResult:
+        if handle.staging_id not in self._staged:
+            raise PublicationAbortError(f"Cannot commit non-existent staging handle: '{handle.staging_id}'")
+        staged_outputs = self._staged[handle.staging_id]
+        new_version = f"v{len(self._commit_log) + 1}_{handle.staging_id[:8]}"
+        self._published.update(staged_outputs)
+        self._manifest_version = new_version
+        self._commit_log.append({"staging_id": handle.staging_id, "manifest_version": new_version, "outputs": list(staged_outputs.keys())})
+        del self._staged[handle.staging_id]
+        return PublicationCommitResult(
+            is_committed=True,
+            published_output_count=len(staged_outputs),
+            manifest_version=new_version,
+            diagnostics={"published_keys": list(staged_outputs.keys())},
+        )
+
+    def abort(self, handle: PublicationStageHandle) -> None:
+        if handle.staging_id in self._staged:
+            del self._staged[handle.staging_id]
+
+
+def execute_with_publication_contracts(
+    graph: TransformationIRGraph,
+    df: Union[pd.DataFrame, Mapping[str, pd.DataFrame]],
+    adapter: Optional[PublicationAdapter] = None,
+    schemas: Optional[Mapping[str, DatasetSchema]] = None,
+    key_provider: Optional[Any] = None,
+    postconditions: Optional[Sequence[Callable[[Mapping[str, pd.DataFrame]], None]]] = None,
+) -> PublicationCommitResult:
+    """
+    Contract 12 execution boundary:
+    Executes compiled pipeline in memory, stages outputs via PublicationAdapter,
+    verifies postconditions and output schemas, and atomically commits via adapter.
+    If ANY postcondition or verification fails, publication is aborted and ZERO outputs are committed.
+    """
+    import pandas as pd
+    import numpy as np
+    from collections import Counter
+
+    compiler = PandasIRCompiler(schemas=schemas)
+    compile_res = compiler.compile(graph)
+    if not compile_res.is_success or compile_res.artifact is None:
+        raise ValueError(f"Pipeline compilation failed: {compile_res.diagnostics}")
+
+    exec_scope: Dict[str, Any] = {
+        "pd": pd,
+        "np": np,
+        "hashlib": hashlib,
+        "hmac": hmac,
+        "json": json,
+        "re": re,
+        "struct": struct,
+        "unicodedata": unicodedata,
+        "Counter": Counter,
+        "Decimal": Decimal,
+        "compute_canonical_schema_hash": compute_canonical_schema_hash,
+        "SchemaSnapshotMismatchError": SchemaSnapshotMismatchError,
+        "OutputColumnCollisionError": OutputColumnCollisionError,
+        "KeyProviderRequiredError": KeyProviderRequiredError,
+        "SecretResolutionError": SecretResolutionError,
+        "RowExpansionLimitExceededError": RowExpansionLimitExceededError,
+    }
+    exec(compile_res.artifact.source_code, exec_scope)
+    transform_fn = exec_scope.get("transform_datasets")
+    if not transform_fn:
+        raise ValueError("Compiled artifact lacks transform_datasets entrypoint")
+
+    try:
+        raw_outputs = transform_fn(df, key_provider=key_provider)
+    except Exception as exec_err:
+        raise ValueError(f"Pipeline execution failed: {exec_err}") from exec_err
+
+    pub_adapter = adapter or InMemoryPublicationAdapter()
+    staging_id = f"stage_{graph.graph_id}_{hashlib.sha256(str(datetime.now(timezone.utc)).encode('utf-8')).hexdigest()[:12]}"
+    handle = pub_adapter.stage(staging_id, raw_outputs)
+
+    postcondition_errors: List[str] = []
+    if postconditions:
+        for i, postcond in enumerate(postconditions):
+            try:
+                postcond(raw_outputs)
+            except Exception as pc_err:
+                postcondition_errors.append(f"Postcondition {i} failed: {pc_err}")
+
+    if graph.output_specs:
+        for spec in graph.output_specs:
+            ref = spec.output_ref
+            if ref in raw_outputs:
+                out_df = raw_outputs[ref]
+                if spec.schema:
+                    for col_spec in spec.schema.columns:
+                        if not col_spec.nullable and out_df[col_spec.name].isna().any():
+                            postcondition_errors.append(f"Output '{ref}' column '{col_spec.name}' contains nulls violating non-nullable schema")
+
+    if postcondition_errors:
+        pub_adapter.abort(handle)
+        raise PublicationPostconditionError(f"Publication aborted due to failed postconditions: {'; '.join(postcondition_errors)}")
+
+    val_res = pub_adapter.validate(handle)
+    if not val_res.is_valid:
+        pub_adapter.abort(handle)
+        raise PublicationPostconditionError(f"Publication validation failed: {'; '.join(val_res.errors)}")
+
+    commit_res = pub_adapter.commit(handle)
+    return commit_res
