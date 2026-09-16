@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 import pandas as pd
 from langgraph.graph import StateGraph, START, END
-from langgraph.constants import Send
+from langgraph.types import Send
 
 from agent.assessment_graph.state import AssessmentState, DatasetState
 from agent.assessment_graph.nodes import (
