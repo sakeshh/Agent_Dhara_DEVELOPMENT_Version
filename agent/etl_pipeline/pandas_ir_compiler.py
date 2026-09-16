@@ -1181,7 +1181,12 @@ class PandasIRCompiler:
         dup_mask_var = f"_dup_mask_{clean_id}"
         all_dups_mask_var = f"_all_dups_mask_{clean_id}"
 
-        if expr.null_key_policy == NullKeyPolicy.TREAT_NULLS_AS_EQUAL:
+        if expr.null_key_policy in (NullKeyPolicy.GROUP_NULLS_TOGETHER, NullKeyPolicy.TREAT_NULLS_AS_EQUAL):
+            lines.append(f"{dup_mask_var} = {df_var}.duplicated(subset={repr(keys)}, keep={repr(keep)})")
+            lines.append(f"{all_dups_mask_var} = {df_var}.duplicated(subset={repr(keys)}, keep=False)")
+        elif expr.null_key_policy == NullKeyPolicy.FAIL_STEP:
+            lines.append(f"if bool({df_var}[{repr(keys)}].isna().any().any()):")
+            lines.append(f"    raise RoutingPredicateUnknownError('Deduplication encountered null key under FAIL_STEP policy')")
             lines.append(f"{dup_mask_var} = {df_var}.duplicated(subset={repr(keys)}, keep={repr(keep)})")
             lines.append(f"{all_dups_mask_var} = {df_var}.duplicated(subset={repr(keys)}, keep=False)")
         elif expr.null_key_policy == NullKeyPolicy.TREAT_EACH_NULL_AS_DISTINCT:

@@ -110,9 +110,11 @@ class DuplicateExportMode(str, Enum):
 
 
 class NullKeyPolicy(str, Enum):
-    EXCLUDE_NULL_KEY_ROWS = "exclude_null_key_rows"
-    TREAT_NULLS_AS_EQUAL = "treat_nulls_as_equal"
+    GROUP_NULLS_TOGETHER = "group_nulls_together"
+    TREAT_NULLS_AS_EQUAL = "group_nulls_together"  # backward-compatible alias
     TREAT_EACH_NULL_AS_DISTINCT = "treat_each_null_as_distinct"
+    FAIL_STEP = "fail_step"
+    EXCLUDE_NULL_KEY_ROWS = "exclude_null_key_rows"
 
 
 class OutputPurpose(str, Enum):
@@ -819,7 +821,7 @@ class DeduplicateExpression(BaseModel):
     resolved_key_columns: Tuple[str, ...] = ()
     tie_breaker: DeduplicationTieBreaker = DeduplicationTieBreaker.PRESERVE_FIRST
     order_by: Tuple[SortColumnSpec, ...] = ()
-    null_key_policy: NullKeyPolicy = NullKeyPolicy.TREAT_NULLS_AS_EQUAL
+    null_key_policy: NullKeyPolicy = NullKeyPolicy.GROUP_NULLS_TOGETHER
     use_occurrence_id_as_final_tie_breaker: bool = True
     duplicates_output_ref: Optional[str] = None
     duplicate_export_mode: DuplicateExportMode = DuplicateExportMode.REMOVED_OCCURRENCES_ONLY
@@ -2181,7 +2183,7 @@ def plan_step_to_ir_steps(step: Dict[str, Any], dataset_name: Optional[str] = No
             key_columns=keys,
             resolved_key_columns=keys,
             tie_breaker=DeduplicationTieBreaker.PRESERVE_FIRST,
-            null_key_policy=NullKeyPolicy.TREAT_NULLS_AS_EQUAL,
+            null_key_policy=NullKeyPolicy.GROUP_NULLS_TOGETHER,
         )
         return [TransformationStepIR(
             step_id=sid, dataset_name=ds, target_column=col,
