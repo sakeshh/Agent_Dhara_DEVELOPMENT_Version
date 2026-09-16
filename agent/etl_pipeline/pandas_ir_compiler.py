@@ -31,6 +31,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import re
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 
@@ -47,14 +48,27 @@ from agent.etl_pipeline.transformation_ir import (
     ClipExpression,
     ClipNullPolicy,
     ColumnRef,
+    CastColumnExpression,
+    CastFailurePolicy,
+    CollisionPolicy,
+    ColumnDropSpec,
+    ColumnMetadata,
+    ColumnProjectSpec,
+    ColumnRenameSpec,
+    ColumnRole,
     ConditionalReplaceExpression,
+    CreateColumnExpression,
     DataType,
     DatasetColumnSchema,
     DatasetOutputSpec,
     DatasetSchema,
     DeduplicateExpression,
     DeduplicationTieBreaker,
+    DigestEncoding,
+    DropColumnsExpression,
     DuplicateExportMode,
+    EmailMaskDomainPolicy,
+    ExecutionKeyProvider,
     ExistingColumnPolicy,
     Expression,
     FilterDropPolicy,
@@ -64,12 +78,21 @@ from agent.etl_pipeline.transformation_ir import (
     GroupKeyValue,
     GroupedImputationStrategy,
     GroupedImputationValue,
+    HashAlgorithm,
+    HashExpression,
+    HashInputEncoding,
+    HashMode,
+    HashNullPolicy,
     ImputationModelIntegrityError,
     ImputeExpression,
     InfinityPolicy,
     InSetPredicate,
+    KeyProviderRequiredError,
     LearnedImputationModel,
     LiteralValue,
+    MaskExpression,
+    MaskNullPolicy,
+    MaskStrategy,
     MissingGroupPolicy,
     ModeTieBreaker,
     MultiOutputArtifactError,
@@ -77,6 +100,7 @@ from agent.etl_pipeline.transformation_ir import (
     NullCheck,
     NullKeyPolicy,
     NumericFormatSpec,
+    NumericOverflowPolicy,
     OccurrenceIdentityScope,
     OrderDirection,
     OutputColumnCollisionError,
@@ -88,13 +112,27 @@ from agent.etl_pipeline.transformation_ir import (
     ParseOutputMode,
     PassThroughExpression,
     PredicateUnknownPolicy,
+    ProjectColumnsExpression,
     QuarantineExpression,
     QuarantineUnknownPolicy,
+    RenameColumnsExpression,
+    ReorderColumnsExpression,
     RoutingIdentityPolicy,
     RoutingMode,
     RoutingPredicateUnknownError,
     RoutingReconciliationError,
     ScalarMapExpression,
+    SchemaMutationEvidence,
+    SchemaMutationExpression,
+    SchemaMutationOp,
+    SchemaSnapshotMismatchError,
+    SecretHandle,
+    SecretReference,
+    SecretResolutionError,
+    ShortValuePolicy,
+    StepAuthorization,
+    UnauthorizedDestructiveActionError,
+    compute_canonical_schema_hash,
     ScalarMapOperation,
     SortColumnSpec,
     SourceStableIdentitySpec,
@@ -199,6 +237,7 @@ class PandasIRCompiler:
     Increment 3A: MAP_VALUE, CONDITIONAL_REPLACE, CLIP, FLAG, PASS_THROUGH.
     Increment 3B: IMPUTE, PARSE.
     Increment 3C: QUARANTINE, FILTER, DEDUPLICATE, VALIDATE.
+    Increment 3D: HASH, MASK, SCHEMA_MUTATION.
     """
 
     COMPILER_NAME = "pandas_reference"
@@ -215,6 +254,9 @@ class PandasIRCompiler:
         ActionFamily.FILTER,
         ActionFamily.DEDUPLICATE,
         ActionFamily.VALIDATE,
+        ActionFamily.HASH,
+        ActionFamily.MASK,
+        ActionFamily.SCHEMA_MUTATION,
     }
 
     CONTROL_FAMILIES = {
@@ -273,6 +315,22 @@ class PandasIRCompiler:
                 step_dispositions[sid] = CompilerStepDisposition.UNSUPPORTED
                 diagnostics.append(f"Step '{sid}' uses family '{family.value}' which is not supported by {self.COMPILER_NAME}")
                 continue
+
+            # B2. Destructive Action Authorization Check
+            if isinstance(step.expression, SchemaMutationExpression) and step.expression.op == SchemaMutationOp.DROP_COLUMN:
+                auth = step.authorization
+                if not auth:
+                    step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                    diagnostics.append(f"Step '{sid}' destructive drop requires a valid StepAuthorization (UnauthorizedDestructiveActionError)")
+                    continue
+                if auth.expires_at < datetime.now(timezone.utc):
+                    step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                    diagnostics.append(f"Step '{sid}' StepAuthorization is expired (UnauthorizedDestructiveActionError)")
+                    continue
+                if auth.authorized_step_hash and auth.authorized_step_hash != step.semantic_hash:
+                    step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                    diagnostics.append(f"Step '{sid}' StepAuthorization step_hash mismatch (UnauthorizedDestructiveActionError)")
+                    continue
 
             # C. Schema Binding Validation
             if self.schemas:
@@ -374,10 +432,14 @@ class PandasIRCompiler:
             "# Ir-Version: " + graph.ir_version,
             "# Graph-Id: " + graph.graph_id,
             "from collections import Counter",
+            "import hashlib",
+            "import hmac",
             "import numpy as np",
             "import pandas as pd",
+            "import struct",
+            "import unicodedata",
             "",
-            "def transform_datasets(df: pd.DataFrame) -> dict[str, pd.DataFrame]:",
+            "def transform_datasets(df: pd.DataFrame, key_provider=None) -> dict[str, pd.DataFrame]:",
             "    _working = df.copy(deep=False)  # isolated working frame",
             "",
             f"    # --- Occurrence Identity Lifecycle ({scope.value}) ---",
@@ -464,8 +526,8 @@ class PandasIRCompiler:
         code_lines.append("")
 
         # Single-dataset entrypoint
-        code_lines.append("def transform(df: pd.DataFrame) -> pd.DataFrame:")
-        code_lines.append("    all_outputs = transform_datasets(df)")
+        code_lines.append("def transform(df: pd.DataFrame, key_provider=None) -> pd.DataFrame:")
+        code_lines.append("    all_outputs = transform_datasets(df, key_provider=key_provider)")
         if primary_ref:
             code_lines.append(f"    return all_outputs[{repr(primary_ref)}]")
         else:
@@ -508,11 +570,11 @@ class PandasIRCompiler:
         artifact = CompiledPandasArtifact(
             artifact_bytes=artifact_bytes,
             artifact_hash=artifact_hash,
-            entrypoint="transform(df: pd.DataFrame) -> pd.DataFrame",
-            datasets_entrypoint="transform_datasets(df: pd.DataFrame) -> Dict[str, pd.DataFrame]",
+            entrypoint="transform(df: pd.DataFrame, key_provider: Optional[Any] = None) -> pd.DataFrame",
+            datasets_entrypoint="transform_datasets(df: pd.DataFrame, key_provider: Optional[Any] = None) -> Dict[str, pd.DataFrame]",
             supports_single_output_entrypoint=supports_single,
             primary_output_ref=primary_ref,
-            required_imports=("collections", "numpy", "pandas"),
+            required_imports=("collections", "hashlib", "hmac", "numpy", "pandas", "struct", "unicodedata"),
             compiled_step_ids=tuple(compiled_step_ids),
             control_only_step_ids=tuple(control_only_step_ids),
             schema_snapshot_hash=graph.schema_snapshot_hash,
@@ -580,6 +642,18 @@ class PandasIRCompiler:
         # 10. VALIDATE
         if isinstance(expr, ValidateExpression):
             return self._emit_validate(expr, preimage_symbols, df_var, step_id=step.step_id)
+
+        # 11. HASH
+        if isinstance(expr, HashExpression):
+            return self._emit_hash(expr, preimage_symbols, df_var, step_id=step.step_id)
+
+        # 12. MASK
+        if isinstance(expr, MaskExpression):
+            return self._emit_mask(expr, preimage_symbols, df_var, step_id=step.step_id)
+
+        # 13. SCHEMA_MUTATION
+        if isinstance(expr, SchemaMutationExpression):
+            return self._emit_schema_mutation(expr, preimage_symbols, df_var, step_id=step.step_id)
 
         return [f"# Unsupported expression: {type(expr).__name__}"]
 
@@ -1264,6 +1338,276 @@ class PandasIRCompiler:
 
         return lines
 
+    def _emit_hash(
+        self,
+        expr: HashExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        clean_id = step_id.replace("-", "_").replace(".", "_")
+        in_col = expr.source_column or (expr.input_column.column_name if expr.input_column else "")
+        out_col = expr.target_column or expr.output_column or in_col
+        lines: List[str] = []
+
+        # Target collision check
+        if out_col != in_col and expr.existing_column_policy == ExistingColumnPolicy.ERROR:
+            lines.append(f"if {repr(out_col)} in {df_var}.columns:")
+            lines.append(f"    raise OutputColumnCollisionError('Target column already exists: ' + {repr(out_col)})")
+
+        # Key / Secret resolution
+        if expr.mode == HashMode.HMAC:
+            lines.append(f"if key_provider is None:")
+            lines.append(f"    raise KeyProviderRequiredError('Step {step_id} requires a key provider for HMAC hash')")
+            sec_id = expr.secret_ref.secret_id if expr.secret_ref else "default_key"
+            sec_purpose = expr.secret_ref.expected_purpose if expr.secret_ref else "hmac_key"
+            sec_ver = repr(expr.secret_ref.expected_version) if (expr.secret_ref and expr.secret_ref.expected_version) else "None"
+            lines.append(f"_sec_handle_{clean_id} = key_provider.resolve_secret(secret_id={repr(sec_id)}, tenant_id=getattr(key_provider, 'tenant_id', 'default'), purpose={repr(sec_purpose)}, expected_version={sec_ver})")
+            lines.append(f"_sec_bytes_{clean_id} = _sec_handle_{clean_id}.secret_bytes")
+        elif expr.mode == HashMode.SALTED_DIGEST:
+            if expr.salt_value:
+                lines.append(f"_salt_{clean_id} = {repr(expr.salt_value)}.encode('utf-8')")
+            elif expr.secret_ref:
+                lines.append(f"if key_provider is None:")
+                lines.append(f"    raise KeyProviderRequiredError('Step {step_id} requires a key provider for salted digest')")
+                sec_id = expr.secret_ref.secret_id
+                sec_purpose = expr.secret_ref.expected_purpose
+                sec_ver = repr(expr.secret_ref.expected_version) if expr.secret_ref.expected_version else "None"
+                lines.append(f"_sec_handle_{clean_id} = key_provider.resolve_secret(secret_id={repr(sec_id)}, tenant_id=getattr(key_provider, 'tenant_id', 'default'), purpose={repr(sec_purpose)}, expected_version={sec_ver})")
+                lines.append(f"_salt_{clean_id} = _sec_handle_{clean_id}.secret_bytes")
+            else:
+                lines.append(f"_salt_{clean_id} = b''")
+
+        # Canonical value encoder helper
+        norm_form = repr(expr.unicode_normalization)
+        lines.append(f"def _canonical_encode_{clean_id}(v):")
+        lines.append(f"    if pd.isna(v) or v is None:")
+        lines.append(f"        return b'\\x00DHARA_NULL_V1'")
+        lines.append(f"    if isinstance(v, bool):")
+        lines.append(f"        return b'\\x01BOOL\\x01' if v else b'\\x01BOOL\\x00'")
+        lines.append(f"    if isinstance(v, (int, np.integer)):")
+        lines.append(f"        return b'\\x02INT\\x00' + int(v).to_bytes(8, byteorder='big', signed=True)")
+        lines.append(f"    if isinstance(v, (float, np.floating)):")
+        lines.append(f"        val_f = 0.0 if v == 0.0 else float(v)")
+        lines.append(f"        return b'\\x03FLOAT\\x00' + struct.pack('>d', val_f)")
+        lines.append(f"    if isinstance(v, str):")
+        lines.append(f"        norm = unicodedata.normalize({norm_form}, v)")
+        lines.append(f"        return b'\\x05STR\\x00' + norm.encode('utf-8')")
+        lines.append(f"    if hasattr(v, 'isoformat'):")
+        lines.append(f"        return b'\\x06TS\\x00' + v.isoformat().encode('utf-8')")
+        lines.append(f"    if isinstance(v, (bytes, bytearray)):")
+        lines.append(f"        return b'\\x07BYTES\\x00' + bytes(v)")
+        lines.append(f"    norm = unicodedata.normalize({norm_form}, str(v))")
+        lines.append(f"    return b'\\x08OTHER\\x00' + norm.encode('utf-8')")
+
+        # Hash computation function
+        lines.append(f"def _hash_calc_{clean_id}(v):")
+        lines.append(f"    if pd.isna(v) or v is None:")
+        if expr.null_policy == HashNullPolicy.PRESERVE_NULL:
+            lines.append(f"        return np.nan")
+        elif expr.null_policy == HashNullPolicy.FAIL_STEP:
+            lines.append(f"        raise ValueError('Encountered null in {in_col} under FAIL_STEP hash null policy')")
+        elif expr.null_policy == HashNullPolicy.HASH_NULL:
+            lines.append(f"        raw_b = b'\\x00DHARA_NULL_V1'")
+        else:
+            lines.append(f"        return np.nan")
+        lines.append(f"    else:")
+        lines.append(f"        raw_b = _canonical_encode_{clean_id}(v)")
+
+        alg_name = expr.algorithm.value if hasattr(expr.algorithm, "value") else str(expr.algorithm)
+        if expr.mode == HashMode.HMAC:
+            lines.append(f"    d = hmac.new(_sec_bytes_{clean_id}, raw_b, {repr(alg_name)}).hexdigest()")
+        elif expr.mode == HashMode.SALTED_DIGEST:
+            lines.append(f"    d = getattr(hashlib, {repr(alg_name)})(_salt_{clean_id} + raw_b).hexdigest()")
+        else:
+            lines.append(f"    d = getattr(hashlib, {repr(alg_name)})(raw_b).hexdigest()")
+
+        if expr.truncate_length is not None:
+            lines.append(f"    d = d[:{expr.truncate_length}]")
+        lines.append(f"    return d")
+
+        lines.append(f"{df_var}[{repr(out_col)}] = {df_var}[{repr(in_col)}].apply(_hash_calc_{clean_id})")
+        return lines
+
+    def _emit_mask(
+        self,
+        expr: MaskExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        clean_id = step_id.replace("-", "_").replace(".", "_")
+        in_col = expr.source_column or (expr.input_column.column_name if expr.input_column else "")
+        out_col = expr.target_column or expr.output_column or in_col
+        lines: List[str] = []
+
+        # Target collision check
+        if out_col != in_col and expr.existing_column_policy == ExistingColumnPolicy.ERROR:
+            lines.append(f"if {repr(out_col)} in {df_var}.columns:")
+            lines.append(f"    raise OutputColumnCollisionError('Target column already exists: ' + {repr(out_col)})")
+
+        mc = repr(expr.mask_character)
+        p_count = expr.preserved_count
+
+        lines.append(f"def _mask_calc_{clean_id}(v):")
+        lines.append(f"    if pd.isna(v) or v is None:")
+        if expr.null_policy == MaskNullPolicy.PRESERVE_NULL:
+            lines.append(f"        return np.nan")
+        elif expr.null_policy == MaskNullPolicy.SET_EMPTY:
+            lines.append(f"        return ''")
+        elif expr.null_policy == MaskNullPolicy.FAIL_STEP:
+            lines.append(f"        raise ValueError('Encountered null in {in_col} under FAIL_STEP mask null policy')")
+        else:
+            lines.append(f"        return np.nan")
+
+        lines.append(f"    s = str(v)")
+        lines.append(f"    n = len(s)")
+        lines.append(f"    mc = {mc}")
+        lines.append(f"    p_count = {p_count}")
+
+        if expr.strategy in (MaskStrategy.PRESERVE_LAST_N, "preserve_last_n"):
+            lines.append(f"    if n <= p_count:")
+            if expr.short_value_policy == ShortValuePolicy.MASK_ALL:
+                lines.append(f"        return mc * n")
+            elif expr.short_value_policy == ShortValuePolicy.SET_NULL:
+                lines.append(f"        return np.nan")
+            elif expr.short_value_policy == ShortValuePolicy.FAIL_STEP:
+                lines.append(f"        raise ValueError('String length ' + str(n) + ' <= preserved_count ' + str(p_count) + ' under FAIL_STEP policy')")
+            elif expr.short_value_policy == ShortValuePolicy.KEEP_ORIGINAL:
+                lines.append(f"        return s")
+            else:
+                lines.append(f"        return mc * n")
+            lines.append(f"    return (mc * (n - p_count)) + s[-p_count:]")
+
+        elif expr.strategy in (MaskStrategy.PRESERVE_FIRST_N, "preserve_first_n"):
+            lines.append(f"    if n <= p_count:")
+            if expr.short_value_policy == ShortValuePolicy.MASK_ALL:
+                lines.append(f"        return mc * n")
+            elif expr.short_value_policy == ShortValuePolicy.SET_NULL:
+                lines.append(f"        return np.nan")
+            elif expr.short_value_policy == ShortValuePolicy.FAIL_STEP:
+                lines.append(f"        raise ValueError('String length ' + str(n) + ' <= preserved_count ' + str(p_count) + ' under FAIL_STEP policy')")
+            elif expr.short_value_policy == ShortValuePolicy.KEEP_ORIGINAL:
+                lines.append(f"        return s")
+            else:
+                lines.append(f"        return mc * n")
+            lines.append(f"    return s[:p_count] + (mc * (n - p_count))")
+
+        elif expr.strategy in (MaskStrategy.MASK_ALL, MaskStrategy.REDACT_ALL, "mask_all", "redact_all"):
+            lines.append(f"    return mc * n")
+
+        elif expr.strategy in (MaskStrategy.EMAIL_MASK, "email_mask"):
+            lines.append(f"    if '@' not in s or s.count('@') != 1:")
+            lines.append(f"        return mc * n")
+            lines.append(f"    user_part, domain_part = s.split('@', 1)")
+            lines.append(f"    if len(user_part) <= 1:")
+            lines.append(f"        m_user = user_part")
+            lines.append(f"    elif len(user_part) == 2:")
+            lines.append(f"        m_user = user_part[0] + mc")
+            lines.append(f"    else:")
+            lines.append(f"        m_user = user_part[0] + (mc * (len(user_part) - 2)) + user_part[-1]")
+            if expr.email_domain_policy == EmailMaskDomainPolicy.PRESERVE:
+                lines.append(f"    m_domain = domain_part")
+            elif expr.email_domain_policy == EmailMaskDomainPolicy.MASK:
+                lines.append(f"    d_name, d_sep, tld = domain_part.rpartition('.')")
+                lines.append(f"    m_domain = (mc * len(d_name)) + ('.' + tld if d_sep else '')")
+            elif expr.email_domain_policy == EmailMaskDomainPolicy.HASH:
+                lines.append(f"    m_domain = hashlib.sha256(domain_part.encode('utf-8')).hexdigest()[:8]")
+            else:
+                lines.append(f"    m_domain = domain_part")
+            lines.append(f"    return m_user + '@' + m_domain")
+        else:
+            lines.append(f"    return (mc * (n - p_count)) + s[-p_count:] if n > p_count else mc * n")
+
+        lines.append(f"{df_var}[{repr(out_col)}] = {df_var}[{repr(in_col)}].apply(_mask_calc_{clean_id})")
+        return lines
+
+    def _emit_schema_mutation(
+        self,
+        expr: SchemaMutationExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        clean_id = step_id.replace("-", "_").replace(".", "_")
+        lines: List[str] = []
+
+        # Pre-mutation expected schema hash assertion
+        if expr.expected_before_schema_hash:
+            lines.append(f"_before_cols_{clean_id} = [(c, str({df_var}[c].dtype), bool({df_var}[c].isna().any())) for c in {df_var}.columns]")
+            lines.append(f"if compute_canonical_schema_hash(_before_cols_{clean_id}) != {repr(expr.expected_before_schema_hash)}:")
+            lines.append(f"    raise SchemaSnapshotMismatchError('Actual pre-mutation schema hash does not match expected_before_schema_hash')")
+
+        if expr.op == SchemaMutationOp.DROP_COLUMN:
+            drop_cols = [d.column for d in expr.drops] if expr.drops else ([expr.target_column] if expr.target_column else [])
+            for dc in drop_cols:
+                lines.append(f"if {repr(dc)} not in {df_var}.columns:")
+                lines.append(f"    raise ValueError('Cannot drop non-existent column: ' + {repr(dc)})")
+            lines.append(f"{df_var} = {df_var}.drop(columns={repr(drop_cols)})")
+
+        elif expr.op == SchemaMutationOp.RENAME_COLUMN:
+            for r in expr.renames:
+                old_col = r.old_name
+                new_col = r.new_name
+                lines.append(f"if {repr(old_col)} not in {df_var}.columns:")
+                lines.append(f"    raise ValueError('Cannot rename non-existent column: ' + {repr(old_col)})")
+                lines.append(f"if {repr(new_col)} in {df_var}.columns and {repr(new_col)} != {repr(old_col)}:")
+                lines.append(f"    raise OutputColumnCollisionError('Target rename column already exists: ' + {repr(new_col)})")
+                lines.append(f"{df_var} = {df_var}.rename(columns={{{repr(old_col)}: {repr(new_col)}}})")
+
+        elif expr.op == SchemaMutationOp.PROJECT:
+            if expr.projection:
+                proj_cols = list(expr.projection.projected_columns)
+                for pc in proj_cols:
+                    if not expr.projection.allow_missing:
+                        lines.append(f"if {repr(pc)} not in {df_var}.columns:")
+                        lines.append(f"    raise ValueError('Projected column not found in DataFrame: ' + {repr(pc)})")
+                lines.append(f"{df_var} = {df_var}[{repr(proj_cols)}]")
+
+        elif expr.op == SchemaMutationOp.REORDER_COLUMNS:
+            reorder_cols = list(expr.ordered_columns)
+            for rc in reorder_cols:
+                lines.append(f"if {repr(rc)} not in {df_var}.columns:")
+                lines.append(f"    raise ValueError('Reorder column not found in DataFrame: ' + {repr(rc)})")
+            lines.append(f"{df_var} = {df_var}[{repr(reorder_cols)}]")
+
+        elif expr.op == SchemaMutationOp.CREATE_COLUMN:
+            col_name = expr.create_column_name or expr.target_column or "new_col"
+            if expr.existing_column_policy == ExistingColumnPolicy.ERROR:
+                lines.append(f"if {repr(col_name)} in {df_var}.columns:")
+                lines.append(f"    raise OutputColumnCollisionError('Created column already exists: ' + {repr(col_name)})")
+            if expr.create_expression:
+                c_code = self._emit_expression(expr.create_expression, preimages, df_var)
+                lines.append(f"{df_var}[{repr(col_name)}] = {c_code}")
+            else:
+                lines.append(f"{df_var}[{repr(col_name)}] = pd.Series(None, index={df_var}.index, dtype='string')")
+
+        elif expr.op == SchemaMutationOp.CAST_COLUMN:
+            src = expr.source_column or expr.target_column
+            dst = expr.target_column or src
+            dtype_map = {
+                DataType.STRING: "'string'",
+                DataType.INTEGER: "'Int64'",
+                DataType.FLOAT: "'Float64'",
+                DataType.BOOLEAN: "'boolean'",
+            }
+            target_dtype = dtype_map.get(expr.cast_target_type, "'string'")
+            if expr.cast_failure_policy == CastFailurePolicy.SET_NULL:
+                lines.append(f"try:")
+                lines.append(f"    {df_var}[{repr(dst)}] = {df_var}[{repr(src)}].astype({target_dtype})")
+                lines.append(f"except Exception:")
+                lines.append(f"    {df_var}[{repr(dst)}] = pd.to_numeric({df_var}[{repr(src)}], errors='coerce') if {target_dtype} in ('Int64', 'Float64') else pd.Series(None, index={df_var}.index, dtype={target_dtype})")
+            else:
+                lines.append(f"{df_var}[{repr(dst)}] = {df_var}[{repr(src)}].astype({target_dtype})")
+
+        # Post-mutation expected schema hash assertion
+        if expr.expected_after_schema_hash:
+            lines.append(f"_after_cols_{clean_id} = [(c, str({df_var}[c].dtype), bool({df_var}[c].isna().any())) for c in {df_var}.columns]")
+            lines.append(f"if compute_canonical_schema_hash(_after_cols_{clean_id}) != {repr(expr.expected_after_schema_hash)}:")
+            lines.append(f"    raise SchemaSnapshotMismatchError('Actual post-mutation schema hash does not match expected_after_schema_hash')")
+
+        return lines
+
     # ------------------------------------------------------------------------
     # Expression Transpiler
     # ------------------------------------------------------------------------
@@ -1376,10 +1720,10 @@ class PandasIRCompiler:
             # Check Import
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name not in {"numpy", "pandas", "np", "pd", "collections"}:
+                    if alias.name not in {"numpy", "pandas", "np", "pd", "collections", "hashlib", "hmac", "struct", "unicodedata"}:
                         raise ValueError(f"Prohibited import: {alias.name}")
             elif isinstance(node, ast.ImportFrom):
-                if node.module not in {"collections"}:
+                if node.module not in {"collections", "hashlib", "hmac", "struct", "unicodedata"}:
                     raise ValueError(f"Prohibited import module: {node.module}")
                 for alias in node.names:
                     if alias.name not in {"Counter"}:

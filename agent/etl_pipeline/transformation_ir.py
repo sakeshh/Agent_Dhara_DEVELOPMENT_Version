@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 import json
-from typing import Annotated, Any, Dict, List, Literal, Optional, Set, Tuple, Union
+from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, Protocol, Sequence, Set, Tuple, Union
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 
@@ -26,6 +26,11 @@ TRANSFORMATION_IR_VERSION = "1.0.0"
 
 class TransformationIRInvariantError(ValueError):
     """Raised when an immutable IR invariant or effect semantic constraint is violated."""
+    pass
+
+
+class SchemaBindingError(TransformationIRInvariantError):
+    """Raised when an expression fails validation against a schema."""
     pass
 
 
@@ -243,6 +248,26 @@ class RoutingPredicateUnknownError(ValueError):
 
 class ValidationGateError(ValueError):
     """Raised when a validation step fails under ERROR severity."""
+    pass
+
+
+class KeyProviderRequiredError(ValueError):
+    """Raised when an operation requires a key provider but none is provided."""
+    pass
+
+
+class SecretResolutionError(ValueError):
+    """Raised when a secret cannot be resolved, is expired, revoked, or has wrong tenant/purpose."""
+    pass
+
+
+class SchemaSnapshotMismatchError(ValueError):
+    """Raised when the actual schema at execution does not match the expected/predicted schema snapshot hash."""
+    pass
+
+
+class UnauthorizedDestructiveActionError(ValueError):
+    """Raised when a destructive action (such as drop_column) lacks valid StepAuthorization."""
     pass
 
 
@@ -1300,20 +1325,170 @@ class PassThroughExpression(BaseModel):
         return TransformationEffects(reads=reads, writes=(), creates=(), drops=(), filters_rows=False, partitions_rows=False)
 
 
+# ============================================================================
+# Security Action Enums & Models (Increment 3D)
+# ============================================================================
+
+class HashMode(str, Enum):
+    DIGEST = "digest"                  # Unkeyed cryptographic digest
+    SALTED_DIGEST = "salted_digest"    # Salted digest with public/non-secret salt
+    HMAC = "hmac"                      # Secret-key keyed HMAC construction
+
+
+class HashAlgorithm(str, Enum):
+    SHA256 = "sha256"
+    SHA512 = "sha512"
+    SHA3_256 = "sha3_256"
+    BLAKE2B = "blake2b"
+
+
+class HashInputEncoding(str, Enum):
+    CANONICAL_SCALAR_V1 = "canonical_scalar_v1"
+    UTF8_STRING = "utf8_string"
+    RAW_BYTES = "raw_bytes"
+
+
+class DigestEncoding(str, Enum):
+    HEX = "hex"
+    BASE64URL = "base64url"
+
+
+class HashNullPolicy(str, Enum):
+    PRESERVE_NULL = "preserve_null"
+    HASH_NULL = "hash_null"
+    FAIL_STEP = "fail_step"
+
+
+class CollisionPolicy(str, Enum):
+    FAIL_ON_COLLISION = "fail_on_collision"
+    ALLOW_COLLISION = "allow_collision"
+
+
+class MaskStrategy(str, Enum):
+    PRESERVE_LAST_N = "preserve_last_n"
+    PRESERVE_FIRST_N = "preserve_first_n"
+    MASK_ALL = "mask_all"
+    EMAIL_MASK = "email_mask"
+    # Legacy aliases
+    REDACT_ALL = "mask_all"
+    PARTIAL_REDACTION = "preserve_last_n"
+    TOKENIZE = "tokenize"
+
+
+class ShortValuePolicy(str, Enum):
+    MASK_ALL = "mask_all"
+    SET_NULL = "set_null"
+    FAIL_STEP = "fail_step"
+    KEEP_ORIGINAL = "keep_original"   # Requires explicit policy approval
+
+
+class MaskNullPolicy(str, Enum):
+    PRESERVE_NULL = "preserve_null"
+    SET_EMPTY = "set_empty"
+    FAIL_STEP = "fail_step"
+
+
+class EmailMaskDomainPolicy(str, Enum):
+    PRESERVE = "preserve"
+    MASK = "mask"
+    HASH = "hash"
+
+
+class SecretReference(BaseModel):
+    secret_id: str
+    expected_purpose: Literal["hmac_key", "hash_pepper", "tokenization_key"] = "hmac_key"
+    expected_version: Optional[str] = None
+
+
+class SecretHandle(BaseModel):
+    secret_id: str
+    secret_bytes: bytes
+    version: str = "v1"
+    tenant_id: str = "default"
+    purpose: str = "etl_hash"
+
+    def __repr__(self) -> str:
+        return f"<SecretHandle secret_id={self.secret_id!r} version={self.version!r} [REDACTED]>"
+
+
+class ExecutionKeyProvider(Protocol):
+    def resolve_secret(
+        self,
+        *,
+        secret_id: str,
+        tenant_id: str,
+        purpose: str,
+        expected_version: Optional[str] = None,
+    ) -> SecretHandle:
+        ...
+
+
 class HashExpression(BaseModel):
     """Cryptographic one-way hash transformation."""
     expression_type: Literal["hash"] = "hash"
-    input_column: ColumnRef
-    output_column: str
-    algorithm: str = "sha256"
+    source_column: str = ""
+    target_column: Optional[str] = None
+    input_column: Optional[ColumnRef] = None
+    output_column: Optional[str] = None
+    mode: HashMode = HashMode.DIGEST
+    algorithm: HashAlgorithm = HashAlgorithm.SHA256
+    secret_ref: Optional[SecretReference] = None
+    salt_value: Optional[str] = None
     salt_reference: Optional[str] = None
+    input_encoding: HashInputEncoding = HashInputEncoding.CANONICAL_SCALAR_V1
+    unicode_normalization: Literal["NFC", "NFKC"] = "NFC"
+    output_encoding: DigestEncoding = DigestEncoding.HEX
+    null_policy: HashNullPolicy = HashNullPolicy.PRESERVE_NULL
+    truncate_length: Optional[int] = None
+    collision_policy: CollisionPolicy = CollisionPolicy.ALLOW_COLLISION
+    existing_column_policy: ExistingColumnPolicy = ExistingColumnPolicy.ERROR
     preserve_original: bool = False
     reversible: Literal[False] = False
+    inverse_operation_supported: Literal[False] = False
     security_class: str = "one_way_pseudonymization"
+    remove_source_column_at_publication: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def handle_legacy_hash(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "input_column" in data and not data.get("source_column"):
+                ic = data["input_column"]
+                data["source_column"] = ic.column_name if hasattr(ic, "column_name") else str(ic)
+            if "output_column" in data and not data.get("target_column"):
+                data["target_column"] = data["output_column"]
+            if "salt_reference" in data and not data.get("secret_ref") and not data.get("salt_value"):
+                sref = data["salt_reference"]
+                if sref:
+                    data["secret_ref"] = {"secret_id": str(sref), "expected_purpose": "hmac_key"}
+                    data["mode"] = HashMode.HMAC
+            if isinstance(data.get("algorithm"), str):
+                alg_str = data["algorithm"].lower().replace("-", "")
+                if alg_str in ("sha256", "sha512", "sha3256", "sha3_256", "blake2b"):
+                    data["algorithm"] = HashAlgorithm.SHA3_256 if alg_str in ("sha3256", "sha3_256") else HashAlgorithm(alg_str)
+        return data
+
+    @model_validator(mode="after")
+    def validate_hash_contract(self) -> "HashExpression":
+        if not self.source_column and self.input_column:
+            self.source_column = self.input_column.column_name
+        if not self.target_column and self.output_column:
+            self.target_column = self.output_column
+        if not self.source_column:
+            raise ValueError("HashExpression requires source_column or input_column")
+        if self.mode == HashMode.HMAC and not self.secret_ref:
+            raise ValueError("HMAC mode strictly requires secret_ref")
+        if self.mode == HashMode.DIGEST and (self.secret_ref or self.salt_value):
+            raise ValueError("DIGEST mode prohibits secret_ref and salt_value")
+        if self.mode == HashMode.SALTED_DIGEST and not self.salt_value and not self.secret_ref:
+            raise ValueError("SALTED_DIGEST requires salt_value or secret_ref")
+        if self.truncate_length is not None and self.truncate_length < 16:
+            raise ValueError("Hash truncate_length must be at least 16 characters")
+        return self
 
     def derive_effects(self, dataset: str) -> TransformationEffects:
-        in_col = self.input_column.column_name
-        out_col = self.output_column
+        in_col = self.source_column
+        out_col = self.target_column or in_col
         writes = (out_col,) if out_col == in_col else ()
         creates = (out_col,) if out_col != in_col else ()
         return TransformationEffects(
@@ -1323,48 +1498,71 @@ class HashExpression(BaseModel):
             filters_rows=False,
             partitions_rows=False,
         )
-
-
-class MaskStrategy(str, Enum):
-    REDACT_ALL = "redact_all"
-    PRESERVE_LAST_N = "preserve_last_n"
-    PARTIAL_REDACTION = "partial_redaction"
-    TOKENIZE = "tokenize"
 
 
 class MaskExpression(BaseModel):
     """Data masking/redaction transformation."""
     expression_type: Literal["mask"] = "mask"
-    input_column: ColumnRef
-    output_column: str
+    source_column: str = ""
+    target_column: Optional[str] = None
+    input_column: Optional[ColumnRef] = None
+    output_column: Optional[str] = None
     strategy: MaskStrategy = MaskStrategy.PRESERVE_LAST_N
-    preserve_last_n: Optional[int] = 4
+    preserved_count: int = 4
+    preserve_last_n: Optional[int] = None
     mask_character: str = "*"
+    short_value_policy: ShortValuePolicy = ShortValuePolicy.MASK_ALL
+    null_policy: MaskNullPolicy = MaskNullPolicy.PRESERVE_NULL
+    email_domain_policy: EmailMaskDomainPolicy = EmailMaskDomainPolicy.PRESERVE
     token_vault_policy_id: Optional[str] = None
     reversible: bool = False
+    inverse_operation_supported: Literal[False] = False
     security_class: str = "redaction"
+    existing_column_policy: ExistingColumnPolicy = ExistingColumnPolicy.ERROR
+    remove_source_column_at_publication: bool = True
 
     @model_validator(mode="before")
     @classmethod
     def handle_legacy_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            if "input_column" in data and not data.get("source_column"):
+                ic = data["input_column"]
+                data["source_column"] = ic.column_name if hasattr(ic, "column_name") else str(ic)
+            if "output_column" in data and not data.get("target_column"):
+                data["target_column"] = data["output_column"]
             if "masking_strategy" in data and "strategy" not in data:
                 strat = str(data.pop("masking_strategy"))
                 if "last" in strat:
                     data["strategy"] = MaskStrategy.PRESERVE_LAST_N
-                elif "all" in strat:
-                    data["strategy"] = MaskStrategy.REDACT_ALL
-                elif "token" in strat:
-                    data["strategy"] = MaskStrategy.TOKENIZE
+                elif "first" in strat:
+                    data["strategy"] = MaskStrategy.PRESERVE_FIRST_N
+                elif "email" in strat:
+                    data["strategy"] = MaskStrategy.EMAIL_MASK
                 else:
-                    data["strategy"] = MaskStrategy.PARTIAL_REDACTION
-            if "visible_suffix_length" in data and "preserve_last_n" not in data:
-                data["preserve_last_n"] = data.pop("visible_suffix_length")
+                    data["strategy"] = MaskStrategy.MASK_ALL
+            if "visible_suffix_length" in data and "preserved_count" not in data:
+                data["preserved_count"] = data.pop("visible_suffix_length")
+            if "preserve_last_n" in data and "preserved_count" not in data:
+                data["preserved_count"] = data["preserve_last_n"]
         return data
 
+    @model_validator(mode="after")
+    def validate_mask(self) -> "MaskExpression":
+        if not self.source_column and self.input_column:
+            self.source_column = self.input_column.column_name
+        if not self.target_column and self.output_column:
+            self.target_column = self.output_column
+        if not self.source_column:
+            raise ValueError("MaskExpression requires source_column or input_column")
+        if len(self.mask_character) != 1 or ord(self.mask_character) < 32:
+            raise ValueError("mask_character must be a single non-control Unicode character")
+        if self.preserved_count < 0:
+            raise ValueError("preserved_count cannot be negative")
+        return self
+
     def derive_effects(self, dataset: str) -> TransformationEffects:
-        in_col = self.input_column.column_name
-        out_col = self.output_column
+        in_col = self.source_column
+        out_col = self.target_column or in_col
         writes = (out_col,) if out_col == in_col else ()
         creates = (out_col,) if out_col != in_col else ()
         return TransformationEffects(
@@ -1376,24 +1574,258 @@ class MaskExpression(BaseModel):
         )
 
 
+# ============================================================================
+# Schema Mutation Enums & Models (Increment 3D)
+# ============================================================================
+
+class ColumnRole(str, Enum):
+    BUSINESS = "business"
+    LINEAGE = "lineage"
+    TEMPORARY = "temporary"
+    VALIDITY_INDICATOR = "validity_indicator"
+    IMPUTATION_INDICATOR = "imputation_indicator"
+    PARSE_ERROR = "parse_error"
+    ROUTING_IDENTITY = "routing_identity"
+    SECURITY_OUTPUT = "security_output"
+
+
+class ColumnMetadata(BaseModel):
+    name: str
+    logical_type: DataType = DataType.STRING
+    role: ColumnRole = ColumnRole.BUSINESS
+    nullable: bool = True
+    is_protected: bool = False
+
+
+class SchemaMutationOp(str, Enum):
+    CREATE_COLUMN = "create_column"
+    RENAME_COLUMN = "rename_column"
+    DROP_COLUMN = "drop_column"
+    PROJECT = "project"
+    REORDER_COLUMNS = "reorder_columns"
+    CAST_COLUMN = "cast_column"
+
+
+class ColumnRenameSpec(BaseModel):
+    old_name: str
+    new_name: str
+
+
+class ColumnDropSpec(BaseModel):
+    column: str
+    justification: str = "Authorized schema reduction"
+
+
+class ColumnProjectSpec(BaseModel):
+    projected_columns: Tuple[str, ...]
+    reorder: bool = True
+    allow_missing: bool = False
+
+
+class CastFailurePolicy(str, Enum):
+    FAIL_STEP = "fail_step"
+    SET_NULL = "set_null"
+    FLAG = "flag"
+    QUARANTINE = "quarantine"
+
+
+class NumericOverflowPolicy(str, Enum):
+    FAIL_STEP = "fail_step"
+    CLIP = "clip"
+    SET_NULL = "set_null"
+
+
+class StepAuthorization(BaseModel):
+    step_id: str
+    policy_decision_id: str
+    approved_by_subject_id: str
+    approved_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: datetime
+    authorized_step_hash: str
+    tenant_id: str = "default"
+
+
+def compute_canonical_schema_hash(columns: Sequence[Tuple[str, Union[DataType, str], bool]], order_sensitive: bool = True) -> str:
+    norm = []
+    for col in columns:
+        dt = col[1].value if isinstance(col[1], DataType) else str(col[1])
+        norm.append((col[0], dt, bool(col[2])))
+    if not order_sensitive:
+        norm = sorted(norm, key=lambda x: x[0])
+    payload = json.dumps(norm, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+class BoundSchemaMutation(BaseModel):
+    step_id: str
+    source_schema_hash: str
+    predicted_output_schema_hash: str
+
+
+class SchemaMutationEvidence(BaseModel):
+    step_id: str
+    actual_before_schema_hash: str
+    actual_after_schema_hash: str
+    predicted_after_schema_hash: str
+    matched_prediction: bool
+
+
 class SchemaMutationExpression(BaseModel):
-    """Schema mutation: dropping or project-excluding columns."""
+    """Schema mutation: dropping, renaming, projecting, reordering, creating, or casting columns."""
     expression_type: Literal["schema_mutation"] = "schema_mutation"
-    mutation_kind: Literal["drop_column", "project_exclude"]
-    target_column: str
+    op: SchemaMutationOp = SchemaMutationOp.DROP_COLUMN
+    mutation_kind: Optional[str] = None
+    target_column: Optional[str] = None
+    source_column: Optional[str] = None
     dataset_name: Optional[str] = None
     reversible: Literal[False] = False
+    renames: Tuple[ColumnRenameSpec, ...] = ()
+    drops: Tuple[ColumnDropSpec, ...] = ()
+    projection: Optional[ColumnProjectSpec] = None
+    ordered_columns: Tuple[str, ...] = ()
+    create_column_name: Optional[str] = None
+    create_target_type: Optional[DataType] = None
+    create_expression: Optional[Expression] = None
+    cast_target_type: Optional[DataType] = None
+    cast_failure_policy: CastFailurePolicy = CastFailurePolicy.FAIL_STEP
+    cast_overflow_policy: NumericOverflowPolicy = NumericOverflowPolicy.FAIL_STEP
+    in_place: bool = False
+    expected_before_schema_hash: Optional[str] = None
+    expected_after_schema_hash: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def handle_legacy_mutation(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "mutation_kind" in data and "op" not in data:
+                mkind = data["mutation_kind"]
+                if mkind == "drop_column":
+                    data["op"] = SchemaMutationOp.DROP_COLUMN
+                    if "target_column" in data and not data.get("drops"):
+                        data["drops"] = [{"column": data["target_column"], "justification": "legacy_drop"}]
+                elif mkind == "project_exclude":
+                    data["op"] = SchemaMutationOp.PROJECT
+        return data
 
     def derive_effects(self, dataset: str) -> TransformationEffects:
-        drops = (self.target_column,) if self.mutation_kind == "drop_column" else ()
-        return TransformationEffects(
-            reads=(),
-            writes=(),
-            creates=(),
-            drops=drops,
-            filters_rows=False,
-            partitions_rows=False,
-        )
+        if self.op == SchemaMutationOp.DROP_COLUMN:
+            drop_cols = tuple(d.column for d in self.drops) if self.drops else ((self.target_column,) if self.target_column else ())
+            return TransformationEffects(drops=drop_cols, filters_rows=False, partitions_rows=False)
+        elif self.op == SchemaMutationOp.RENAME_COLUMN:
+            reads = tuple(r.old_name for r in self.renames)
+            creates = tuple(r.new_name for r in self.renames)
+            drops = tuple(r.old_name for r in self.renames)
+            return TransformationEffects(reads=reads, creates=creates, drops=drops, filters_rows=False, partitions_rows=False)
+        elif self.op == SchemaMutationOp.PROJECT:
+            reads = self.projection.projected_columns if self.projection else ()
+            return TransformationEffects(reads=reads, filters_rows=False, partitions_rows=False)
+        elif self.op == SchemaMutationOp.REORDER_COLUMNS:
+            return TransformationEffects(reads=self.ordered_columns, filters_rows=False, partitions_rows=False)
+        elif self.op == SchemaMutationOp.CREATE_COLUMN:
+            col = self.create_column_name or self.target_column or "new_col"
+            reads = tuple(self.create_expression.extract_reads()) if self.create_expression else ()
+            return TransformationEffects(reads=reads, creates=(col,), filters_rows=False, partitions_rows=False)
+        elif self.op == SchemaMutationOp.CAST_COLUMN:
+            src = self.source_column or self.target_column or "col"
+            dst = self.target_column or src
+            writes = (dst,) if dst == src else ()
+            creates = (dst,) if dst != src else ()
+            return TransformationEffects(reads=(src,), writes=writes, creates=creates, filters_rows=False, partitions_rows=False)
+        drops = (self.target_column,) if self.target_column and self.mutation_kind == "drop_column" else ()
+        return TransformationEffects(drops=drops, filters_rows=False, partitions_rows=False)
+
+
+class CreateColumnExpression(SchemaMutationExpression):
+    op: SchemaMutationOp = SchemaMutationOp.CREATE_COLUMN
+    target_column: str = ""
+    target_type: DataType = DataType.STRING
+    value_expression: Optional[Expression] = None
+    existing_column_policy: ExistingColumnPolicy = ExistingColumnPolicy.ERROR
+
+    @model_validator(mode="before")
+    @classmethod
+    def set_create_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data["op"] = SchemaMutationOp.CREATE_COLUMN
+            if "target_column" in data and not data.get("create_column_name"):
+                data["create_column_name"] = data["target_column"]
+            if "value_expression" in data and not data.get("create_expression"):
+                data["create_expression"] = data["value_expression"]
+            if "target_type" in data and not data.get("create_target_type"):
+                data["create_target_type"] = data["target_type"]
+        return data
+
+
+class RenameColumnsExpression(SchemaMutationExpression):
+    op: SchemaMutationOp = SchemaMutationOp.RENAME_COLUMN
+    renames: Tuple[ColumnRenameSpec, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def set_rename_op(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data["op"] = SchemaMutationOp.RENAME_COLUMN
+        return data
+
+
+class DropColumnsExpression(SchemaMutationExpression):
+    op: SchemaMutationOp = SchemaMutationOp.DROP_COLUMN
+    drops: Tuple[ColumnDropSpec, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def set_drop_op(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data["op"] = SchemaMutationOp.DROP_COLUMN
+        return data
+
+
+class ProjectColumnsExpression(SchemaMutationExpression):
+    op: SchemaMutationOp = SchemaMutationOp.PROJECT
+    projection: Optional[ColumnProjectSpec] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def set_proj_op(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data["op"] = SchemaMutationOp.PROJECT
+        return data
+
+
+class ReorderColumnsExpression(SchemaMutationExpression):
+    op: SchemaMutationOp = SchemaMutationOp.REORDER_COLUMNS
+    ordered_columns: Tuple[str, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def set_reorder_op(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data["op"] = SchemaMutationOp.REORDER_COLUMNS
+        return data
+
+
+class CastColumnExpression(SchemaMutationExpression):
+    op: SchemaMutationOp = SchemaMutationOp.CAST_COLUMN
+    source_column: str = ""
+    target_column: Optional[str] = None
+    target_type: DataType = DataType.STRING
+    failure_policy: CastFailurePolicy = CastFailurePolicy.FAIL_STEP
+    overflow_policy: NumericOverflowPolicy = NumericOverflowPolicy.FAIL_STEP
+    lossless_required: bool = False
+    in_place: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def set_cast_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data["op"] = SchemaMutationOp.CAST_COLUMN
+            if "target_type" in data and not data.get("cast_target_type"):
+                data["cast_target_type"] = data["target_type"]
+            if "failure_policy" in data and not data.get("cast_failure_policy"):
+                data["cast_failure_policy"] = data["failure_policy"]
+            if "overflow_policy" in data and not data.get("cast_overflow_policy"):
+                data["cast_overflow_policy"] = data["overflow_policy"]
+        return data
 
 
 TransformationExpression = Annotated[
@@ -1415,6 +1847,7 @@ TransformationExpression = Annotated[
     ],
     Field(discriminator="expression_type"),
 ]
+
 
 
 # ============================================================================
@@ -1455,6 +1888,8 @@ class DatasetColumnSchema(BaseModel):
     name: str
     data_type: DataType = DataType.STRING
     nullable: bool = True
+    role: ColumnRole = ColumnRole.BUSINESS
+    is_protected: bool = False
 
 
 class DatasetSchema(BaseModel):
@@ -1553,6 +1988,70 @@ def bind_expression_to_schema(
                 raise TransformationIRInvariantError(f"Deduplicate sort column '{spec.column}' does not exist in schema")
         eff = derive_effects(expression, dataset_name)
 
+    # For HashExpression: source column exists, target column collision check
+    if isinstance(expression, HashExpression):
+        s_col = expression.source_column or (expression.input_column.column_name if expression.input_column else "")
+        t_col = expression.target_column or expression.output_column or s_col
+        if s_col and s_col not in ds_schema.columns:
+            raise TransformationIRInvariantError(f"Hash source column '{s_col}' does not exist in schema")
+        if t_col != s_col and t_col in ds_schema.columns and expression.existing_column_policy == ExistingColumnPolicy.ERROR:
+            raise TransformationIRInvariantError(f"Hash target column '{t_col}' already exists in schema (policy=ERROR)")
+
+    # For MaskExpression: source column exists, target column collision check
+    if isinstance(expression, MaskExpression):
+        s_col = expression.source_column or (expression.input_column.column_name if expression.input_column else "")
+        t_col = expression.target_column or expression.output_column or s_col
+        if s_col and s_col not in ds_schema.columns:
+            raise TransformationIRInvariantError(f"Mask source column '{s_col}' does not exist in schema")
+        if t_col != s_col and t_col in ds_schema.columns and expression.existing_column_policy == ExistingColumnPolicy.ERROR:
+            raise TransformationIRInvariantError(f"Mask target column '{t_col}' already exists in schema (policy=ERROR)")
+
+    # For SchemaMutationExpression: role checks, existence, collision
+    if isinstance(expression, SchemaMutationExpression):
+        if expression.op == SchemaMutationOp.DROP_COLUMN:
+            drop_cols = [d.column for d in expression.drops] if expression.drops else ([expression.target_column] if expression.target_column else [])
+            for dc in drop_cols:
+                if dc not in ds_schema.columns:
+                    raise TransformationIRInvariantError(f"Cannot drop non-existent column '{dc}'")
+                # Role-based protection: cannot drop internal routing, lineage, or indicator columns
+                col_schema = ds_schema.columns[dc]
+                if (
+                    dc.startswith("__dhara_")
+                    or dc.endswith("_was_imputed")
+                    or dc.endswith("_parse_error")
+                    or col_schema.is_protected
+                    or col_schema.role in (
+                        ColumnRole.ROUTING_IDENTITY,
+                        ColumnRole.LINEAGE,
+                        ColumnRole.VALIDITY_INDICATOR,
+                        ColumnRole.IMPUTATION_INDICATOR,
+                    )
+                ):
+                    raise SchemaBindingError(f"Cannot drop protected column with role '{col_schema.role.value}': '{dc}'")
+        elif expression.op == SchemaMutationOp.RENAME_COLUMN:
+            for r in expression.renames:
+                if r.old_name not in ds_schema.columns:
+                    raise TransformationIRInvariantError(f"Cannot rename non-existent column '{r.old_name}'")
+                if r.new_name in ds_schema.columns and r.new_name != r.old_name:
+                    raise TransformationIRInvariantError(f"Rename target column '{r.new_name}' already exists in schema")
+        elif expression.op == SchemaMutationOp.PROJECT:
+            if expression.projection and not expression.projection.allow_missing:
+                for pc in expression.projection.projected_columns:
+                    if pc not in ds_schema.columns:
+                        raise TransformationIRInvariantError(f"Projected column '{pc}' does not exist in schema")
+        elif expression.op == SchemaMutationOp.REORDER_COLUMNS:
+            for rc in expression.ordered_columns:
+                if rc not in ds_schema.columns:
+                    raise TransformationIRInvariantError(f"Reorder column '{rc}' does not exist in schema")
+        elif expression.op == SchemaMutationOp.CREATE_COLUMN:
+            c_name = expression.create_column_name or expression.target_column
+            if c_name and c_name in ds_schema.columns and expression.existing_column_policy == ExistingColumnPolicy.ERROR:
+                raise TransformationIRInvariantError(f"Created column '{c_name}' already exists in schema (policy=ERROR)")
+        elif expression.op == SchemaMutationOp.CAST_COLUMN:
+            src = expression.source_column or expression.target_column
+            if src and src not in ds_schema.columns:
+                raise TransformationIRInvariantError(f"Cast source column '{src}' does not exist in schema")
+
     # Check AFTER_STEP references
     def _check_after_step(obj: Any):
         if isinstance(obj, ColumnRef) and obj.version == ValueVersion.AFTER_STEP:
@@ -1601,6 +2100,7 @@ class TransformationStepIR(BaseModel):
     idempotent: bool = True
     deterministic: bool = True
     reversible: bool = False
+    authorization: Optional[StepAuthorization] = None
 
     @model_validator(mode="before")
     @classmethod

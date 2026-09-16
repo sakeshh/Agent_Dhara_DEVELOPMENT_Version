@@ -122,11 +122,11 @@ def test_compiler_accounting_all_dispositions_and_invariants():
         kind=StepKind.CONTROL,
         expression=PassThroughExpression(reason_code="documented_business_exemption"),
     )
-    # Unsupported step in 3A (e.g. JOIN or HASH)
+    # Unsupported step in 3D (e.g. JOIN or AGGREGATE)
     step_unsupported = TransformationStepIR(
         step_id="step_hash",
         dataset_name="payroll",
-        family=ActionFamily.HASH,
+        family=ActionFamily.JOIN,
         kind=StepKind.ROW_TRANSFORMATION,
         expression=FlagExpression(
             predicate=NullCheck(operand=col),
