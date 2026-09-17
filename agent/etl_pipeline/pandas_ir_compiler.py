@@ -223,165 +223,23 @@ class PublicationAbortError(RuntimeError):
     pass
 
 
-def canonical_encode_scalar_v1(
-    v: Any,
-    mode: DecimalCanonicalizationMode = DecimalCanonicalizationMode.NUMERIC_VALUE,
-    norm_form: str = "NFC",
-    declared_scale: Optional[int] = None,
-    dataset_tz: Optional[str] = None,
-) -> bytes:
-    """
-    Contract 1, 2, 3 canonical scalar encoder.
-    Produces unambiguous binary encoding for scalar types:
-    - Domain tag separation (NULL, BOOL, INT, FLOAT, DEC, STR, TS, BYTES, NAT, DATE)
-    - Rejects unsupported scalar types (CanonicalSerializationError) - zero string fallback
-    - Bounded 4-byte length prefix (uint32)
-    - Decimal:
-        * NUMERIC_VALUE: trailing zeros normalized, canonical zero for all zeros (-0, 0.00, etc.),
-          minimal unsigned magnitude bytes.
-        * PRESERVE_DECLARED_SCALE: declared precision/scale preserved.
-        * Rejects non-finite decimals (NaN, Infinity).
-        * Validates 4-byte signed scale range.
-    - Timestamps:
-        * pd.NaT has dedicated domain tag b'\\x09NAT\\x00'
-        * Rejects out-of-range epoch nanoseconds (signed 64-bit int)
-        * Timezone-aware timestamps normalized to UTC epoch nanoseconds
-        * Naive timestamps require explicit dataset_tz or raise CanonicalSerializationError
-        * Calendar dates use b'\\x0aDATE\\x00' and are not timezone-shifted
-    - Integers:
-        * Signed 64-bit range validation (-2^63 <= v <= 2^63 - 1)
-    - Floats:
-        * Normalizes -0.0 to 0.0
-        * Canonical NaN, +inf, -inf
-    - Bounded lengths:
-        * Length <= 2^32 - 1 for strings and bytes
-    """
-    import pandas as pd
-    import numpy as np
+# Re-export authoritative canonical scalar encoder from canonical_encoding module
+from agent.etl_pipeline.canonical_encoding import (
+    CANONICAL_ENCODING_VERSION,
+    TAG_BOOL_FALSE,
+    TAG_BOOL_TRUE,
+    TAG_BYTES_PREFIX,
+    TAG_DATE_PREFIX,
+    TAG_DECIMAL_PREFIX,
+    TAG_FLOAT_PREFIX,
+    TAG_INT_PREFIX,
+    TAG_NAT,
+    TAG_NULL,
+    TAG_STRING_PREFIX,
+    TAG_TIMESTAMP_PREFIX,
+    canonical_encode_scalar_v1,
+)
 
-    # 0. pd.NaT (must precede generic null check because pd.isna(NaT) is True)
-    if v is pd.NaT or (isinstance(v, (pd.Timestamp, np.datetime64)) and pd.isna(v)):
-        return b"\x09NAT\x00"
-
-    # 1. Null / None
-    if v is None:
-        return b"\x00DHARA_NULL_V1"
-
-    # 2. Boolean (must precede int, because bool is subclass of int in Python!)
-    if isinstance(v, (bool, np.bool_)):
-        return b"\x01BOOL\x01" if v else b"\x01BOOL\x00"
-
-    # 3. Integer
-    if isinstance(v, (int, np.integer)):
-        int_v = int(v)
-        if int_v < -9223372036854775808 or int_v > 9223372036854775807:
-            raise CanonicalSerializationError(f"Integer {int_v} exceeds signed 64-bit range")
-        return b"\x02INT\x00" + int_v.to_bytes(8, byteorder="big", signed=True)
-
-    # 4. Float
-    if isinstance(v, (float, np.floating)):
-        f_val = float(v)
-        if np.isnan(f_val):
-            return b"\x03FLOAT\x00\x7f\xf8\x00\x00\x00\x00\x00\x00"  # canonical quiet NaN
-        if np.isneginf(f_val):
-            return b"\x03FLOAT\x00\xff\xf0\x00\x00\x00\x00\x00\x00"  # canonical -inf
-        if np.isposinf(f_val):
-            return b"\x03FLOAT\x00\x7f\xf0\x00\x00\x00\x00\x00\x00"  # canonical +inf
-        if f_val == 0.0:
-            f_val = 0.0  # normalize -0.0 to +0.0
-        return b"\x03FLOAT\x00" + struct.pack(">d", f_val)
-
-    # 5. Decimal
-    if isinstance(v, Decimal):
-        if not v.is_finite():
-            raise CanonicalSerializationError(f"Non-finite Decimal '{v}' is not supported in canonical serialization")
-
-        if v.is_zero():
-            scale = 0 if mode == DecimalCanonicalizationMode.NUMERIC_VALUE else (declared_scale if declared_scale is not None else 0)
-            if scale < -2147483648 or scale > 2147483647:
-                raise CanonicalSerializationError(f"Decimal scale {scale} overflows signed 32-bit int")
-            return b"\x04DEC\x00" + bytes([0]) + struct.pack(">i", scale) + struct.pack(">I", 0)
-
-        sign, digits, exp = v.as_tuple()
-        int_mag = 0
-        for d in digits:
-            int_mag = int_mag * 10 + d
-
-        if mode == DecimalCanonicalizationMode.NUMERIC_VALUE:
-            scale = -exp
-            while scale > 0 and int_mag % 10 == 0:
-                int_mag //= 10
-                scale -= 1
-            if scale < 0:
-                int_mag *= (10 ** (-scale))
-                scale = 0
-        else:
-            scale = declared_scale if declared_scale is not None else -exp
-            current_scale = -exp
-            if current_scale < scale:
-                int_mag *= (10 ** (scale - current_scale))
-            elif current_scale > scale:
-                pass
-
-        if scale < -2147483648 or scale > 2147483647:
-            raise CanonicalSerializationError(f"Decimal scale {scale} overflows signed 32-bit int")
-
-        if int_mag == 0:
-            mag_bytes = b""
-        else:
-            mag_len = (int_mag.bit_length() + 7) // 8
-            mag_bytes = int_mag.to_bytes(mag_len, byteorder="big", signed=False)
-
-        if len(mag_bytes) > 2**32 - 1:
-            raise CanonicalSerializationError("Decimal magnitude exceeds uint32 length limit")
-
-        return b"\x04DEC\x00" + bytes([sign]) + struct.pack(">i", scale) + struct.pack(">I", len(mag_bytes)) + mag_bytes
-
-    # 6. Calendar Date (datetime.date but not datetime.datetime)
-    if isinstance(v, _dt.date) and not isinstance(v, _dt.datetime):
-        s = v.isoformat().encode("ascii")
-        if len(s) > 2**32 - 1:
-            raise CanonicalSerializationError("Date string length exceeds uint32 limit")
-        return b"\x0aDATE\x00" + struct.pack(">I", len(s)) + s
-
-    # 7. Timestamp / Datetime
-    if isinstance(v, _dt.datetime):
-        if v.tzinfo is None or v.tzinfo.utcoffset(v) is None:
-            if dataset_tz is None:
-                raise CanonicalSerializationError("Naive timestamp encountered without an explicit dataset timezone policy")
-            import zoneinfo
-            try:
-                tz_obj = zoneinfo.ZoneInfo(dataset_tz)
-                utc_dt = v.replace(tzinfo=tz_obj).astimezone(timezone.utc)
-            except Exception as tz_err:
-                raise CanonicalSerializationError(f"Invalid dataset timezone policy '{dataset_tz}': {tz_err}")
-        else:
-            utc_dt = v.astimezone(timezone.utc)
-
-        epoch = _dt.datetime(1970, 1, 1, tzinfo=timezone.utc)
-        delta = utc_dt - epoch
-        epoch_nanos = (delta.days * 86400 + delta.seconds) * 1_000_000_000 + (delta.microseconds * 1000)
-        if epoch_nanos < -9223372036854775808 or epoch_nanos > 9223372036854775807:
-            raise CanonicalSerializationError(f"Timestamp nanoseconds {epoch_nanos} exceeds signed 64-bit range")
-        return b"\x06TS\x00" + epoch_nanos.to_bytes(8, byteorder="big", signed=True)
-
-    # 8. String
-    if isinstance(v, str):
-        norm = unicodedata.normalize(norm_form, v)
-        b = norm.encode("utf-8")
-        if len(b) > 2**32 - 1:
-            raise CanonicalSerializationError("String byte length exceeds canonical uint32 length limit")
-        return b"\x05STR\x00" + struct.pack(">I", len(b)) + b
-
-    # 9. Bytes / bytearray
-    if isinstance(v, (bytes, bytearray)):
-        b = bytes(v)
-        if len(b) > 2**32 - 1:
-            raise CanonicalSerializationError("Byte value exceeds canonical uint32 length limit")
-        return b"\x07BYTES\x00" + struct.pack(">I", len(b)) + b
-
-    # 10. Unsupported type: reject explicitly! Zero string fallback.
-    raise CanonicalSerializationError(f"Unsupported scalar type for canonical serialization: {type(v).__name__}")
 
 
 # ============================================================================
@@ -469,6 +327,7 @@ class PandasIRCompiler:
 
     COMPILER_NAME = "pandas_reference"
     COMPILER_VERSION = "1.0.0"
+    engine_name = "pandas"
 
     SUPPORTED_FAMILIES = {
         ActionFamily.MAP_VALUE,
@@ -496,6 +355,36 @@ class PandasIRCompiler:
 
     def __init__(self, schemas: Optional[Mapping[str, DatasetSchema]] = None):
         self.schemas = dict(schemas or {})
+
+    def execute(
+        self,
+        graph: TransformationIRGraph,
+        df: Union[pd.DataFrame, Dict[str, pd.DataFrame]],
+        key_provider: Optional[Any] = None,
+    ) -> Any:
+        """Executes the compiled reference Pandas artifact against in-memory input DataFrame(s)."""
+        comp_res = self.compile(graph)
+        if not comp_res.is_success or comp_res.artifact is None:
+            raise RuntimeError(f"Reference Pandas compilation failed: {comp_res.diagnostics}")
+        loc: Dict[str, Any] = {}
+        exec(comp_res.artifact.source_code, loc)
+        datasets_fn = loc.get("transform_datasets")
+        if datasets_fn:
+            res_dict = datasets_fn(df, key_provider=key_provider)
+            class PandasExecutionResult:
+                def __init__(self, outputs: Dict[str, pd.DataFrame]):
+                    self.outputs = outputs
+                    self.primary_output = next(iter(outputs.values())) if outputs else pd.DataFrame()
+            return PandasExecutionResult(res_dict)
+        single_fn = loc.get("transform")
+        if single_fn:
+            primary_out = single_fn(df, key_provider=key_provider)
+            class PandasExecutionResult:
+                def __init__(self, primary: pd.DataFrame):
+                    self.outputs = {"primary": primary}
+                    self.primary_output = primary
+            return PandasExecutionResult(primary_out)
+        raise RuntimeError("No valid entrypoint found in compiled Pandas artifact")
 
     def compile(self, graph: TransformationIRGraph, df_var: str = "df") -> PandasCompilerResult:
         """

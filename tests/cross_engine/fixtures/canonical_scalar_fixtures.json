@@ -1,0 +1,80 @@
+{
+  "protocol_version": "CANONICAL_SCALAR_V1",
+  "fixtures": [
+    {
+      "vector_id": "null_scalar",
+      "description": "Canonical encoding of null/None value",
+      "input_type": "null",
+      "expected_hex": "0044484152415f4e554c4c5f5631"
+    },
+    {
+      "vector_id": "nat_scalar",
+      "description": "Canonical encoding of pd.NaT",
+      "input_type": "nat",
+      "expected_hex": "094e415400"
+    },
+    {
+      "vector_id": "bool_true",
+      "description": "Canonical encoding of boolean True",
+      "input_type": "bool",
+      "value": true,
+      "expected_hex": "01424f4f4c01"
+    },
+    {
+      "vector_id": "bool_false",
+      "description": "Canonical encoding of boolean False",
+      "input_type": "bool",
+      "value": false,
+      "expected_hex": "01424f4f4c00"
+    },
+    {
+      "vector_id": "int_zero",
+      "description": "Canonical encoding of integer 0",
+      "input_type": "int",
+      "value": 0,
+      "expected_hex": "02494e54000000000000000000"
+    },
+    {
+      "vector_id": "int_42",
+      "description": "Canonical encoding of integer 42",
+      "input_type": "int",
+      "value": 42,
+      "expected_hex": "02494e5400000000000000002a"
+    },
+    {
+      "vector_id": "float_pos_zero",
+      "description": "Canonical encoding of float +0.0",
+      "input_type": "float",
+      "value": 0.0,
+      "expected_hex": "03464c4f4154000000000000000000"
+    },
+    {
+      "vector_id": "float_neg_zero",
+      "description": "Canonical encoding of float -0.0 (canonicalized to +0.0)",
+      "input_type": "float",
+      "value": -0.0,
+      "expected_hex": "03464c4f4154000000000000000000"
+    },
+    {
+      "vector_id": "string_null",
+      "description": "Canonical encoding of string literal 'null' (distinct from tag null)",
+      "input_type": "str",
+      "value": "null",
+      "expected_hex": "0553545200000000046e756c6c"
+    },
+    {
+      "vector_id": "string_hello",
+      "description": "Canonical encoding of string 'hello'",
+      "input_type": "str",
+      "value": "hello",
+      "expected_hex": "05535452000000000568656c6c6f"
+    },
+    {
+      "vector_id": "calendar_date",
+      "description": "Canonical encoding of calendar date 2026-09-16",
+      "input_type": "date",
+      "value": "2026-09-16",
+      "expected_hex": "0a44415445000000000a323032362d30392d3136"
+    }
+  ]
+}
