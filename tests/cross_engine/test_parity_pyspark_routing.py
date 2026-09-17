@@ -58,6 +58,8 @@ from agent.etl_pipeline.transformation_ir import (
     StepKind,
     TransformationIRGraph,
     TransformationStepIR,
+    ValidateExpression,
+    ValidateSeverity,
 )
 from tests.cross_engine.assertions import (
     assert_schema_parity,
@@ -505,12 +507,14 @@ def test_pyspark_identity_materialization_and_cache_release(spark_session: Spark
     assert comp_res.is_success
     code = comp_res.artifact.source_code
 
-    # Verify static code guarantees
+    # Verify static code guarantees: try ... finally: _entry_cached.unpersist()
     assert "_entry_cached = _working.cache()" in code
     assert "_ = _entry_cached.count()  # Explicit materialization action before branching" in code
+    assert "try:" in code
+    assert "finally:" in code
     assert "_entry_cached.unpersist()" in code
 
-    # Execute and verify branch identity conservation
+    # Execute and verify branch identity conservation on success path
     exec_res = compiler.execute(graph, sdf)
     cur_ids = set(exec_res.outputs["curated"].toPandas()["__dhara_row_occurrence_0"])
     quar_ids = set(exec_res.outputs["quarantine"].toPandas()["__dhara_row_occurrence_0"])
@@ -519,4 +523,41 @@ def test_pyspark_identity_materialization_and_cache_release(spark_session: Spark
     assert len(quar_ids) == 2
     assert cur_ids.isdisjoint(quar_ids)
     assert len(cur_ids | quar_ids) == 4
+
+    # Verify exception-safe cleanup on failed branch execution
+    step_fail = TransformationStepIR(
+        step_id="step_fail_validation",
+        family=ActionFamily.VALIDATE,
+        expression=ValidateExpression(
+            predicate=BinaryOp(
+                left=ColumnRef(column_name="val"),
+                op=BinaryOperator.LT,
+                right=LiteralValue(value=0, data_type=DataType.INTEGER),
+            ),
+            severity=ValidateSeverity.ERROR,
+        ),
+        dataset_name="primary",
+        kind=StepKind.ASSERTION,
+    )
+    graph_fail = TransformationIRGraph(
+        graph_id="test_mat_cache_failure",
+        steps=[step, step_fail],
+        routing_identity_policy=RoutingIdentityPolicy(
+            scope=OccurrenceIdentityScope.EXECUTION_LOCAL,
+        ),
+    )
+    res_fail = compiler.compile(graph_fail)
+    assert res_fail.is_success
+
+    loc = {}
+    exec(res_fail.artifact.source_code, loc)
+    transform_fn = loc["transform_datasets"]
+
+    from unittest.mock import patch
+    import pyspark.sql
+
+    with patch.object(pyspark.sql.DataFrame, "unpersist", autospec=True) as mock_unpersist:
+        with pytest.raises(Exception):
+            transform_fn(sdf)
+        assert mock_unpersist.called, "unpersist() must execute in finally block even when downstream execution raises!"
 

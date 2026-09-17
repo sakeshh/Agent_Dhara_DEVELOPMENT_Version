@@ -16,6 +16,8 @@ import pytest
 from agent.etl_pipeline.canonical_encoding import (
     CANONICAL_TEST_VECTORS_V1,
     CANONICAL_VECTORS_HASH_V1,
+    CANONICAL_TUPLE_TEST_VECTORS_V1,
+    CANONICAL_TUPLE_VECTORS_HASH_V1,
     TAG_BOOL_FALSE,
     TAG_BOOL_TRUE,
     TAG_FLOAT_PREFIX,
@@ -23,6 +25,7 @@ from agent.etl_pipeline.canonical_encoding import (
     TAG_NAT,
     TAG_NULL,
     canonical_encode_scalar_v1,
+    canonical_encode_coordinate_tuple_v1,
 )
 from agent.etl_pipeline.cross_engine.capability_models import (
     CapabilityDecision,
@@ -219,12 +222,12 @@ def test_runtime_profile_hashing_determinism_and_semantic_sensitivity():
 
 
 def test_canonical_scalar_v1_vectors_and_integrity_hash():
-    """Verify canonical scalar encoder passes all versioned test vectors and vector hash is unaltered."""
-    # 1. Verify vector hash integrity
+    """Verify canonical scalar and coordinate tuple encoders pass versioned test vectors with unaltered hashes."""
+    # 1. Verify scalar vector hash integrity
     computed_hash = CANONICAL_VECTORS_HASH_V1
-    assert computed_hash is not None and len(computed_hash) == 64
+    assert computed_hash == "ea0a9a07c8ea220bf6b411dcc2052dc2827a5aa07073ec10e60facd6d372e2be"
 
-    # 2. Verify all test vectors produce exact expected hex bytes
+    # 2. Verify all scalar test vectors produce exact expected hex bytes
     for vec in CANONICAL_TEST_VECTORS_V1:
         v_type = vec["input_type"]
         expected_hex = vec["expected_hex"]
@@ -240,6 +243,15 @@ def test_canonical_scalar_v1_vectors_and_integrity_hash():
             b = canonical_encode_scalar_v1(vec["value"])
 
         assert b.hex() == expected_hex, f"Mismatch in vector {vec['vector_id']}: expected {expected_hex}, got {b.hex()}"
+
+    # 3. Verify coordinate tuple vector hash integrity
+    tuple_hash = CANONICAL_TUPLE_VECTORS_HASH_V1
+    assert tuple_hash == "1bd1c7e8e70fb7ad71db783e353359fd7fce733ffdc0088690a8d25dedbe7f72"
+
+    # 4. Verify all coordinate tuple test vectors produce exact expected hex bytes
+    for t_vec in CANONICAL_TUPLE_TEST_VECTORS_V1:
+        t_b = canonical_encode_coordinate_tuple_v1(t_vec["coords"])
+        assert t_b.hex() == t_vec["expected_hex"], f"Mismatch in tuple vector {t_vec['vector_id']}: expected {t_vec['expected_hex']}, got {t_b.hex()}"
 
 
 def test_canonical_scalar_v1_rejection_invariants():

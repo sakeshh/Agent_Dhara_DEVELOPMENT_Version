@@ -602,69 +602,71 @@ class PySparkIRCompiler:
             code_lines.append(f"    _working = _entry_cached")
         code_lines.append("")
 
+        code_lines.append("    try:")
         # Preamble: Selective Series Pre-images
         if preimage_bindings:
-            code_lines.append("    # --- Selective Pre-images for ValueVersion.ORIGINAL ---")
+            code_lines.append("        # --- Selective Pre-images for ValueVersion.ORIGINAL ---")
             for binding in preimage_bindings:
                 code_lines.append(
-                    f"    _working = _working.withColumn({repr(binding.internal_symbol)}, F.col({repr(binding.column_ref)}))"
+                    f"        _working = _working.withColumn({repr(binding.internal_symbol)}, F.col({repr(binding.column_ref)}))"
                 )
             code_lines.append("")
 
         # Step Transformations
-        code_lines.append("    # --- Transformation Pipeline ---")
+        code_lines.append("        # --- Transformation Pipeline ---")
         for step in graph.steps:
             disp = step_dispositions[step.step_id]
             if disp == CompilerStepDisposition.CONTROL_ONLY:
-                code_lines.append(f"    # Step {step.step_id}: CONTROL_ONLY ({step.family.value})")
+                code_lines.append(f"        # Step {step.step_id}: CONTROL_ONLY ({step.family.value})")
                 continue
 
             step_code = self._emit_step_code(step, col_to_preimage, df_var="_working")
-            code_lines.append(f"    # Step {step.step_id}: {step.family.value}")
+            code_lines.append(f"        # Step {step.step_id}: {step.family.value}")
             for line in step_code:
-                code_lines.append(f"    {line}")
+                code_lines.append(f"        {line}")
             code_lines.append("")
 
         # Drop internal pre-image columns
         if preimage_bindings:
             drop_cols = [b.internal_symbol for b in preimage_bindings]
-            code_lines.append(f"    # --- Clean up internal pre-image columns ---")
+            code_lines.append(f"        # --- Clean up internal pre-image columns ---")
             for dc in drop_cols:
-                code_lines.append(f"    if {repr(dc)} in _working.columns:")
-                code_lines.append(f"        _working = _working.drop({repr(dc)})")
+                code_lines.append(f"        if {repr(dc)} in _working.columns:")
+                code_lines.append(f"            _working = _working.drop({repr(dc)})")
             code_lines.append("")
 
         # Final Primary Output Registration
         primary_ref = graph.primary_output_ref
         if primary_ref:
-            code_lines.append(f"    # --- Primary Output Registration ---")
-            code_lines.append(f"    outputs[{repr(primary_ref)}] = _working")
+            code_lines.append(f"        # --- Primary Output Registration ---")
+            code_lines.append(f"        outputs[{repr(primary_ref)}] = _working")
         else:
-            code_lines.append(f"    # --- Default Primary Output Registration ---")
-            code_lines.append(f"    if 'primary' not in outputs:")
-            code_lines.append(f"        outputs['primary'] = _working")
+            code_lines.append(f"        # --- Default Primary Output Registration ---")
+            code_lines.append(f"        if 'primary' not in outputs:")
+            code_lines.append(f"            outputs['primary'] = _working")
 
         # Publication Eligibility Boundary & Identity Stripping
-        code_lines.append(f"    # --- Publication Eligibility Boundary & Identity Stripping ---")
-        code_lines.append(f"    _primary_key = {repr(primary_ref)} if {repr(primary_ref)} else ('primary' if 'primary' in outputs else None)")
+        code_lines.append(f"        # --- Publication Eligibility Boundary & Identity Stripping ---")
+        code_lines.append(f"        _primary_key = {repr(primary_ref)} if {repr(primary_ref)} else ('primary' if 'primary' in outputs else None)")
         if not retain_in_primary:
-            code_lines.append(f"    if _primary_key and _primary_key in outputs and _identity_col in outputs[_primary_key].columns:")
+            code_lines.append(f"        if _primary_key and _primary_key in outputs and _identity_col in outputs[_primary_key].columns:")
             if published_col:
-                code_lines.append(f"        outputs[_primary_key] = outputs[_primary_key].withColumnRenamed(_identity_col, {repr(published_col)})")
+                code_lines.append(f"            outputs[_primary_key] = outputs[_primary_key].withColumnRenamed(_identity_col, {repr(published_col)})")
             else:
-                code_lines.append(f"        outputs[_primary_key] = outputs[_primary_key].drop(_identity_col)")
+                code_lines.append(f"            outputs[_primary_key] = outputs[_primary_key].drop(_identity_col)")
         else:
             if published_col:
-                code_lines.append(f"    if _primary_key and _primary_key in outputs and _identity_col in outputs[_primary_key].columns:")
-                code_lines.append(f"        outputs[_primary_key] = outputs[_primary_key].withColumnRenamed(_identity_col, {repr(published_col)})")
+                code_lines.append(f"        if _primary_key and _primary_key in outputs and _identity_col in outputs[_primary_key].columns:")
+                code_lines.append(f"            outputs[_primary_key] = outputs[_primary_key].withColumnRenamed(_identity_col, {repr(published_col)})")
 
         if not retain_in_secondary:
-            code_lines.append(f"    for _sec_ref in list(outputs.keys()):")
-            code_lines.append(f"        if _sec_ref != _primary_key and _identity_col in outputs[_sec_ref].columns:")
-            code_lines.append(f"            outputs[_sec_ref] = outputs[_sec_ref].drop(_identity_col)")
-
-        code_lines.append(f"    _entry_cached.unpersist()")
-        code_lines.append(f"    transform_datasets.validation_summaries = validation_summaries")
+            code_lines.append(f"        for _sec_ref in list(outputs.keys()):")
+            code_lines.append(f"            if _sec_ref != _primary_key and _identity_col in outputs[_sec_ref].columns:")
+            code_lines.append(f"                outputs[_sec_ref] = outputs[_sec_ref].drop(_identity_col)")
+        code_lines.append("    finally:")
+        code_lines.append("        _entry_cached.unpersist()")
+        code_lines.append("")
+        code_lines.append("    transform_datasets.validation_summaries = validation_summaries")
         code_lines.append("    return outputs")
         code_lines.append("")
 
@@ -748,6 +750,8 @@ class PySparkIRCompiler:
                     self.validation_summaries = val_summaries
                     self.primary_output = next(iter(outputs.values())) if outputs else None
                     self.publication_eligible = True
+                    self.in_memory_publication_eligible = True
+                    self.publication_scope = "IN_MEMORY_REFERENCE"
             return PySparkExecutionResult(res_dict, val_summaries)
         single_fn = loc.get("transform")
         if single_fn:
@@ -759,6 +763,8 @@ class PySparkIRCompiler:
                     self.validation_summaries = val_summaries
                     self.primary_output = primary
                     self.publication_eligible = True
+                    self.in_memory_publication_eligible = True
+                    self.publication_scope = "IN_MEMORY_REFERENCE"
             return PySparkExecutionResult(primary_out, val_summaries)
         raise RuntimeError("No valid entrypoint found in compiled PySpark artifact")
 

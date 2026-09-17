@@ -320,3 +320,38 @@ def canonical_hash_coordinate_tuple_v1(coords: Sequence[Tuple[str, Any]]) -> str
     """Computes authoritative SHA-256 hex digest over canonical coordinate tuple bytes."""
     return hashlib.sha256(canonical_encode_coordinate_tuple_v1(coords)).hexdigest()
 
+
+# Immutable test vectors for CANONICAL_COORDINATE_TUPLE_V1
+CANONICAL_TUPLE_TEST_VECTORS_V1 = [
+    {
+        "vector_id": "tuple_simple",
+        "description": "Coordinate tuple with string and integer",
+        "coords": [("part", "2026-09-01"), ("offset", 100)],
+        "expected_hex": "0854555000000000020553545200000000047061727405535452000000000a323032362d30392d30310553545200000000066f666673657402494e54000000000000000064",
+    },
+    {
+        "vector_id": "tuple_boundary_shift_1",
+        "description": "Coordinate tuple with embedded delimiter in part",
+        "coords": [("part", "a_b"), ("offset", "c")],
+        "expected_hex": "08545550000000000205535452000000000470617274055354520000000003615f620553545200000000066f666673657405535452000000000163",
+    },
+    {
+        "vector_id": "tuple_boundary_shift_2",
+        "description": "Coordinate tuple with embedded delimiter in offset",
+        "coords": [("part", "a"), ("offset", "b_c")],
+        "expected_hex": "08545550000000000205535452000000000470617274055354520000000001610553545200000000066f6666736574055354520000000003625f63",
+    },
+    {
+        "vector_id": "tuple_null_field",
+        "description": "Coordinate tuple containing a null coordinate",
+        "coords": [("part", None), ("offset", 1)],
+        "expected_hex": "085455500000000002055354520000000004706172740044484152415f4e554c4c5f56310553545200000000066f666673657402494e54000000000000000001",
+    },
+]
+
+# Cryptographic hash of CANONICAL_TUPLE_TEST_VECTORS_V1 to detect any protocol mutation
+CANONICAL_TUPLE_VECTORS_HASH_V1 = hashlib.sha256(
+    json.dumps(CANONICAL_TUPLE_TEST_VECTORS_V1, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+
+
