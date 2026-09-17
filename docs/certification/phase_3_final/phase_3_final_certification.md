@@ -166,6 +166,9 @@ All test runs completed with zero errors, zero failures, and zero skipped tests.
 > [!IMPORTANT]
 > **Zero Skipped Invariant Confirmed**: All 413 tests in the declared boundary were collected and passed. No tests were skipped, descheduled, or marked as expected failures (`xfail`).
 
+> [!NOTE]
+> **Business-Rules Suite Duration Accounting**: The recorded execution duration of 2730.33s (~45m 30s) in `business_rules_69.log` is authoritative and captured directly from the test execution log. This duration is driven by `tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules` executing un-mocked, full-dataset exploratory profiling via `ydata_profiling` (complete correlation matrix calculations, interactions, packrat parsing, and matplotlib rendering on Python 3.13), alongside end-to-end multi-dataset scenario evaluations in `test_golden_scenarios.py`.
+
 ---
 
 ## 4. Phase 3 Cryptographic Checksums & Artifact Inventory
