@@ -14,6 +14,7 @@ from agent.etl_pipeline.cross_engine.capability_models import (
 )
 from agent.etl_pipeline.cross_engine.runtime_profiles import (
     AdfRuntimeProfile,
+    AzureSqlDatabaseRuntimeProfile,
     EngineRuntimeProfile,
     PandasRuntimeProfile,
     SparkRuntimeProfile,
@@ -40,6 +41,7 @@ __all__ = [
     "EngineRuntimeProfile",
     "SparkRuntimeProfile",
     "SqlRuntimeProfile",
+    "AzureSqlDatabaseRuntimeProfile",
     "AdfRuntimeProfile",
     "PandasRuntimeProfile",
     "compute_runtime_profile_hash",

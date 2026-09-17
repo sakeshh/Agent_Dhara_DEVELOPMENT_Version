@@ -73,6 +73,59 @@ class SqlRuntimeProfile(EngineRuntimeProfile):
     regex_capabilities: str = "STANDARD"
 
 
+class AzureSqlDatabaseRuntimeProfile(EngineRuntimeProfile):
+    """Runtime profile capturing authoritative Azure SQL Database execution settings."""
+    engine_name: str = "azure_sql_database"
+    engine_version: str = "12.0.2000.8"               # SERVERPROPERTY('ProductVersion')
+    engine_edition: str = "5"                         # SERVERPROPERTY('EngineEdition') (5 = SQL Database)
+    database_engine_version: str = "Microsoft SQL Azure (RTM) - 12.0.2000.8" # @@VERSION
+    dialect: str = "tsql"
+    compatibility_level: str = "160"                  # sys.databases compatibility_level
+    database_collation: str = "SQL_Latin1_General_CP1_CI_AS" # sys.databases collation_name
+    server_collation: str = "SQL_Latin1_General_CP1_CI_AS"   # SERVERPROPERTY('Collation')
+    ansi_nulls_enabled: bool = True
+    ansi_warnings_enabled: bool = True
+    session_timezone: str = "UTC"
+    case_sensitive: bool = False                      # Derived from database_collation
+    three_valued_logic: bool = True
+    decimal_overflow_mode: str = "ERROR"              # ARITHABORT ON
+    regex_capabilities: str = "LIKE_WILDCARDS"         # LIKE, PATINDEX; no native regex
+
+    @classmethod
+    def from_captured_evidence(
+        cls,
+        engine_version: str,
+        engine_edition: str,
+        database_engine_version: str,
+        compatibility_level: str,
+        database_collation: str,
+        server_collation: Optional[str] = None,
+        ansi_nulls_enabled: bool = True,
+        ansi_warnings_enabled: bool = True,
+        session_timezone: str = "UTC",
+        three_valued_logic: bool = True,
+        decimal_overflow_mode: str = "ERROR",
+    ) -> AzureSqlDatabaseRuntimeProfile:
+        """Construct a validated profile dynamically from captured SQL query evidence."""
+        case_sens = "_CS_" in database_collation.upper() or "_BIN" in database_collation.upper()
+        return cls(
+            engine_name="azure_sql_database",
+            engine_version=str(engine_version),
+            engine_edition=str(engine_edition),
+            database_engine_version=str(database_engine_version),
+            dialect="tsql",
+            compatibility_level=str(compatibility_level),
+            database_collation=str(database_collation),
+            server_collation=str(server_collation or database_collation),
+            ansi_nulls_enabled=ansi_nulls_enabled,
+            ansi_warnings_enabled=ansi_warnings_enabled,
+            session_timezone=session_timezone,
+            case_sensitive=case_sens,
+            three_valued_logic=three_valued_logic,
+            decimal_overflow_mode=decimal_overflow_mode,
+        )
+
+
 class AdfRuntimeProfile(EngineRuntimeProfile):
     """Runtime profile capturing Azure Data Factory Mapping Data Flow environment settings."""
     engine_name: str = "adf"
