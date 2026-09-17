@@ -3133,7 +3133,7 @@ def register_pyspark_scalar_capabilities(
 def register_pyspark_increment_33_capabilities(
     registry: Optional[EngineCapabilityRegistry] = None,
     profile: Optional[SparkRuntimeProfile] = None,
-    certification_commit: str = "PENDING_INCREMENT_33",
+    certification_commit: str = "1d04653980f603220bdc85a55863526446df03b4",
 ) -> None:
     """
     Registers certified capabilities for PySpark IR Compiler Increment 3.3
