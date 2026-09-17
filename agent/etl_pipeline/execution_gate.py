@@ -20,6 +20,7 @@ from agent.etl_pipeline.cross_engine.capability_models import (
 )
 from agent.etl_pipeline.cross_engine.capability_registry import (
     EngineCapabilityRegistry,
+    get_global_capability_registry,
 )
 from agent.etl_pipeline.secure_manifest import (
     ArtifactSigner,
@@ -112,18 +113,19 @@ class ExecutionPreflightGate:
     FROZEN_ENGINES: Dict[str, Set[str]] = {
         "pandas": {"2.2+", "2.2.0", "2.2.1", "2.2.2", "2.2.3"},
         "pyspark": {"3.5.1"},
-        "azure_sql_database": {"12.0.2000.8"},
+        "azure_sql_database": {"12.0.2000.8", "160"},
+        "azure_sql": {"160", "12.0.2000.8"},
         "azure_data_factory": {"v2"},
     }
 
     def __init__(
         self,
-        trusted_keyring: Dict[str, ed25519.Ed25519PublicKey],
-        capability_registry: EngineCapabilityRegistry,
+        trusted_keyring: Optional[Dict[str, ed25519.Ed25519PublicKey]] = None,
+        capability_registry: Optional[EngineCapabilityRegistry] = None,
         revocation_store: Optional[RevocationStore] = None,
     ):
-        self.trusted_keyring = trusted_keyring
-        self.capability_registry = capability_registry
+        self.trusted_keyring = trusted_keyring or {}
+        self.capability_registry = capability_registry or get_global_capability_registry()
         self.revocation_store = revocation_store or RevocationStore()
 
     def evaluate_preflight(
