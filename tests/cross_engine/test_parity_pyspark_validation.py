@@ -62,19 +62,7 @@ from tests.cross_engine.assertions import (
 )
 
 
-@pytest.fixture(scope="module")
-def spark_session():
-    """Initializes an isolated local SparkSession under the certified local[1] profile."""
-    spark = (
-        SparkSession.builder.master("local[1]")
-        .appName("AgentDhara_Increment32_Validation_Parity")
-        .config("spark.ui.enabled", "false")
-        .config("spark.sql.shuffle.partitions", "1")
-        .config("spark.default.parallelism", "1")
-        .getOrCreate()
-    )
-    yield spark
-    spark.stop()
+
 
 
 def df_to_spark(spark: SparkSession, pdf: pd.DataFrame):

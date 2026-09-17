@@ -108,18 +108,7 @@ from tests.cross_engine.assertions import (
 # Spark Test Fixture & Ingestion Helpers
 # ============================================================================
 
-@pytest.fixture(scope="module")
-def spark_session():
-    """Module-scoped SparkSession with JVM local master."""
-    spark = (
-        SparkSession.builder
-        .master("local[1]")
-        .appName("dhara_pyspark_parity_test")
-        .config("spark.ui.enabled", "false")
-        .getOrCreate()
-    )
-    yield spark
-    spark.stop()
+
 
 
 def df_to_spark(spark: SparkSession, pdf: pd.DataFrame):
