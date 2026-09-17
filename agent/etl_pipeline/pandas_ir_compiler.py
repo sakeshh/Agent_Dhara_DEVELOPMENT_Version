@@ -213,6 +213,11 @@ class RowExpansionLimitExceededError(ValueError):
     pass
 
 
+class JoinCardinalityViolationError(ValueError):
+    """Raised when join input key uniqueness does not satisfy declared cardinality (ONE_TO_ONE, ONE_TO_MANY, MANY_TO_ONE)."""
+    pass
+
+
 class PublicationPostconditionError(ValueError):
     """Raised when a postcondition or schema assertion fails during publication validation."""
     pass
@@ -598,6 +603,10 @@ class PandasIRCompiler:
             "    RowExpansionLimitExceededError",
             "except NameError:",
             "    class RowExpansionLimitExceededError(ValueError): pass",
+            "try:",
+            "    JoinCardinalityViolationError",
+            "except NameError:",
+            "    class JoinCardinalityViolationError(ValueError): pass",
             "",
             "def transform_datasets(df, key_provider=None) -> dict[str, pd.DataFrame]:",
             "    if isinstance(df, dict):",
@@ -2259,12 +2268,12 @@ class PandasIRCompiler:
                 lines.append(f"    raise ValueError('Null join keys encountered under FAIL_STEP_ON_NULL_KEY policy')")
 
             if expr.cardinality == JoinCardinality.ONE_TO_ONE:
-                lines.append(f"if _l_frame.duplicated(subset={repr(l_keys)}).any(): raise ValueError('Left table has duplicate keys under ONE_TO_ONE join')")
-                lines.append(f"if _r_frame.duplicated(subset={repr(r_keys)}).any(): raise ValueError('Right table has duplicate keys under ONE_TO_ONE join')")
+                lines.append(f"if _l_frame.duplicated(subset={repr(l_keys)}).any(): raise JoinCardinalityViolationError('Left table has duplicate keys under ONE_TO_ONE join')")
+                lines.append(f"if _r_frame.duplicated(subset={repr(r_keys)}).any(): raise JoinCardinalityViolationError('Right table has duplicate keys under ONE_TO_ONE join')")
             elif expr.cardinality == JoinCardinality.ONE_TO_MANY:
-                lines.append(f"if _l_frame.duplicated(subset={repr(l_keys)}).any(): raise ValueError('Left table has duplicate keys under ONE_TO_MANY join')")
+                lines.append(f"if _l_frame.duplicated(subset={repr(l_keys)}).any(): raise JoinCardinalityViolationError('Left table has duplicate keys under ONE_TO_MANY join')")
             elif expr.cardinality == JoinCardinality.MANY_TO_ONE:
-                lines.append(f"if _r_frame.duplicated(subset={repr(r_keys)}).any(): raise ValueError('Right table has duplicate keys under MANY_TO_ONE join')")
+                lines.append(f"if _r_frame.duplicated(subset={repr(r_keys)}).any(): raise JoinCardinalityViolationError('Right table has duplicate keys under MANY_TO_ONE join')")
 
         if expr.join_type == JoinType.CROSS:
             lines.append(f"_joined_{clean_id} = pd.merge(_l_frame, _r_frame, how='cross', suffixes=({repr(expr.left_suffix)}, {repr(expr.right_suffix)}))")
@@ -2619,6 +2628,7 @@ def execute_with_publication_contracts(
         "KeyProviderRequiredError": KeyProviderRequiredError,
         "SecretResolutionError": SecretResolutionError,
         "RowExpansionLimitExceededError": RowExpansionLimitExceededError,
+        "JoinCardinalityViolationError": JoinCardinalityViolationError,
     }
     exec(compile_res.artifact.source_code, exec_scope)
     transform_fn = exec_scope.get("transform_datasets")

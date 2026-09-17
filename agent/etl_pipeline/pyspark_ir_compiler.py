@@ -65,6 +65,7 @@ from agent.etl_pipeline.cross_engine.runtime_profiles import (
 from agent.etl_pipeline.pandas_ir_compiler import (
     CompilerAccountingError,
     CompilerStepDisposition,
+    JoinCardinalityViolationError,
     PreimageBinding,
     RowExpansionLimitExceededError,
 )
@@ -373,12 +374,12 @@ class PySparkIRCompiler:
                     diagnostics.append(f"Step '{sid}' StepAuthorization step_hash mismatch (UnauthorizedDestructiveActionError)")
                     continue
 
-            # B1b. CROSS Join Authorization Check (elevated authorization required)
+            # B1b. CROSS Join Authorization Check (elevated StepAuthorization envelope required)
             if isinstance(step.expression, JoinExpression) and step.expression.join_type == JoinType.CROSS:
                 auth = step.authorization
                 if not auth:
                     step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
-                    diagnostics.append(f"Step '{sid}' CROSS join requires elevated StepAuthorization (JoinAuthorizationError)")
+                    diagnostics.append(f"Step '{sid}' CROSS join requires elevated StepAuthorization envelope (JoinAuthorizationError)")
                     continue
                 if auth.step_id != sid:
                     step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
@@ -387,6 +388,18 @@ class PySparkIRCompiler:
                 if auth.expires_at < datetime.now(timezone.utc):
                     step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
                     diagnostics.append(f"Step '{sid}' CROSS join StepAuthorization is expired (JoinAuthorizationError)")
+                    continue
+                if not auth.policy_decision_id:
+                    step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                    diagnostics.append(f"Step '{sid}' CROSS join StepAuthorization missing policy_decision_id (JoinAuthorizationError)")
+                    continue
+                if not auth.approved_by_subject_id:
+                    step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                    diagnostics.append(f"Step '{sid}' CROSS join StepAuthorization missing approved_by_subject_id (JoinAuthorizationError)")
+                    continue
+                if auth.authorized_step_hash and hasattr(step, "semantic_hash") and auth.authorized_step_hash != step.semantic_hash:
+                    step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                    diagnostics.append(f"Step '{sid}' CROSS join StepAuthorization step_hash mismatch (JoinAuthorizationError)")
                     continue
 
             # B1c. Join Suffix Collision Preflight Check
@@ -611,7 +624,7 @@ class PySparkIRCompiler:
             "from pyspark.sql import types as T",
             "from pyspark.sql.window import Window",
             "from agent.etl_pipeline.transformation_ir import compute_canonical_schema_hash",
-            "from agent.etl_pipeline.pandas_ir_compiler import RowExpansionLimitExceededError",
+            "from agent.etl_pipeline.pandas_ir_compiler import RowExpansionLimitExceededError, JoinCardinalityViolationError",
             "",
             "def transform_datasets(datasets, key_provider=None):",
             "    if isinstance(datasets, dict):",
@@ -825,7 +838,10 @@ class PySparkIRCompiler:
         comp_res = self.compile(graph)
         if not comp_res.is_success or comp_res.artifact is None:
             raise RuntimeError(f"PySpark compilation failed: {comp_res.diagnostics}")
-        loc: Dict[str, Any] = {"RowExpansionLimitExceededError": RowExpansionLimitExceededError}
+        loc: Dict[str, Any] = {
+            "RowExpansionLimitExceededError": RowExpansionLimitExceededError,
+            "JoinCardinalityViolationError": JoinCardinalityViolationError,
+        }
         exec(comp_res.artifact.source_code, loc)
         datasets_fn = loc.get("transform_datasets")
         if datasets_fn:
@@ -2111,6 +2127,8 @@ class PySparkIRCompiler:
             jt = expr.join_type.value if hasattr(expr.join_type, "value") else str(expr.join_type)
             return f"JOIN_{jt.upper()}"
         if isinstance(expr, AggregateExpression):
+            if any(agg.operation == AggregateOp.MEDIAN for agg in expr.aggregates):
+                return "MEDIAN_APPROX"
             return "AGGREGATE"
         # DeriveExpression union members
         if hasattr(expr, "expression_type") and getattr(expr, "expression_type", None) == "derive":
@@ -2292,7 +2310,7 @@ class PySparkIRCompiler:
                 lines.append(
                     f'if _left_df_card.select(*_left_key_cols).groupBy(*_left_key_cols).count()'
                     f'.filter("count > 1").limit(1).count() > 0: '
-                    f'raise ValueError("Left table has duplicate keys under {cardinality.value} for step {step_id}")')
+                    f'raise JoinCardinalityViolationError("Left table has duplicate keys under {cardinality.value} for step {step_id}")')
             if cardinality in (JoinCardinality.ONE_TO_ONE, JoinCardinality.MANY_TO_ONE):
                 # Right keys must be unique
                 right_key_list = repr([kp.right.column_name if hasattr(kp.right, "column_name") else str(kp.right) for kp in expr.key_pairs])
@@ -2304,7 +2322,7 @@ class PySparkIRCompiler:
                 lines.append(
                     f'if _right_df_card.select(*_right_key_cols).groupBy(*_right_key_cols).count()'
                     f'.filter("count > 1").limit(1).count() > 0: '
-                    f'raise ValueError("Right table has duplicate keys under {cardinality.value} for step {step_id}")')
+                    f'raise JoinCardinalityViolationError("Right table has duplicate keys under {cardinality.value} for step {step_id}")')
 
         # ---- Column collision resolution (pre-rename colliding non-key columns in right table) ----
         if jt not in (JoinType.SEMI, JoinType.ANTI, JoinType.CROSS):
@@ -2917,7 +2935,7 @@ class PySparkInMemoryPublicationAdapter:
                 f"Adapter in state {self._state!r}; operation requires one of {allowed}")
 
     def stage(self, staging_id: str, outputs: Mapping[str, Any]) -> PublicationStageHandle:
-        self._require_state(_AdapterState.NEW, _AdapterState.COMMITTED, _AdapterState.ABORTED)
+        self._require_state(_AdapterState.NEW)
         self._state = _AdapterState.STAGING
         self._staged = dict(outputs)
         output_refs = list(outputs.keys())
@@ -3166,6 +3184,7 @@ def register_pyspark_increment_33_capabilities(
         (ActionFamily.EXTRACT, "EXTRACT_JSON_PATH"),
         # AGGREGATE
         (ActionFamily.AGGREGATE, "AGGREGATE"),
+        (ActionFamily.AGGREGATE, "MEDIAN_APPROX"),
     ]
 
     for family, subtype in increment_33_capabilities:

@@ -36,6 +36,7 @@ from pyspark.sql import SparkSession
 
 from agent.etl_pipeline.codegen_shared import CodegenStatus
 from agent.etl_pipeline.pandas_ir_compiler import (
+    JoinCardinalityViolationError,
     PandasIRCompiler,
     RowExpansionLimitExceededError,
 )
@@ -43,6 +44,7 @@ from agent.etl_pipeline.pyspark_ir_compiler import (
     PySparkIRCompiler,
     PySparkInMemoryPublicationAdapter,
     PySparkPublicationPostconditionError,
+    PySparkPublicationStateError,
     execute_pyspark_with_publication_contracts,
 )
 from agent.etl_pipeline.transformation_ir import (
@@ -478,7 +480,7 @@ def test_pyspark_join_inner_and_cardinality_guard(spark_session):
     s_orders = df_to_spark(spark_session, df_orders_dup)
     s_items = df_to_spark(spark_session, df_items)
 
-    with pytest.raises(Exception, match="Left table has duplicate keys under one_to_many"):
+    with pytest.raises(JoinCardinalityViolationError, match="Left table has duplicate keys under one_to_many"):
         PySparkIRCompiler().execute(graph, {"orders": s_orders, "items": s_items})
 
 
@@ -497,7 +499,7 @@ def test_pyspark_join_cardinality_one_to_one_rejection(spark_session):
     s_users = df_to_spark(spark_session, df_users)
     s_profiles = df_to_spark(spark_session, df_profiles_dup)
 
-    with pytest.raises(Exception, match="Right table has duplicate keys under one_to_one"):
+    with pytest.raises(JoinCardinalityViolationError, match="Right table has duplicate keys under one_to_one"):
         PySparkIRCompiler().execute(graph, {"users": s_users, "profiles": s_profiles})
 
 
@@ -580,10 +582,14 @@ def test_pyspark_cross_join_predicted_limit_blocks_before_join(spark_session):
         left_dataset="d1", right_dataset="d2", join_type=JoinType.CROSS,
         max_output_row_count=5,
     )
+    step_probe = TransformationStepIR(
+        step_id="s_cj_ok", dataset_name="d1", family=ActionFamily.JOIN,
+        kind=StepKind.MULTI_DATASET_JOIN, expression=expr
+    )
     auth = StepAuthorization(
         step_id="s_cj_ok", policy_decision_id="pol_cj", approved_by_subject_id="admin",
         tenant_id="t1", expires_at=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1),
-        authorized_step_hash="dummy_hash",
+        authorized_step_hash=step_probe.semantic_hash,
     )
     step = TransformationStepIR(
         step_id="s_cj_ok", dataset_name="d1", family=ActionFamily.JOIN,
@@ -1015,17 +1021,33 @@ def test_pyspark_publication_commit_and_abort_idempotency(spark_session):
     assert commit_res.is_committed
     assert len(adapter._published) >= 1
 
-    # Second commit call with dummy handle is idempotent
+    # Second commit call with existing commit result is idempotent
     second_commit = adapter.commit(commit_res)
     assert second_commit.is_committed
 
+    # Abort after COMMITTED is rejected (cannot abort committed publication)
+    with pytest.raises(PySparkPublicationStateError):
+        adapter.abort()
+
+    # Stage after COMMITTED is rejected
+    with pytest.raises(PySparkPublicationStateError):
+        adapter.stage("s_post_commit", {"d": sdf})
+
     # Abort on a fresh adapter is idempotent
     adapter2 = PySparkInMemoryPublicationAdapter()
-    adapter2.stage("s1", {"d": sdf})
+    h2 = adapter2.stage("s1", {"d": sdf})
     adapter2.abort()
     # Repeated abort call is a no-op
     adapter2.abort()
     assert adapter2._state == "ABORTED"
+
+    # Commit after ABORTED is rejected
+    with pytest.raises(PySparkPublicationStateError):
+        adapter2.commit(h2)
+
+    # Stage after ABORTED is rejected
+    with pytest.raises(PySparkPublicationStateError):
+        adapter2.stage("s_post_abort", {"d": sdf})
 
 
 # ============================================================================
