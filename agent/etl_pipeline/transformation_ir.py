@@ -1449,6 +1449,7 @@ class HashExpression(BaseModel):
     salt_value: Optional[str] = None
     salt_reference: Optional[str] = None
     input_encoding: HashInputEncoding = HashInputEncoding.CANONICAL_SCALAR_V1
+    input_data_type: Optional[DataType] = None
     unicode_normalization: Literal["NFC", "NFKC"] = "NFC"
     output_encoding: DigestEncoding = DigestEncoding.HEX
     null_policy: HashNullPolicy = HashNullPolicy.PRESERVE_NULL

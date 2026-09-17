@@ -25,6 +25,8 @@ class CapabilityStatus(str, Enum):
     NOT_TESTED = "not_tested"                # Support unestablished; strictly blocked
     UNSUPPORTED = "unsupported"              # Known unachievable or prohibited semantics; strictly blocked
     ORCHESTRATION_ONLY = "orchestration_only"  # Supports external activity dispatch, no transform execution
+    DEFERRED_WITH_APPROVED_SCOPE = "deferred_with_approved_scope"  # Formally deferred engine/scope; strictly non-executable
+    VERIFIED_ORCHESTRATION = "verified_orchestration"  # Certified control-plane activity dispatch boundary
 
 
 class EngineCapabilityKey(BaseModel):
@@ -88,7 +90,7 @@ class CapabilityDecision(BaseModel):
         """
         waiver_req = (status == CapabilityStatus.PARTIAL)
         eligible = False
-        if status == CapabilityStatus.VERIFIED:
+        if status in (CapabilityStatus.VERIFIED, CapabilityStatus.VERIFIED_ORCHESTRATION):
             eligible = True
         elif status == CapabilityStatus.PARTIAL and waiver_granted:
             eligible = True
