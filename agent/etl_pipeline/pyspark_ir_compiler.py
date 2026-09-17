@@ -73,41 +73,92 @@ from agent.etl_pipeline.transformation_ir import (
     BinaryOp,
     BinaryOperator,
     BooleanFormatSpec,
+    CastColumnExpression,
+    CastFailurePolicy,
     ClipExpression,
     ClipNullPolicy,
+    CollisionPolicy,
+    ColumnDropSpec,
+    ColumnProjectSpec,
+    ColumnProtectionClass,
     ColumnRef,
+    ColumnRenameSpec,
+    ColumnRole,
     ConditionalReplaceExpression,
+    CreateColumnExpression,
     DataType,
     DateFormatSpec,
     DatasetSchema,
+    DeduplicateExpression,
+    DeduplicationTieBreaker,
+    DigestEncoding,
+    DropColumnsExpression,
+    DuplicateExportMode,
+    EmailMaskDomainPolicy,
+    ExistingColumnPolicy,
+    FilterDropPolicy,
+    FilterExpression,
+    FilterUnknownPolicy,
     FlagExpression,
     GroupedImputationStrategy,
     GroupedImputationValue,
+    HashAlgorithm,
+    HashExpression,
+    HashInputEncoding,
+    HashMode,
+    HashNullPolicy,
     ImputationModelIntegrityError,
     ImputeExpression,
     InfinityPolicy,
     InSetPredicate,
     LearnedImputationModel,
     LiteralValue,
+    MaskExpression,
+    MaskNullPolicy,
+    MaskStrategy,
     MissingGroupPolicy,
     NonexistentTimePolicy,
     NullCheck,
+    NullKeyPolicy,
     NumericFormatSpec,
+    NumericOverflowPolicy,
+    OccurrenceIdentityScope,
+    OrderDirection,
     ParseExpression,
     ParseFailurePolicy,
     ParseOutputMode,
     PassThroughExpression,
     PredicateUnknownPolicy,
+    ProjectColumnsExpression,
+    QuarantineExpression,
+    QuarantineUnknownPolicy,
+    RenameColumnsExpression,
+    ReorderColumnsExpression,
+    RoutingIdentityPolicy,
+    RoutingMode,
+    RowIdentityStrategy,
     ScalarMapExpression,
     ScalarMapOperation,
+    SchemaMutationExpression,
+    SchemaMutationOp,
+    SecretReference,
+    ShortValuePolicy,
+    SortColumnSpec,
+    SourceStableIdentitySpec,
     StatisticalImputationStrategy,
+    StepAuthorization,
     TemporalParseTarget,
     TransformationIRGraph,
     TransformationStepIR,
     UnboundedInfinityPolicy,
     UnmappedValuePolicy,
+    ValidateExpression,
+    ValidateSeverity,
+    ValidationUnknownPolicy,
     ValueVersion,
+    compute_canonical_schema_hash,
     compute_model_snapshot_hash,
+    is_column_effectively_protected,
     verify_imputation_model,
 )
 
@@ -188,6 +239,13 @@ class PySparkIRCompiler:
         ActionFamily.STANDARDIZE,
         ActionFamily.PARSE,
         ActionFamily.IMPUTE,
+        ActionFamily.VALIDATE,
+        ActionFamily.QUARANTINE,
+        ActionFamily.FILTER,
+        ActionFamily.DEDUPLICATE,
+        ActionFamily.SCHEMA_MUTATION,
+        ActionFamily.MASK,
+        ActionFamily.HASH,
     }
 
     CONTROL_FAMILIES = {
@@ -234,8 +292,104 @@ class PySparkIRCompiler:
             # B. Supported Executable Families Check
             if family not in self.SUPPORTED_FAMILIES:
                 step_dispositions[sid] = CompilerStepDisposition.UNSUPPORTED
-                diagnostics.append(f"Step '{sid}' uses family '{family.value}' which is not implemented in {self.COMPILER_NAME} Increment 3.1")
+                diagnostics.append(f"Step '{sid}' uses family '{family.value}' which is not implemented in {self.COMPILER_NAME}")
                 continue
+
+            # B1. Destructive Action Authorization Check
+            if isinstance(step.expression, SchemaMutationExpression) and step.expression.op == SchemaMutationOp.DROP_COLUMN:
+                auth = step.authorization
+                if not auth:
+                    step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                    diagnostics.append(f"Step '{sid}' destructive drop requires a valid StepAuthorization (UnauthorizedDestructiveActionError)")
+                    continue
+                if auth.expires_at < datetime.now(timezone.utc):
+                    step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                    diagnostics.append(f"Step '{sid}' StepAuthorization is expired (UnauthorizedDestructiveActionError)")
+                    continue
+                if auth.authorized_step_hash and auth.authorized_step_hash != step.semantic_hash:
+                    step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                    diagnostics.append(f"Step '{sid}' StepAuthorization step_hash mismatch (UnauthorizedDestructiveActionError)")
+                    continue
+
+            # B2. Static Schema Binding Checks for SchemaMutation
+            if isinstance(step.expression, SchemaMutationExpression):
+                ds_name = step.dataset_name or "primary"
+                ds_schema = self.schemas.get(ds_name)
+                if ds_schema:
+                    expr_mut = step.expression
+                    if expr_mut.op == SchemaMutationOp.DROP_COLUMN:
+                        drop_cols = [d.column for d in expr_mut.drops] if expr_mut.drops else ([expr_mut.target_column] if expr_mut.target_column else [])
+                        failed_drop = False
+                        for dc in drop_cols:
+                            if dc not in ds_schema.columns:
+                                step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
+                                diagnostics.append(f"Step '{sid}' attempts to drop non-existent column '{dc}' (SCHEMA_BINDING_FAILURE)")
+                                failed_drop = True
+                                break
+                            col_meta = ds_schema.columns[dc]
+                            if is_column_effectively_protected(col_meta):
+                                step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
+                                diagnostics.append(f"Step '{sid}' attempts to drop protected column '{dc}' (ProtectedColumnDropError)")
+                                failed_drop = True
+                                break
+                        if failed_drop:
+                            continue
+
+                    elif expr_mut.op == SchemaMutationOp.RENAME_COLUMN:
+                        failed_ren = False
+                        for r in expr_mut.renames:
+                            if r.old_name not in ds_schema.columns:
+                                step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
+                                diagnostics.append(f"Step '{sid}' attempts to rename non-existent column '{r.old_name}' (SCHEMA_BINDING_FAILURE)")
+                                failed_ren = True
+                                break
+                            if r.new_name in ds_schema.columns and r.new_name != r.old_name:
+                                step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
+                                diagnostics.append(f"Step '{sid}' rename target '{r.new_name}' collides with existing column (SCHEMA_BINDING_FAILURE)")
+                                failed_ren = True
+                                break
+                        if failed_ren:
+                            continue
+
+                    elif expr_mut.op == SchemaMutationOp.PROJECT:
+                        if expr_mut.projection:
+                            failed_proj = False
+                            proj_set = set(expr_mut.projection.projected_columns)
+                            if not expr_mut.projection.allow_missing:
+                                for pc in expr_mut.projection.projected_columns:
+                                    if pc not in ds_schema.columns:
+                                        step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
+                                        diagnostics.append(f"Step '{sid}' projected column '{pc}' not in schema (SCHEMA_BINDING_FAILURE)")
+                                        failed_proj = True
+                                        break
+                            if failed_proj:
+                                continue
+                            # Protected columns check: PROJECT cannot drop protected column by excluding it
+                            for col_name, col_meta in ds_schema.columns.items():
+                                if col_name not in proj_set and is_column_effectively_protected(col_meta):
+                                    step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
+                                    diagnostics.append(f"Step '{sid}' PROJECT excludes protected column '{col_name}' (ProtectedColumnDropError)")
+                                    failed_proj = True
+                                    break
+                            if failed_proj:
+                                continue
+
+            # B3. Preflight Checks for HashExpression
+            if isinstance(step.expression, HashExpression):
+                expr_hash = step.expression
+                if expr_hash.mode == HashMode.HMAC:
+                    step_dispositions[sid] = CompilerStepDisposition.UNSUPPORTED
+                    diagnostics.append(f"Step '{sid}' uses HMAC mode which is REFERENCE_TEST_ONLY and not supported in {self.COMPILER_NAME}")
+                    continue
+                ds_name = step.dataset_name or "primary"
+                ds_schema = self.schemas.get(ds_name)
+                in_col = expr_hash.source_column or (expr_hash.input_column.column_name if expr_hash.input_column else "")
+                if ds_schema and in_col in ds_schema.columns:
+                    col_dtype = ds_schema.columns[in_col].logical_type
+                    if col_dtype == DataType.STRING:
+                        step_dispositions[sid] = CompilerStepDisposition.UNSUPPORTED
+                        diagnostics.append(f"Step '{sid}' attempts canonical hashing on STRING column '{in_col}' which is blocked (NOT_TESTED) pending Unicode NFC normalization contract")
+                        continue
 
             # C. Preflight Capability Check via Registry
             sub_type = self._derive_expression_subtype(step.expression)
@@ -335,6 +489,8 @@ class PySparkIRCompiler:
             "from pyspark.sql import DataFrame",
             "from pyspark.sql import functions as F",
             "from pyspark.sql import types as T",
+            "from pyspark.sql.window import Window",
+            "from agent.etl_pipeline.transformation_ir import compute_canonical_schema_hash",
             "",
             "def transform_datasets(datasets, key_provider=None):",
             "    if isinstance(datasets, dict):",
@@ -345,8 +501,41 @@ class PySparkIRCompiler:
             "        _datasets = {'primary': _working}",
             "",
             "    outputs = {}",
+            "    validation_summaries = {}",
             "",
         ]
+
+        # Occurrence Identity Lifecycle
+        policy = graph.routing_identity_policy
+        scope = policy.scope if policy else OccurrenceIdentityScope.EXECUTION_LOCAL
+        spec = policy.source_stable_spec if policy else None
+        internal_col = policy.internal_column if policy else "__dhara_row_occurrence_0"
+        retain_in_primary = policy.retain_in_primary_output if policy else False
+        retain_in_secondary = policy.retain_in_secondary_outputs if policy else True
+        published_col = policy.published_column if policy else None
+
+        code_lines.append(f"    # --- Occurrence Identity Lifecycle ({scope.value}) ---")
+        code_lines.append(f"    _identity_col = {repr(internal_col)}")
+        if scope == OccurrenceIdentityScope.SOURCE_STABLE and spec:
+            parts = [
+                f"F.lit({repr(spec.snapshot_id)})",
+                f"F.col({repr(spec.partition_column)}).cast('string')",
+                f"F.col({repr(spec.row_offset_column)}).cast('string')",
+            ]
+            if spec.source_file_column:
+                parts.append(f"F.col({repr(spec.source_file_column)}).cast('string')")
+            if spec.ingestion_run_column:
+                parts.append(f"F.col({repr(spec.ingestion_run_column)}).cast('string')")
+            parts_expr = ", ".join(parts)
+            code_lines.append(f"    _working = _working.withColumn(_identity_col, F.concat_ws('_', {parts_expr}))")
+            code_lines.append(f"    _working = _working.cache()")
+            code_lines.append(f"    if _working.groupBy(_identity_col).count().filter('count > 1').limit(1).count() > 0:")
+            code_lines.append(f"        raise ValueError('Duplicate source-stable coordinates detected in input DataFrame')")
+        else:
+            # EXECUTION_LOCAL: monotonically_increasing_id bound once at graph entry and cached!
+            code_lines.append(f"    _working = _working.withColumn(_identity_col, F.monotonically_increasing_id())")
+            code_lines.append(f"    _working = _working.cache()")
+        code_lines.append("")
 
         # Preamble: Selective Series Pre-images
         if preimage_bindings:
@@ -390,6 +579,26 @@ class PySparkIRCompiler:
             code_lines.append(f"    if 'primary' not in outputs:")
             code_lines.append(f"        outputs['primary'] = _working")
 
+        # Publication Eligibility Boundary & Identity Stripping
+        code_lines.append(f"    # --- Publication Eligibility Boundary & Identity Stripping ---")
+        code_lines.append(f"    _primary_key = {repr(primary_ref)} if {repr(primary_ref)} else ('primary' if 'primary' in outputs else None)")
+        if not retain_in_primary:
+            code_lines.append(f"    if _primary_key and _primary_key in outputs and _identity_col in outputs[_primary_key].columns:")
+            if published_col:
+                code_lines.append(f"        outputs[_primary_key] = outputs[_primary_key].withColumnRenamed(_identity_col, {repr(published_col)})")
+            else:
+                code_lines.append(f"        outputs[_primary_key] = outputs[_primary_key].drop(_identity_col)")
+        else:
+            if published_col:
+                code_lines.append(f"    if _primary_key and _primary_key in outputs and _identity_col in outputs[_primary_key].columns:")
+                code_lines.append(f"        outputs[_primary_key] = outputs[_primary_key].withColumnRenamed(_identity_col, {repr(published_col)})")
+
+        if not retain_in_secondary:
+            code_lines.append(f"    for _sec_ref in list(outputs.keys()):")
+            code_lines.append(f"        if _sec_ref != _primary_key and _identity_col in outputs[_sec_ref].columns:")
+            code_lines.append(f"            outputs[_sec_ref] = outputs[_sec_ref].drop(_identity_col)")
+
+        code_lines.append(f"    transform_datasets.validation_summaries = validation_summaries")
         code_lines.append("    return outputs")
         code_lines.append("")
 
@@ -466,19 +675,23 @@ class PySparkIRCompiler:
         datasets_fn = loc.get("transform_datasets")
         if datasets_fn:
             res_dict = datasets_fn(df, key_provider=key_provider)
+            val_summaries = getattr(datasets_fn, "validation_summaries", {})
             class PySparkExecutionResult:
-                def __init__(self, outputs: Dict[str, Any]):
+                def __init__(self, outputs: Dict[str, Any], val_summaries: Dict[str, Any]):
                     self.outputs = outputs
+                    self.validation_summaries = val_summaries
                     self.primary_output = next(iter(outputs.values())) if outputs else None
-            return PySparkExecutionResult(res_dict)
+            return PySparkExecutionResult(res_dict, val_summaries)
         single_fn = loc.get("transform")
         if single_fn:
             primary_out = single_fn(df, key_provider=key_provider)
+            val_summaries = getattr(loc.get("transform_datasets"), "validation_summaries", {})
             class PySparkExecutionResult:
-                def __init__(self, primary: Any):
+                def __init__(self, primary: Any, val_summaries: Dict[str, Any]):
                     self.outputs = {"primary": primary}
+                    self.validation_summaries = val_summaries
                     self.primary_output = primary
-            return PySparkExecutionResult(primary_out)
+            return PySparkExecutionResult(primary_out, val_summaries)
         raise RuntimeError("No valid entrypoint found in compiled PySpark artifact")
 
     # ------------------------------------------------------------------------
@@ -516,6 +729,34 @@ class PySparkIRCompiler:
         # 6. PARSE
         if isinstance(expr, ParseExpression):
             return self._emit_parse(expr, preimages, df_var, step_id=step.step_id)
+
+        # 7. VALIDATE
+        if isinstance(expr, ValidateExpression):
+            return self._emit_validate(expr, preimages, df_var, step_id=step.step_id)
+
+        # 8. QUARANTINE
+        if isinstance(expr, QuarantineExpression):
+            return self._emit_quarantine(expr, preimages, df_var, step_id=step.step_id)
+
+        # 9. FILTER
+        if isinstance(expr, FilterExpression):
+            return self._emit_filter(expr, preimages, df_var, step_id=step.step_id)
+
+        # 10. DEDUPLICATE
+        if isinstance(expr, DeduplicateExpression):
+            return self._emit_deduplicate(expr, preimages, df_var, step_id=step.step_id)
+
+        # 11. SCHEMA_MUTATION
+        if isinstance(expr, SchemaMutationExpression):
+            return self._emit_schema_mutation(expr, preimages, df_var, step_id=step.step_id)
+
+        # 12. MASK
+        if isinstance(expr, MaskExpression):
+            return self._emit_mask(expr, preimages, df_var, step_id=step.step_id)
+
+        # 13. HASH
+        if isinstance(expr, HashExpression):
+            return self._emit_hash(expr, preimages, df_var, step_id=step.step_id)
 
         return [f"# Unsupported expression: {type(expr).__name__}"]
 
@@ -1044,6 +1285,545 @@ class PySparkIRCompiler:
 
         return lines
 
+    def _emit_validate(
+        self,
+        expr: ValidateExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        cond_expr = self._emit_spark_expression(expr.predicate, preimages)
+        clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', step_id)
+        reason = expr.reason_code or expr.rejection_reason_code or "VALIDATION_RULE_VIOLATED"
+
+        reads = expr.predicate.extract_reads()
+        if isinstance(expr.predicate, NullCheck):
+            na_expr = f"({cond_expr}).isNull()"
+        elif reads:
+            na_parts = [f"F.col({repr(r)}).isNull()" for r in set(reads)]
+            na_expr = f"({' | '.join(na_parts)}) | ({cond_expr}).isNull()"
+        else:
+            na_expr = f"({cond_expr}).isNull()"
+
+        lines = [
+            f"# Validate Step {step_id}",
+            f"_val_na_{clean_id} = ({na_expr})",
+            f"_val_pass_{clean_id} = (~_val_na_{clean_id}) & ({cond_expr})",
+            f"_val_viol_{clean_id} = (~_val_na_{clean_id}) & (~({cond_expr}))",
+            f"_val_unk_{clean_id} = _val_na_{clean_id}",
+            f"_row_agg_{clean_id} = {df_var}.select(",
+            f"    F.count(F.lit(1)).alias('cand_cnt'),",
+            f"    F.sum(F.when(_val_pass_{clean_id}, 1).otherwise(0)).alias('pass_cnt'),",
+            f"    F.sum(F.when(_val_viol_{clean_id}, 1).otherwise(0)).alias('viol_cnt'),",
+            f"    F.sum(F.when(_val_unk_{clean_id}, 1).otherwise(0)).alias('unk_cnt'),",
+            f").first()",
+            f"_cand_{clean_id} = int((_row_agg_{clean_id}['cand_cnt'] or 0) if _row_agg_{clean_id} else 0)",
+            f"_pass_{clean_id} = int((_row_agg_{clean_id}['pass_cnt'] or 0) if _row_agg_{clean_id} else 0)",
+            f"_viol_{clean_id} = int((_row_agg_{clean_id}['viol_cnt'] or 0) if _row_agg_{clean_id} else 0)",
+            f"_unk_{clean_id} = int((_row_agg_{clean_id}['unk_cnt'] or 0) if _row_agg_{clean_id} else 0)",
+        ]
+
+        if expr.unknown_policy == ValidationUnknownPolicy.COUNT_AS_VIOLATION:
+            lines.append(f"_eff_viol_{clean_id} = _viol_{clean_id} + _unk_{clean_id}")
+        elif expr.unknown_policy in (ValidationUnknownPolicy.COUNT_AS_PASS, ValidationUnknownPolicy.REPORT_SEPARATELY):
+            lines.append(f"_eff_viol_{clean_id} = _viol_{clean_id}")
+        elif expr.unknown_policy == ValidationUnknownPolicy.FAIL_STEP:
+            lines.append(f"if _unk_{clean_id} > 0: raise ValueError('Validation condition evaluated to unknown under FAIL_STEP: ' + str(_unk_{clean_id}) + ' unknown rows [step_id={step_id}]')")
+            lines.append(f"_eff_viol_{clean_id} = _viol_{clean_id}")
+
+        lines.append(f"validation_summaries[{repr(step_id)}] = {{'step_id': {repr(step_id)}, 'candidate_count': _cand_{clean_id}, 'pass_count': _pass_{clean_id}, 'violation_count': _viol_{clean_id}, 'raw_unknown_count': _unk_{clean_id}, 'effective_violation_count': _eff_viol_{clean_id}, 'severity': {repr(expr.severity.value)}, 'reason_code': {repr(reason)}}}")
+
+        if expr.severity == ValidateSeverity.ERROR:
+            lines.append(f"if _eff_viol_{clean_id} > 0: raise ValueError('Validation assertion failed [step_id={step_id}]: ' + str(_eff_viol_{clean_id}) + ' violations out of ' + str(_cand_{clean_id}) + ' candidates (reason_code={reason})')")
+            lines.append(f"validation_summaries[{repr(step_id)}]['gate_outcome'] = 'PASS'")
+        else:
+            lines.append(f"validation_summaries[{repr(step_id)}]['gate_outcome'] = 'WARN' if _eff_viol_{clean_id} > 0 else 'PASS'")
+
+        return lines
+
+    def _emit_quarantine(
+        self,
+        expr: QuarantineExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        cond_expr = self._emit_spark_expression(expr.predicate, preimages)
+        clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', step_id)
+        reads = expr.predicate.extract_reads()
+        if isinstance(expr.predicate, NullCheck):
+            na_expr = f"({cond_expr}).isNull()"
+        elif reads:
+            na_parts = [f"F.col({repr(r)}).isNull()" for r in set(reads)]
+            na_expr = f"({' | '.join(na_parts)}) | ({cond_expr}).isNull()"
+        else:
+            na_expr = f"({cond_expr}).isNull()"
+
+        lines = [
+            f"# Quarantine Step {step_id}",
+            f"_quar_na_{clean_id} = ({na_expr})",
+            f"_quar_cond_{clean_id} = ({cond_expr})",
+        ]
+
+        if expr.unknown_policy == QuarantineUnknownPolicy.FAIL_STEP:
+            lines.append(f"_unk_cnt_{clean_id} = {df_var}.filter(_quar_na_{clean_id}).limit(1).count()")
+            lines.append(f"if _unk_cnt_{clean_id} > 0: raise ValueError('Quarantine predicate evaluated to unknown under FAIL_STEP [step_id={step_id}]')")
+            lines.append(f"_quar_mask_{clean_id} = (~_quar_na_{clean_id}) & _quar_cond_{clean_id}")
+        elif expr.unknown_policy == QuarantineUnknownPolicy.ROUTE_TO_QUARANTINE:
+            lines.append(f"_quar_mask_{clean_id} = _quar_na_{clean_id} | _quar_cond_{clean_id}")
+        elif expr.unknown_policy == QuarantineUnknownPolicy.RETAIN_IN_CURATED:
+            lines.append(f"_quar_mask_{clean_id} = (~_quar_na_{clean_id}) & _quar_cond_{clean_id}")
+        elif expr.unknown_policy == QuarantineUnknownPolicy.SEPARATE_OUTPUT:
+            lines.append(f"outputs[{repr(expr.unknown_output_ref)}] = {df_var}.filter(_quar_na_{clean_id})")
+            lines.append(f"_quar_mask_{clean_id} = (~_quar_na_{clean_id}) & _quar_cond_{clean_id}")
+
+        if expr.routing_mode == RoutingMode.PARTITION:
+            lines.append(f"_input_cnt_{clean_id} = {df_var}.count()")
+            if expr.unknown_policy == QuarantineUnknownPolicy.SEPARATE_OUTPUT:
+                lines.append(f"_quar_rows_{clean_id} = {df_var}.filter(_quar_mask_{clean_id} & (~_quar_na_{clean_id}))")
+                lines.append(f"_cur_rows_{clean_id} = {df_var}.filter((~_quar_mask_{clean_id}) & (~_quar_na_{clean_id}))")
+            else:
+                lines.append(f"_quar_rows_{clean_id} = {df_var}.filter(_quar_mask_{clean_id})")
+                lines.append(f"_cur_rows_{clean_id} = {df_var}.filter(~_quar_mask_{clean_id})")
+
+            if expr.reason_column:
+                lines.append(f"_quar_rows_{clean_id} = _quar_rows_{clean_id}.withColumn({repr(expr.reason_column)}, F.lit({repr(expr.reason_code)}))")
+
+            lines.append(f"outputs[{repr(expr.quarantine_output_ref)}] = _quar_rows_{clean_id}")
+            lines.append(f"outputs[{repr(expr.curated_output_ref)}] = _cur_rows_{clean_id}")
+            lines.append(f"{df_var} = _cur_rows_{clean_id}")
+
+            # Distributed Multiset Reconciliation
+            lines.append(f"# Multiset reconciliation for partition quarantine")
+            lines.append(f"_cur_ids = outputs[{repr(expr.curated_output_ref)}].select(F.col(_identity_col).alias('_cid'))")
+            lines.append(f"_quar_ids = outputs[{repr(expr.quarantine_output_ref)}].select(F.col(_identity_col).alias('_qid'))")
+            lines.append(f"if _cur_ids.join(_quar_ids, _cur_ids['_cid'] == _quar_ids['_qid']).limit(1).count() > 0:")
+            lines.append(f"    raise ValueError('Partition outputs contain overlapping occurrences between curated and quarantine')")
+            if expr.unknown_policy == QuarantineUnknownPolicy.SEPARATE_OUTPUT:
+                lines.append(f"_unk_ids = outputs[{repr(expr.unknown_output_ref)}].select(F.col(_identity_col).alias('_uid'))")
+                lines.append(f"if _cur_ids.join(_unk_ids, _cur_ids['_cid'] == _unk_ids['_uid']).limit(1).count() > 0:")
+                lines.append(f"    raise ValueError('Partition outputs contain overlapping occurrences between curated and unknown')")
+                lines.append(f"if _quar_ids.join(_unk_ids, _quar_ids['_qid'] == _unk_ids['_uid']).limit(1).count() > 0:")
+                lines.append(f"    raise ValueError('Partition outputs contain overlapping occurrences between quarantine and unknown')")
+                lines.append(f"_tot_out_{clean_id} = outputs[{repr(expr.curated_output_ref)}].count() + outputs[{repr(expr.quarantine_output_ref)}].count() + outputs[{repr(expr.unknown_output_ref)}].count()")
+            else:
+                lines.append(f"_tot_out_{clean_id} = outputs[{repr(expr.curated_output_ref)}].count() + outputs[{repr(expr.quarantine_output_ref)}].count()")
+            lines.append(f"if _tot_out_{clean_id} != _input_cnt_{clean_id}:")
+            lines.append(f"    raise ValueError('Partition outputs do not reconcile to input occurrences')")
+
+        elif expr.routing_mode == RoutingMode.COPY:
+            lines.append(f"_input_cnt_{clean_id} = {df_var}.count()")
+            lines.append(f"_quar_rows_{clean_id} = {df_var}.filter(_quar_mask_{clean_id})")
+            if expr.reason_column:
+                lines.append(f"_quar_rows_{clean_id} = _quar_rows_{clean_id}.withColumn({repr(expr.reason_column)}, F.lit({repr(expr.reason_code)}))")
+            lines.append(f"outputs[{repr(expr.quarantine_output_ref)}] = _quar_rows_{clean_id}")
+            lines.append(f"outputs[{repr(expr.curated_output_ref)}] = {df_var}")
+
+            lines.append(f"if {df_var}.count() != _input_cnt_{clean_id}:")
+            lines.append(f"    raise ValueError('Copy mode curated output does not match input occurrences')")
+            lines.append(f"if _quar_rows_{clean_id}.count() > _input_cnt_{clean_id}:")
+            lines.append(f"    raise ValueError('Copy mode quarantine occurrences exceed input occurrences')")
+            lines.append(f"_q_grp = _quar_rows_{clean_id}.groupBy(_identity_col).count().withColumnRenamed('count', 'q_count')")
+            lines.append(f"_in_grp = {df_var}.groupBy(_identity_col).count().withColumnRenamed('count', 'in_count')")
+            lines.append(f"if _q_grp.join(_in_grp, _identity_col).filter(F.col('q_count') > F.col('in_count')).limit(1).count() > 0:")
+            lines.append(f"    raise ValueError('Copy mode quarantine occurrences exceed input occurrences per row ID')")
+
+        return lines
+
+    def _emit_filter(
+        self,
+        expr: FilterExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        cond_expr = self._emit_spark_expression(expr.predicate, preimages)
+        clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', step_id)
+        reads = expr.predicate.extract_reads()
+        if isinstance(expr.predicate, NullCheck):
+            na_expr = f"({cond_expr}).isNull()"
+        elif reads:
+            na_parts = [f"F.col({repr(r)}).isNull()" for r in set(reads)]
+            na_expr = f"({' | '.join(na_parts)}) | ({cond_expr}).isNull()"
+        else:
+            na_expr = f"({cond_expr}).isNull()"
+
+        lines = [
+            f"# Filter Step {step_id}",
+            f"_filt_na_{clean_id} = ({na_expr})",
+            f"_filt_cond_{clean_id} = ({cond_expr})",
+        ]
+
+        if expr.unknown_policy == FilterUnknownPolicy.FAIL_STEP:
+            lines.append(f"_unk_cnt_{clean_id} = {df_var}.filter(_filt_na_{clean_id}).limit(1).count()")
+            lines.append(f"if _unk_cnt_{clean_id} > 0: raise ValueError('Filter predicate evaluated to unknown under FAIL_STEP [step_id={step_id}]')")
+            lines.append(f"_filt_eff_{clean_id} = (~_filt_na_{clean_id}) & _filt_cond_{clean_id}")
+        elif expr.unknown_policy == FilterUnknownPolicy.RETAIN:
+            fill_v = f"(_filt_na_{clean_id} | _filt_cond_{clean_id})" if expr.retain_matching else f"((~_filt_na_{clean_id}) & _filt_cond_{clean_id})"
+            lines.append(f"_filt_eff_{clean_id} = {fill_v}")
+        elif expr.unknown_policy in (FilterUnknownPolicy.FILTER_OUT, FilterUnknownPolicy.ROUTE_TO_DROPPED_OUTPUT):
+            fill_v = f"((~_filt_na_{clean_id}) & _filt_cond_{clean_id})" if expr.retain_matching else f"(_filt_na_{clean_id} | _filt_cond_{clean_id})"
+            lines.append(f"_filt_eff_{clean_id} = {fill_v}")
+        elif expr.unknown_policy == FilterUnknownPolicy.SEPARATE_OUTPUT:
+            lines.append(f"outputs[{repr(expr.unknown_output_ref)}] = {df_var}.filter(_filt_na_{clean_id})")
+            lines.append(f"_filt_eff_{clean_id} = (~_filt_na_{clean_id}) & _filt_cond_{clean_id}")
+
+        if expr.retain_matching:
+            lines.append(f"_retain_mask_{clean_id} = _filt_eff_{clean_id}")
+        else:
+            lines.append(f"_retain_mask_{clean_id} = ~_filt_eff_{clean_id}")
+
+        if expr.unknown_policy == FilterUnknownPolicy.SEPARATE_OUTPUT:
+            lines.append(f"_retain_mask_{clean_id} = _retain_mask_{clean_id} & (~_filt_na_{clean_id})")
+            lines.append(f"_dropped_mask_{clean_id} = (~_retain_mask_{clean_id}) & (~_filt_na_{clean_id})")
+        else:
+            lines.append(f"_dropped_mask_{clean_id} = ~_retain_mask_{clean_id}")
+
+        if expr.drop_policy == FilterDropPolicy.EXPORT_DROPPED:
+            lines.append(f"_dropped_df_{clean_id} = {df_var}.filter(_dropped_mask_{clean_id})")
+            if expr.rejection_reason_code:
+                lines.append(f"_dropped_df_{clean_id} = _dropped_df_{clean_id}.withColumn('_dhara_filter_reason', F.lit({repr(expr.rejection_reason_code)}))")
+            lines.append(f"outputs[{repr(expr.dropped_output_ref)}] = _dropped_df_{clean_id}")
+
+        lines.append(f"{df_var} = {df_var}.filter(_retain_mask_{clean_id})")
+        return lines
+
+    def _emit_deduplicate(
+        self,
+        expr: DeduplicateExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', step_id)
+        keys = list(expr.resolved_key_columns or expr.key_columns)
+        lines = [f"# Deduplicate Step {step_id}"]
+
+        if expr.null_key_policy == NullKeyPolicy.FAIL_STEP:
+            null_conds = [f"F.col({repr(k)}).isNull()" for k in keys]
+            lines.append(f"if {df_var}.filter({' | '.join(null_conds)}).limit(1).count() > 0:")
+            lines.append(f"    raise ValueError('Deduplication encountered null key under FAIL_STEP policy')")
+
+        if expr.null_key_policy == NullKeyPolicy.TREAT_EACH_NULL_AS_DISTINCT:
+            null_conds = [f"F.col({repr(k)}).isNull()" for k in keys]
+            lines.append(f"_has_null_k_{clean_id} = ({' | '.join(null_conds)})")
+            key_cols_expr = ", ".join(f"F.col({repr(k)}).cast('string')" for k in keys)
+            lines.append(f"_synth_key_{clean_id} = F.when(_has_null_k_{clean_id}, F.concat(F.lit('NULL_DISTINCT_'), F.col(_identity_col).cast('string'))).otherwise(F.concat_ws(':::', {key_cols_expr}))")
+            part_cols = [f"_synth_key_{clean_id}"]
+        else:
+            part_cols = [f"F.col({repr(k)})" for k in keys]
+
+        order_col_exprs = []
+        is_preserve_last = (expr.tie_breaker == DeduplicationTieBreaker.PRESERVE_LAST)
+        if expr.order_by:
+            for s in expr.order_by:
+                col_ref = f"F.col({repr(s.column)})"
+                if is_preserve_last:
+                    if s.direction == OrderDirection.ASCENDING:
+                        order_col_exprs.append(f"{col_ref}.desc_nulls_first()")
+                    else:
+                        order_col_exprs.append(f"{col_ref}.asc_nulls_last()")
+                else:
+                    if s.direction == OrderDirection.ASCENDING:
+                        order_col_exprs.append(f"{col_ref}.asc_nulls_last()" if s.nulls_last else f"{col_ref}.asc_nulls_first()")
+                    else:
+                        order_col_exprs.append(f"{col_ref}.desc_nulls_last()" if s.nulls_last else f"{col_ref}.desc_nulls_first()")
+
+        if expr.use_occurrence_id_as_final_tie_breaker:
+            if is_preserve_last:
+                order_col_exprs.append("F.col(_identity_col).desc()")
+            else:
+                order_col_exprs.append("F.col(_identity_col).asc()")
+        elif not order_col_exprs:
+            order_col_exprs.append("F.col(_identity_col).asc()")
+
+        part_str = ", ".join(part_cols)
+        ord_str = ", ".join(order_col_exprs)
+        lines.append(f"_dedup_win_{clean_id} = Window.partitionBy({part_str}).orderBy({ord_str})")
+        lines.append(f"_with_rn_{clean_id} = {df_var}.withColumn('_dhara_dedup_rn', F.row_number().over(_dedup_win_{clean_id}))")
+
+        if expr.null_key_policy == NullKeyPolicy.EXCLUDE_NULL_KEY_ROWS:
+            null_conds = [f"F.col({repr(k)}).isNull()" for k in keys]
+            lines.append(f"_with_rn_{clean_id} = _with_rn_{clean_id}.withColumn('_is_null_k', ({' | '.join(null_conds)}))")
+            dup_condition = "(F.col('_dhara_dedup_rn') > 1) | F.col('_is_null_k')"
+            survivor_condition = "(F.col('_dhara_dedup_rn') == 1) & (~F.col('_is_null_k'))"
+            drop_extra = ", '_is_null_k'"
+        else:
+            dup_condition = "F.col('_dhara_dedup_rn') > 1"
+            survivor_condition = "F.col('_dhara_dedup_rn') == 1"
+            drop_extra = ""
+
+        if expr.duplicates_output_ref:
+            if expr.duplicate_export_mode == DuplicateExportMode.REMOVED_OCCURRENCES_ONLY:
+                lines.append(f"outputs[{repr(expr.duplicates_output_ref)}] = _with_rn_{clean_id}.filter({dup_condition}).drop('_dhara_dedup_rn'{drop_extra})")
+            else:
+                lines.append(f"_cnt_win_{clean_id} = Window.partitionBy({part_str})")
+                lines.append(f"_with_cnt_{clean_id} = _with_rn_{clean_id}.withColumn('_part_cnt', F.count(F.lit(1)).over(_cnt_win_{clean_id}))")
+                lines.append(f"outputs[{repr(expr.duplicates_output_ref)}] = _with_cnt_{clean_id}.filter(F.col('_part_cnt') > 1).drop('_dhara_dedup_rn', '_part_cnt'{drop_extra})")
+
+        lines.append(f"{df_var} = _with_rn_{clean_id}.filter({survivor_condition}).drop('_dhara_dedup_rn'{drop_extra})")
+        return lines
+
+    def _emit_schema_mutation(
+        self,
+        expr: SchemaMutationExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', step_id)
+        lines = [f"# Schema Mutation Step {step_id}"]
+
+        if expr.expected_before_schema_hash:
+            lines.append(f"_before_cols_{clean_id} = [(c, str({df_var}.schema[c].dataType), True) for c in {df_var}.columns if c != _identity_col]")
+            lines.append(f"if compute_canonical_schema_hash(_before_cols_{clean_id}) != {repr(expr.expected_before_schema_hash)}:")
+            lines.append(f"    raise ValueError('Actual pre-mutation schema hash does not match expected_before_schema_hash')")
+
+        if expr.op == SchemaMutationOp.DROP_COLUMN:
+            drop_cols = [d.column for d in expr.drops] if expr.drops else ([expr.target_column] if expr.target_column else [])
+            for dc in drop_cols:
+                lines.append(f"if {repr(dc)} not in {df_var}.columns:")
+                lines.append(f"    raise ValueError('Cannot drop non-existent column: ' + {repr(dc)})")
+            lines.append(f"{df_var} = {df_var}.drop(*{repr(drop_cols)})")
+
+        elif expr.op == SchemaMutationOp.RENAME_COLUMN:
+            for r in expr.renames:
+                old_c = r.old_name
+                new_c = r.new_name
+                lines.append(f"if {repr(old_c)} not in {df_var}.columns:")
+                lines.append(f"    raise ValueError('Cannot rename non-existent column: ' + {repr(old_c)})")
+                lines.append(f"if {repr(new_c)} in {df_var}.columns and {repr(new_c)} != {repr(old_c)}:")
+                lines.append(f"    raise ValueError('Target rename column already exists: ' + {repr(new_c)})")
+                lines.append(f"{df_var} = {df_var}.withColumnRenamed({repr(old_c)}, {repr(new_c)})")
+
+        elif expr.op == SchemaMutationOp.PROJECT:
+            if expr.projection:
+                proj_cols = list(expr.projection.projected_columns)
+                for pc in proj_cols:
+                    if not expr.projection.allow_missing:
+                        lines.append(f"if {repr(pc)} not in {df_var}.columns:")
+                        lines.append(f"    raise ValueError('Projected column not found in DataFrame: ' + {repr(pc)})")
+                lines.append(f"_proj_cols_{clean_id} = [c for c in {repr(proj_cols)} if c in {df_var}.columns]")
+                lines.append(f"if _identity_col in {df_var}.columns and _identity_col not in _proj_cols_{clean_id}:")
+                lines.append(f"    _proj_cols_{clean_id}.append(_identity_col)")
+                lines.append(f"{df_var} = {df_var}.select(*_proj_cols_{clean_id})")
+
+        elif expr.op == SchemaMutationOp.REORDER_COLUMNS:
+            reorder_cols = list(expr.ordered_columns)
+            for rc in reorder_cols:
+                lines.append(f"if {repr(rc)} not in {df_var}.columns:")
+                lines.append(f"    raise ValueError('Reorder column not found in DataFrame: ' + {repr(rc)})")
+            lines.append(f"_ord_cols_{clean_id} = [c for c in {repr(reorder_cols)} if c in {df_var}.columns]")
+            lines.append(f"if _identity_col in {df_var}.columns and _identity_col not in _ord_cols_{clean_id}:")
+            lines.append(f"    _ord_cols_{clean_id}.append(_identity_col)")
+            lines.append(f"{df_var} = {df_var}.select(*_ord_cols_{clean_id})")
+
+        elif expr.op == SchemaMutationOp.CREATE_COLUMN:
+            col_name = expr.create_column_name or expr.target_column or "new_col"
+            if expr.existing_column_policy == ExistingColumnPolicy.ERROR:
+                lines.append(f"if {repr(col_name)} in {df_var}.columns:")
+                lines.append(f"    raise ValueError('Created column already exists: ' + {repr(col_name)})")
+            if expr.create_expression:
+                c_code = self._emit_spark_expression(expr.create_expression, preimages)
+                lines.append(f"{df_var} = {df_var}.withColumn({repr(col_name)}, {c_code})")
+            else:
+                lines.append(f"{df_var} = {df_var}.withColumn({repr(col_name)}, F.lit(None).cast('string'))")
+
+        elif expr.op == SchemaMutationOp.CAST_COLUMN:
+            src = expr.source_column or expr.target_column
+            dst = expr.target_column or src
+            dtype_map = {
+                DataType.STRING: "T.StringType()",
+                DataType.INTEGER: "T.LongType()",
+                DataType.FLOAT: "T.DoubleType()",
+                DataType.BOOLEAN: "T.BooleanType()",
+            }
+            spark_type = dtype_map.get(expr.cast_target_type, "T.StringType()")
+            lines.append(f"{df_var} = {df_var}.withColumn({repr(dst)}, F.col({repr(src)}).cast({spark_type}))")
+
+        if expr.expected_after_schema_hash:
+            lines.append(f"_after_cols_{clean_id} = [(c, str({df_var}.schema[c].dataType), True) for c in {df_var}.columns if c != _identity_col]")
+            lines.append(f"if compute_canonical_schema_hash(_after_cols_{clean_id}) != {repr(expr.expected_after_schema_hash)}:")
+            lines.append(f"    raise ValueError('Actual post-mutation schema hash does not match expected_after_schema_hash')")
+
+        return lines
+
+    def _emit_mask(
+        self,
+        expr: MaskExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', step_id)
+        in_col = expr.source_column or (expr.input_column.column_name if expr.input_column else "")
+        out_col = expr.target_column or expr.output_column or in_col
+        mc = expr.mask_character
+        p_count = expr.preserved_count
+        lines = [f"# Mask Step {step_id}"]
+
+        if out_col != in_col and expr.existing_column_policy == ExistingColumnPolicy.ERROR:
+            lines.append(f"if {repr(out_col)} in {df_var}.columns:")
+            lines.append(f"    raise ValueError('Target column already exists: ' + {repr(out_col)})")
+
+        col_ref = f"F.col({repr(in_col)})"
+        col_str = f"F.coalesce({col_ref}.cast('string'), F.lit(''))"
+        len_col = f"F.length({col_str})"
+        esc_mc = mc.replace("'", "''")
+        sql_col = f"coalesce(cast(`{in_col}` as string), '')"
+        sql_len = f"length({sql_col})"
+
+        if expr.strategy in (MaskStrategy.PRESERVE_LAST_N, "preserve_last_n"):
+            if expr.short_value_policy == ShortValuePolicy.SET_NULL:
+                short_expr = "F.lit(None).cast('string')"
+            elif expr.short_value_policy == ShortValuePolicy.KEEP_ORIGINAL:
+                short_expr = col_str
+            elif expr.short_value_policy == ShortValuePolicy.FAIL_STEP:
+                lines.append(f"if {df_var}.filter({col_ref}.isNotNull() & ({len_col} <= {p_count})).limit(1).count() > 0:")
+                lines.append(f"    raise ValueError('String length <= preserved_count under FAIL_STEP policy')")
+                short_expr = f"F.expr(\"repeat('{esc_mc}', {sql_len})\")"
+            else:
+                short_expr = f"F.expr(\"repeat('{esc_mc}', {sql_len})\")"
+
+            rest_expr = f"F.expr(\"concat(repeat('{esc_mc}', {sql_len} - {p_count}), substring({sql_col}, -{p_count}, {p_count}))\")"
+            masked_expr = f"F.when({len_col} <= {p_count}, {short_expr}).otherwise({rest_expr})"
+
+        elif expr.strategy in (MaskStrategy.PRESERVE_FIRST_N, "preserve_first_n"):
+            if expr.short_value_policy == ShortValuePolicy.SET_NULL:
+                short_expr = "F.lit(None).cast('string')"
+            elif expr.short_value_policy == ShortValuePolicy.KEEP_ORIGINAL:
+                short_expr = col_str
+            elif expr.short_value_policy == ShortValuePolicy.FAIL_STEP:
+                lines.append(f"if {df_var}.filter({col_ref}.isNotNull() & ({len_col} <= {p_count})).limit(1).count() > 0:")
+                lines.append(f"    raise ValueError('String length <= preserved_count under FAIL_STEP policy')")
+                short_expr = f"F.expr(\"repeat('{esc_mc}', {sql_len})\")"
+            else:
+                short_expr = f"F.expr(\"repeat('{esc_mc}', {sql_len})\")"
+
+            rest_expr = f"F.expr(\"concat(substring({sql_col}, 1, {p_count}), repeat('{esc_mc}', {sql_len} - {p_count}))\")"
+            masked_expr = f"F.when({len_col} <= {p_count}, {short_expr}).otherwise({rest_expr})"
+
+        elif expr.strategy in (MaskStrategy.MASK_ALL, MaskStrategy.REDACT_ALL, "mask_all", "redact_all"):
+            masked_expr = f"F.expr(\"repeat('{esc_mc}', {sql_len})\")"
+
+        elif expr.strategy in (MaskStrategy.EMAIL_MASK, "email_mask"):
+            user_sql = f"split({sql_col}, '@')[0]"
+            dom_sql = f"split({sql_col}, '@')[1]"
+            expr_user = (
+                f"case "
+                f"when length({user_sql}) <= 1 then {user_sql} "
+                f"when length({user_sql}) == 2 then concat(substring({user_sql}, 1, 1), '{esc_mc}') "
+                f"else concat(substring({user_sql}, 1, 1), repeat('{esc_mc}', length({user_sql}) - 2), substring({user_sql}, -1, 1)) "
+                f"end"
+            )
+            if expr.email_domain_policy == EmailMaskDomainPolicy.PRESERVE:
+                expr_dom = dom_sql
+            elif expr.email_domain_policy == EmailMaskDomainPolicy.MASK:
+                expr_dom = (
+                    f"concat("
+                    f"repeat('{esc_mc}', case when instr({dom_sql}, '.') > 0 then instr({dom_sql}, '.') - 1 else length({dom_sql}) end), "
+                    f"case when instr({dom_sql}, '.') > 0 then substring({dom_sql}, instr({dom_sql}, '.'), length({dom_sql})) else '' end"
+                    f")"
+                )
+            elif expr.email_domain_policy == EmailMaskDomainPolicy.HASH:
+                expr_dom = f"substring(sha2({dom_sql}, 256), 1, 8)"
+            else:
+                expr_dom = dom_sql
+
+            email_masked_sql = f"concat({expr_user}, '@', {expr_dom})"
+            invalid_email_sql = f"repeat('{esc_mc}', {sql_len})"
+            masked_expr = (
+                f"F.expr(\"case when {sql_col} like '%@%' and size(split({sql_col}, '@')) == 2 "
+                f"then {email_masked_sql} else {invalid_email_sql} end\")"
+            )
+        else:
+            masked_expr = f"F.expr(\"repeat('{esc_mc}', {sql_len})\")"
+
+        if expr.null_policy == MaskNullPolicy.PRESERVE_NULL:
+            final_expr = f"F.when({col_ref}.isNull(), F.lit(None).cast('string')).otherwise({masked_expr})"
+        elif expr.null_policy == MaskNullPolicy.SET_EMPTY:
+            final_expr = f"F.when({col_ref}.isNull(), F.lit('')).otherwise({masked_expr})"
+        elif expr.null_policy == MaskNullPolicy.FAIL_STEP:
+            lines.append(f"if {df_var}.filter({col_ref}.isNull()).limit(1).count() > 0:")
+            lines.append(f"    raise ValueError('Encountered null in {in_col} under FAIL_STEP mask null policy')")
+            final_expr = masked_expr
+        else:
+            final_expr = f"F.when({col_ref}.isNull(), F.lit(None).cast('string')).otherwise({masked_expr})"
+
+        lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, {final_expr})")
+        return lines
+
+    def _emit_hash(
+        self,
+        expr: HashExpression,
+        preimages: Dict[str, str],
+        df_var: str,
+        step_id: str,
+    ) -> List[str]:
+        clean_id = re.sub(r'[^a-zA-Z0-9_]', '_', step_id)
+        in_col = expr.source_column or (expr.input_column.column_name if expr.input_column else "")
+        out_col = expr.target_column or expr.output_column or in_col
+        lines = [f"# Hash Step {step_id}"]
+
+        if out_col != in_col and expr.existing_column_policy == ExistingColumnPolicy.ERROR:
+            lines.append(f"if {repr(out_col)} in {df_var}.columns:")
+            lines.append(f"    raise ValueError('Target column already exists: ' + {repr(out_col)})")
+
+        col_ref = f"F.col({repr(in_col)})"
+
+        if expr.null_policy == HashNullPolicy.FAIL_STEP:
+            lines.append(f"if {df_var}.filter({col_ref}.isNull()).limit(1).count() > 0:")
+            lines.append(f"    raise ValueError('Encountered null in {in_col} under FAIL_STEP hash null policy')")
+
+        schema_col = None
+        for s in self.schemas.values():
+            if in_col in s.columns:
+                schema_col = s.columns[in_col]
+                break
+
+        col_dtype = schema_col.logical_type if schema_col else DataType.ANY
+
+        if col_dtype == DataType.BOOLEAN:
+            raw_bytes_expr = (
+                f"F.when({col_ref}.isNull(), F.lit(b'\\x00DHARA_NULL_V1'))"
+                f".when({col_ref} == True, F.lit(b'\\x01BOOL\\x01'))"
+                f".otherwise(F.lit(b'\\x01BOOL\\x00'))"
+            )
+        elif col_dtype == DataType.INTEGER:
+            raw_bytes_expr = (
+                f"F.when({col_ref}.isNull(), F.lit(b'\\x00DHARA_NULL_V1'))"
+                f".otherwise(F.concat(F.lit(b'\\x02INT\\x00'), F.unhex(F.lpad(F.hex({col_ref}.cast('long')), 16, '0'))))"
+            )
+        elif col_dtype == DataType.BINARY:
+            raw_bytes_expr = (
+                f"F.when({col_ref}.isNull(), F.lit(b'\\x00DHARA_NULL_V1'))"
+                f".otherwise(F.concat(F.lit(b'\\x07BYTES\\x00'), {col_ref}))"
+            )
+        else:
+            raw_bytes_expr = (
+                f"F.when({col_ref}.isNull(), F.lit(b'\\x00DHARA_NULL_V1'))"
+                f".otherwise(F.concat(F.lit(b'\\x05STR\\x00'), F.encode({col_ref}.cast('string'), 'utf-8')))"
+            )
+
+        if expr.mode == HashMode.SALTED_DIGEST:
+            if expr.salt_value:
+                salt_b = expr.salt_value.encode("utf-8")
+                raw_bytes_expr = f"F.concat(F.lit({repr(salt_b)}), {raw_bytes_expr})"
+
+        digest_expr = f"F.sha2({raw_bytes_expr}, 256)"
+        if expr.truncate_length is not None:
+            digest_expr = f"F.substring({digest_expr}, 1, {expr.truncate_length})"
+
+        if expr.null_policy == HashNullPolicy.PRESERVE_NULL:
+            final_digest = f"F.when({col_ref}.isNull(), F.lit(None).cast('string')).otherwise({digest_expr})"
+        elif expr.null_policy == HashNullPolicy.HASH_NULL:
+            final_digest = digest_expr
+        else:
+            final_digest = digest_expr
+
+        lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, {final_digest})")
+        return lines
+
     # ------------------------------------------------------------------------
     # Expression Transpiler
     # ------------------------------------------------------------------------
@@ -1128,6 +1908,23 @@ class PySparkIRCompiler:
             if expr.date_spec or expr.target_data_type in (DataType.DATE, DataType.TIMESTAMP):
                 return "PARSE_DATE"
             return "PARSE_NUMBER"
+        if isinstance(expr, ValidateExpression):
+            return "VALIDATE"
+        if isinstance(expr, QuarantineExpression):
+            return "QUARANTINE"
+        if isinstance(expr, FilterExpression):
+            return "FILTER"
+        if isinstance(expr, DeduplicateExpression):
+            return "DEDUPLICATE"
+        if isinstance(expr, SchemaMutationExpression):
+            return expr.op.value.upper()
+        if isinstance(expr, MaskExpression):
+            strat = expr.strategy.value if hasattr(expr.strategy, "value") else str(expr.strategy)
+            return strat.upper()
+        if isinstance(expr, HashExpression):
+            mode = expr.mode.value if hasattr(expr.mode, "value") else str(expr.mode)
+            alg = expr.algorithm.value if hasattr(expr.algorithm, "value") else str(expr.algorithm)
+            return f"{mode.upper()}_{alg.upper()}"
         if isinstance(expr, PassThroughExpression):
             return "PASS_THROUGH"
         return type(expr).__name__.upper()
@@ -1149,6 +1946,30 @@ class PySparkIRCompiler:
         if hasattr(expr, "unmapped_policy"):
             pol = expr.unmapped_policy
             policies["unmapped_policy"] = pol.value if hasattr(pol, "value") else str(pol)
+        if hasattr(expr, "short_value_policy"):
+            pol = expr.short_value_policy
+            policies["short_value_policy"] = pol.value if hasattr(pol, "value") else str(pol)
+        if hasattr(expr, "null_key_policy"):
+            pol = expr.null_key_policy
+            policies["null_key_policy"] = pol.value if hasattr(pol, "value") else str(pol)
+        if hasattr(expr, "tie_breaker"):
+            pol = expr.tie_breaker
+            policies["tie_breaker"] = pol.value if hasattr(pol, "value") else str(pol)
+        if hasattr(expr, "drop_policy"):
+            pol = expr.drop_policy
+            policies["drop_policy"] = pol.value if hasattr(pol, "value") else str(pol)
+        if hasattr(expr, "collision_policy"):
+            pol = expr.collision_policy
+            policies["collision_policy"] = pol.value if hasattr(pol, "value") else str(pol)
+        if hasattr(expr, "existing_column_policy"):
+            pol = expr.existing_column_policy
+            policies["existing_column_policy"] = pol.value if hasattr(pol, "value") else str(pol)
+        if hasattr(expr, "cast_failure_policy"):
+            pol = expr.cast_failure_policy
+            policies["cast_failure_policy"] = pol.value if hasattr(pol, "value") else str(pol)
+        if hasattr(expr, "routing_mode"):
+            pol = expr.routing_mode
+            policies["routing_mode"] = pol.value if hasattr(pol, "value") else str(pol)
 
         raw = json.dumps(policies, sort_keys=True)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -1261,6 +2082,29 @@ def register_pyspark_scalar_capabilities(
         (ActionFamily.IMPUTE, "MODE"),
         (ActionFamily.IMPUTE, "GROUPED_MEAN"),
         (ActionFamily.IMPUTE, "GROUPED_MEDIAN"),
+        # VALIDATE
+        (ActionFamily.VALIDATE, "VALIDATE"),
+        # QUARANTINE
+        (ActionFamily.QUARANTINE, "QUARANTINE"),
+        # FILTER
+        (ActionFamily.FILTER, "FILTER"),
+        # DEDUPLICATE
+        (ActionFamily.DEDUPLICATE, "DEDUPLICATE"),
+        # SCHEMA_MUTATION
+        (ActionFamily.SCHEMA_MUTATION, "DROP_COLUMN"),
+        (ActionFamily.SCHEMA_MUTATION, "RENAME_COLUMN"),
+        (ActionFamily.SCHEMA_MUTATION, "PROJECT"),
+        (ActionFamily.SCHEMA_MUTATION, "REORDER_COLUMNS"),
+        (ActionFamily.SCHEMA_MUTATION, "CREATE_COLUMN"),
+        (ActionFamily.SCHEMA_MUTATION, "CAST_COLUMN"),
+        # MASK
+        (ActionFamily.MASK, "PRESERVE_LAST_N"),
+        (ActionFamily.MASK, "PRESERVE_FIRST_N"),
+        (ActionFamily.MASK, "MASK_ALL"),
+        (ActionFamily.MASK, "EMAIL_MASK"),
+        # HASH
+        (ActionFamily.HASH, "DIGEST_SHA256"),
+        (ActionFamily.HASH, "SALTED_DIGEST_SHA256"),
     ]
 
     for family, subtype in verified_capabilities:

@@ -372,18 +372,22 @@ class PandasIRCompiler:
         if datasets_fn:
             res_dict = datasets_fn(df, key_provider=key_provider)
             class PandasExecutionResult:
-                def __init__(self, outputs: Dict[str, pd.DataFrame]):
+                def __init__(self, outputs: Dict[str, pd.DataFrame], val_summaries: Dict[str, Any]):
                     self.outputs = outputs
+                    self.validation_summaries = val_summaries
                     self.primary_output = next(iter(outputs.values())) if outputs else pd.DataFrame()
-            return PandasExecutionResult(res_dict)
+            val_summaries = getattr(datasets_fn, "validation_summaries", {})
+            return PandasExecutionResult(res_dict, val_summaries)
         single_fn = loc.get("transform")
         if single_fn:
             primary_out = single_fn(df, key_provider=key_provider)
             class PandasExecutionResult:
-                def __init__(self, primary: pd.DataFrame):
+                def __init__(self, primary: pd.DataFrame, val_summaries: Dict[str, Any]):
                     self.outputs = {"primary": primary}
+                    self.validation_summaries = val_summaries
                     self.primary_output = primary
-            return PandasExecutionResult(primary_out)
+            val_summaries = getattr(loc.get("transform_datasets"), "validation_summaries", {})
+            return PandasExecutionResult(primary_out, val_summaries)
         raise RuntimeError("No valid entrypoint found in compiled Pandas artifact")
 
     def compile(self, graph: TransformationIRGraph, df_var: str = "df") -> PandasCompilerResult:
@@ -627,6 +631,7 @@ class PandasIRCompiler:
         code_lines.append(f"        raise ValueError('Input occurrence identities are not unique')")
         code_lines.append("")
         code_lines.append("    outputs = {}")
+        code_lines.append("    validation_summaries = {}")
         code_lines.append("")
 
         # Preamble: Selective Series Pre-Images (Series copy only, never whole df.copy())
@@ -682,6 +687,7 @@ class PandasIRCompiler:
             code_lines.append(f"        if _sec_ref != _primary_key and _identity_col in outputs[_sec_ref].columns:")
             code_lines.append(f"            outputs[_sec_ref] = outputs[_sec_ref].drop(columns=[_identity_col])")
 
+        code_lines.append("    transform_datasets.validation_summaries = validation_summaries")
         code_lines.append("    return outputs")
         code_lines.append("")
 
@@ -1506,6 +1512,7 @@ class PandasIRCompiler:
             lines.append(f"{eff_viol_var} = {viol_var}")
 
         lines.append(f"{summary_var} = {{'step_id': {repr(step_id)}, 'candidate_count': {cand_var}, 'pass_count': {pass_var}, 'violation_count': {viol_var}, 'raw_unknown_count': {unk_var}, 'effective_violation_count': {eff_viol_var}, 'severity': {repr(expr.severity.value)}, 'reason_code': {repr(reason)}}}")
+        lines.append(f"validation_summaries[{repr(step_id)}] = {summary_var}")
 
         if expr.severity == ValidateSeverity.ERROR:
             lines.append(f"if {eff_viol_var} > 0: raise ValueError(\"Validation assertion failed [step_id={step_id}]: \" + str({eff_viol_var}) + \" violations out of \" + str({cand_var}) + \" candidates (reason_code={reason})\")")

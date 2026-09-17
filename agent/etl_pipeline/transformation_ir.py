@@ -1602,12 +1602,41 @@ class ColumnRole(str, Enum):
     SECURITY_OUTPUT = "security_output"
 
 
+class ColumnProtectionClass(str, Enum):
+    PRIMARY_KEY = "primary_key"
+    BUSINESS_KEY = "business_key"
+    SECURITY_INTEGRITY = "security_integrity"
+    LINEAGE = "lineage"
+    ROUTING_IDENTITY = "routing_identity"
+
+
+INTRINSICALLY_PROTECTED_ROLES: Set[ColumnRole] = {
+    ColumnRole.ROUTING_IDENTITY,
+    ColumnRole.LINEAGE,
+    ColumnRole.VALIDITY_INDICATOR,
+    ColumnRole.IMPUTATION_INDICATOR,
+    ColumnRole.PARSE_ERROR,
+}
+
+
+def is_column_effectively_protected(col: Any) -> bool:
+    """Evaluates whether a column is protected under ColumnProtectionClass, role, or flag."""
+    if getattr(col, "is_protected", False):
+        return True
+    if getattr(col, "protection_classes", ()):
+        return True
+    if getattr(col, "role", None) in INTRINSICALLY_PROTECTED_ROLES:
+        return True
+    return False
+
+
 class ColumnMetadata(BaseModel):
     name: str
     logical_type: DataType = DataType.STRING
     role: ColumnRole = ColumnRole.BUSINESS
     nullable: bool = True
     is_protected: bool = False
+    protection_classes: Tuple[ColumnProtectionClass, ...] = ()
 
 
 class SchemaMutationOp(str, Enum):
@@ -2415,6 +2444,18 @@ class DatasetColumnSchema(BaseModel):
     nullable: bool = True
     role: ColumnRole = ColumnRole.BUSINESS
     is_protected: bool = False
+    protection_classes: Tuple[ColumnProtectionClass, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_logical_type(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "logical_type" in data and "data_type" not in data:
+            data["data_type"] = data.pop("logical_type")
+        return data
+
+    @property
+    def logical_type(self) -> DataType:
+        return self.data_type
 
 
 class DatasetSchema(BaseModel):
@@ -2544,13 +2585,7 @@ def bind_expression_to_schema(
                     dc.startswith("__dhara_")
                     or dc.endswith("_was_imputed")
                     or dc.endswith("_parse_error")
-                    or col_schema.is_protected
-                    or col_schema.role in (
-                        ColumnRole.ROUTING_IDENTITY,
-                        ColumnRole.LINEAGE,
-                        ColumnRole.VALIDITY_INDICATOR,
-                        ColumnRole.IMPUTATION_INDICATOR,
-                    )
+                    or is_column_effectively_protected(col_schema)
                 ):
                     raise SchemaBindingError(f"Cannot drop protected column with role '{col_schema.role.value}': '{dc}'")
         elif expression.op == SchemaMutationOp.RENAME_COLUMN:
@@ -2560,10 +2595,17 @@ def bind_expression_to_schema(
                 if r.new_name in ds_schema.columns and r.new_name != r.old_name:
                     raise TransformationIRInvariantError(f"Rename target column '{r.new_name}' already exists in schema")
         elif expression.op == SchemaMutationOp.PROJECT:
-            if expression.projection and not expression.projection.allow_missing:
-                for pc in expression.projection.projected_columns:
-                    if pc not in ds_schema.columns:
-                        raise TransformationIRInvariantError(f"Projected column '{pc}' does not exist in schema")
+            if expression.projection:
+                proj_set = set(expression.projection.projected_columns)
+                if not expression.projection.allow_missing:
+                    for pc in expression.projection.projected_columns:
+                        if pc not in ds_schema.columns:
+                            raise TransformationIRInvariantError(f"Projected column '{pc}' does not exist in schema")
+                for c_name, col_schema in ds_schema.columns.items():
+                    if c_name not in proj_set and is_column_effectively_protected(col_schema):
+                        raise SchemaBindingError(
+                            f"Cannot drop protected column with role '{col_schema.role.value}' via projection exclusion: '{c_name}'"
+                        )
         elif expression.op == SchemaMutationOp.REORDER_COLUMNS:
             for rc in expression.ordered_columns:
                 if rc not in ds_schema.columns:
