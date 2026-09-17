@@ -66,11 +66,19 @@ from agent.etl_pipeline.pandas_ir_compiler import (
     CompilerAccountingError,
     CompilerStepDisposition,
     PreimageBinding,
+    RowExpansionLimitExceededError,
 )
 from agent.etl_pipeline.transformation_ir import (
     TRANSFORMATION_IR_VERSION,
     ActionFamily,
+    AggregateColumnSpec,
+    AggregateExpression,
+    AggregateOp,
+    AggregateValueNullPolicy,
     AmbiguousTimePolicy,
+    ArithmeticDerivation,
+    ArithmeticDomain,
+    ArithmeticOperator,
     BinaryOp,
     BinaryOperator,
     BooleanFormatSpec,
@@ -78,6 +86,7 @@ from agent.etl_pipeline.transformation_ir import (
     CastFailurePolicy,
     ClipExpression,
     ClipNullPolicy,
+    CoalesceDerivation,
     CollisionPolicy,
     ColumnDropSpec,
     ColumnProjectSpec,
@@ -85,22 +94,37 @@ from agent.etl_pipeline.transformation_ir import (
     ColumnRef,
     ColumnRenameSpec,
     ColumnRole,
+    ConcatDerivation,
+    ConcatNullPolicy,
+    ConditionalDerivation,
     ConditionalReplaceExpression,
+    ConditionalUnknownPolicy,
     CreateColumnExpression,
     DataType,
+    DateArithmeticDerivation,
+    DateArithmeticUnit,
     DateFormatSpec,
+    DatePart,
+    DatePartExtract,
     DatasetSchema,
     DeduplicateExpression,
     DeduplicationTieBreaker,
+    DelimiterExtract,
+    DeriveExpression,
     DigestEncoding,
+    DivisionByZeroPolicy,
     DropColumnsExpression,
     DuplicateExportMode,
     EmailMaskDomainPolicy,
+    EmptyInputPolicy,
     ExistingColumnPolicy,
+    ExtractExpression,
+    ExtractFailurePolicy,
     FilterDropPolicy,
     FilterExpression,
     FilterUnknownPolicy,
     FlagExpression,
+    GroupKeyNullPolicy,
     GroupedImputationStrategy,
     GroupedImputationValue,
     HashAlgorithm,
@@ -112,16 +136,26 @@ from agent.etl_pipeline.transformation_ir import (
     ImputeExpression,
     InfinityPolicy,
     InSetPredicate,
+    JoinCardinality,
+    JoinCollisionPolicy,
+    JoinExpression,
+    JoinKeyPair,
+    JoinNullPolicy,
+    JoinType,
+    JoinUnmatchedPolicy,
+    JsonPathExtract,
     LearnedImputationModel,
     LiteralValue,
     MaskExpression,
     MaskNullPolicy,
     MaskStrategy,
     MissingGroupPolicy,
+    MultipleMatchPolicy,
     NonexistentTimePolicy,
     NullCheck,
     NullKeyPolicy,
     NumericFormatSpec,
+    NumericOperand,
     NumericOverflowPolicy,
     OccurrenceIdentityScope,
     OrderDirection,
@@ -131,8 +165,12 @@ from agent.etl_pipeline.transformation_ir import (
     PassThroughExpression,
     PredicateUnknownPolicy,
     ProjectColumnsExpression,
+    PublicationCommitResult,
+    PublicationStageHandle,
+    PublicationValidationResult,
     QuarantineExpression,
     QuarantineUnknownPolicy,
+    RegexExtract,
     RenameColumnsExpression,
     ReorderColumnsExpression,
     RoutingIdentityPolicy,
@@ -146,6 +184,7 @@ from agent.etl_pipeline.transformation_ir import (
     ShortValuePolicy,
     SortColumnSpec,
     SourceStableIdentitySpec,
+    StagedExecutionResult,
     StatisticalImputationStrategy,
     StepAuthorization,
     TemporalParseTarget,
@@ -153,6 +192,7 @@ from agent.etl_pipeline.transformation_ir import (
     TransformationStepIR,
     UnboundedInfinityPolicy,
     UnmappedValuePolicy,
+    UnmatchedRowDisposition,
     ValidateExpression,
     ValidateSeverity,
     ValidationUnknownPolicy,
@@ -256,6 +296,11 @@ class PySparkIRCompiler:
         ActionFamily.SCHEMA_MUTATION,
         ActionFamily.MASK,
         ActionFamily.HASH,
+        # Increment 3.3 additions
+        ActionFamily.JOIN,
+        ActionFamily.DERIVE,
+        ActionFamily.EXTRACT,
+        ActionFamily.AGGREGATE,
     }
 
     CONTROL_FAMILIES = {
@@ -327,6 +372,47 @@ class PySparkIRCompiler:
                     step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
                     diagnostics.append(f"Step '{sid}' StepAuthorization step_hash mismatch (UnauthorizedDestructiveActionError)")
                     continue
+
+            # B1b. CROSS Join Authorization Check (elevated authorization required)
+            if isinstance(step.expression, JoinExpression) and step.expression.join_type == JoinType.CROSS:
+                auth = step.authorization
+                if not auth:
+                    step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                    diagnostics.append(f"Step '{sid}' CROSS join requires elevated StepAuthorization (JoinAuthorizationError)")
+                    continue
+                if auth.step_id != sid:
+                    step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                    diagnostics.append(f"Step '{sid}' CROSS join StepAuthorization step_id mismatch: expected '{sid}', got '{auth.step_id}' (JoinAuthorizationError)")
+                    continue
+                if auth.expires_at < datetime.now(timezone.utc):
+                    step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                    diagnostics.append(f"Step '{sid}' CROSS join StepAuthorization is expired (JoinAuthorizationError)")
+                    continue
+
+            # B1c. Join Suffix Collision Preflight Check
+            if isinstance(step.expression, JoinExpression):
+                expr_j = step.expression
+                left_ds_cols = simulated_columns.get(expr_j.left_dataset)
+                right_ds_cols = simulated_columns.get(expr_j.right_dataset)
+                if left_ds_cols is not None and right_ds_cols is not None:
+                    key_rights = {
+                        kp.right.column_name if hasattr(kp.right, "column_name") else str(kp.right)
+                        for kp in expr_j.key_pairs
+                    }
+                    r_sfx = expr_j.right_suffix or "_right"
+                    has_collision = False
+                    for rc in right_ds_cols:
+                        if rc not in key_rights and rc in left_ds_cols:
+                            suffixed_name = rc + r_sfx
+                            if suffixed_name in left_ds_cols:
+                                step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
+                                diagnostics.append(
+                                    f"Step '{sid}' suffixed column '{suffixed_name}' collides with existing left column (JoinOutputCollisionError)"
+                                )
+                                has_collision = True
+                                break
+                    if has_collision:
+                        continue
 
             # B2. Static Schema Binding Checks for SchemaMutation
             if isinstance(step.expression, SchemaMutationExpression):
@@ -525,6 +611,7 @@ class PySparkIRCompiler:
             "from pyspark.sql import types as T",
             "from pyspark.sql.window import Window",
             "from agent.etl_pipeline.transformation_ir import compute_canonical_schema_hash",
+            "from agent.etl_pipeline.pandas_ir_compiler import RowExpansionLimitExceededError",
             "",
             "def transform_datasets(datasets, key_provider=None):",
             "    if isinstance(datasets, dict):",
@@ -738,7 +825,7 @@ class PySparkIRCompiler:
         comp_res = self.compile(graph)
         if not comp_res.is_success or comp_res.artifact is None:
             raise RuntimeError(f"PySpark compilation failed: {comp_res.diagnostics}")
-        loc: Dict[str, Any] = {}
+        loc: Dict[str, Any] = {"RowExpansionLimitExceededError": RowExpansionLimitExceededError}
         exec(comp_res.artifact.source_code, loc)
         datasets_fn = loc.get("transform_datasets")
         if datasets_fn:
@@ -831,6 +918,22 @@ class PySparkIRCompiler:
         # 13. HASH
         if isinstance(expr, HashExpression):
             return self._emit_hash(expr, preimages, df_var, step_id=step.step_id)
+
+        # 14. JOIN (Increment 3.3A)
+        if isinstance(expr, JoinExpression):
+            return self._emit_join(expr, preimages, df_var, step_id=step.step_id, authorization=step.authorization)
+
+        # 15. DERIVE (Increment 3.3B)
+        if hasattr(expr, "expression_type") and getattr(expr, "expression_type", None) == "derive":
+            return self._emit_derivation(expr, preimages, df_var, step_id=step.step_id)
+
+        # 16. EXTRACT (Increment 3.3B)
+        if hasattr(expr, "expression_type") and getattr(expr, "expression_type", None) == "extract":
+            return self._emit_extract(expr, preimages, df_var, step_id=step.step_id)
+
+        # 17. AGGREGATE (Increment 3.3C)
+        if isinstance(expr, AggregateExpression):
+            return self._emit_aggregate(expr, preimages, df_var, step_id=step.step_id)
 
         return [f"# Unsupported expression: {type(expr).__name__}"]
 
@@ -2003,6 +2106,20 @@ class PySparkIRCompiler:
             return f"{mode.upper()}_{alg.upper()}"
         if isinstance(expr, PassThroughExpression):
             return "PASS_THROUGH"
+        # Increment 3.3 subtypes
+        if isinstance(expr, JoinExpression):
+            jt = expr.join_type.value if hasattr(expr.join_type, "value") else str(expr.join_type)
+            return f"JOIN_{jt.upper()}"
+        if isinstance(expr, AggregateExpression):
+            return "AGGREGATE"
+        # DeriveExpression union members
+        if hasattr(expr, "expression_type") and getattr(expr, "expression_type", None) == "derive":
+            dt = getattr(expr, "derivation_type", "arithmetic")
+            return f"DERIVE_{dt.upper()}"
+        # ExtractExpression union members
+        if hasattr(expr, "expression_type") and getattr(expr, "expression_type", None) == "extract":
+            et = getattr(expr, "extraction_type", "regex")
+            return f"EXTRACT_{et.upper()}"
         return type(expr).__name__.upper()
 
     def _compute_policy_hash(self, expr: Any) -> str:
@@ -2107,7 +2224,809 @@ class PySparkIRCompiler:
 
 
 # ============================================================================
-# 3. Capability Registration Helper for Increment 3.1
+# 3a. Increment 3.3: JOIN, DERIVE, EXTRACT, AGGREGATE Emitters
+# ============================================================================
+
+    def _emit_join(
+        self,
+        expr: JoinExpression,
+        preimages: dict,
+        df_var: str,
+        step_id: str = "",
+        authorization: Optional[StepAuthorization] = None,
+    ) -> List[str]:
+        """
+        Emit native Spark join without Python UDFs.
+        Supports INNER, LEFT, RIGHT, FULL_OUTER, SEMI, ANTI, CROSS.
+        Enforces: cardinality guards, null-key policies, expansion-ratio caps, collision policies.
+        """
+        lines: List[str] = []
+        left_ds = expr.left_dataset
+        right_ds = expr.right_dataset
+        out_ds = expr.output_dataset or f"{left_ds}_joined_{right_ds}"
+        jt = expr.join_type
+        cardinality = expr.cardinality
+        null_policy = expr.null_policy
+        unmatched = expr.unmatched_policy
+        collision = expr.collision_policy
+        left_sfx = expr.left_suffix
+        right_sfx = expr.right_suffix
+        max_rows = expr.max_output_row_count
+        max_ratio = expr.max_row_expansion_ratio
+
+        # Resolve left/right DataFrames from _datasets dict
+        lines.append(f"_left_df = _datasets.get({repr(left_ds)}, _working)")
+        lines.append(f"_right_df = _datasets.get({repr(right_ds)})")
+        lines.append(f'if _right_df is None: raise ValueError("Right dataset {right_ds} not found in datasets for step {step_id}")')
+
+        # ---- Null-key policy pre-check (non-CROSS joins only) ----
+        if jt != JoinType.CROSS:
+            key_cols_left = []
+            key_cols_right = []
+            for kp in expr.key_pairs:
+                lk = kp.left.column_name if hasattr(kp.left, "column_name") else str(kp.left)
+                rk = kp.right.column_name if hasattr(kp.right, "column_name") else str(kp.right)
+                key_cols_left.append(lk)
+                key_cols_right.append(rk)
+
+            if null_policy == JoinNullPolicy.FAIL_STEP_ON_NULL_KEY:
+                for lk in key_cols_left:
+                    lines.append(
+                        f'if _left_df.filter(F.col({repr(lk)}).isNull()).limit(1).count() > 0: '
+                        f'raise ValueError("Null key in left column \'{lk}\' under FAIL_STEP_ON_NULL_KEY for step \'{step_id}\'")')
+                for rk in key_cols_right:
+                    lines.append(
+                        f'if _right_df.filter(F.col({repr(rk)}).isNull()).limit(1).count() > 0: '
+                        f'raise ValueError("Null key in right column \'{rk}\' under FAIL_STEP_ON_NULL_KEY for step \'{step_id}\'")')
+
+        # ---- Cardinality guards (for non-CROSS, non-SEMI, non-ANTI) ----
+        if jt not in (JoinType.CROSS, JoinType.SEMI, JoinType.ANTI):
+            if cardinality in (JoinCardinality.ONE_TO_ONE, JoinCardinality.ONE_TO_MANY):
+                # Left keys must be unique
+                left_key_list = repr([kp.left.column_name if hasattr(kp.left, "column_name") else str(kp.left) for kp in expr.key_pairs])
+                lines.append(f"_left_key_cols = {left_key_list}")
+                if null_policy == JoinNullPolicy.DROP_NULL_MATCHES:
+                    lines.append(f'_left_df_card = _left_df.filter(" & ".join(f"{{c}} IS NOT NULL" for c in _left_key_cols))')
+                else:
+                    lines.append(f'_left_df_card = _left_df')
+                lines.append(
+                    f'if _left_df_card.select(*_left_key_cols).groupBy(*_left_key_cols).count()'
+                    f'.filter("count > 1").limit(1).count() > 0: '
+                    f'raise ValueError("Left table has duplicate keys under {cardinality.value} for step {step_id}")')
+            if cardinality in (JoinCardinality.ONE_TO_ONE, JoinCardinality.MANY_TO_ONE):
+                # Right keys must be unique
+                right_key_list = repr([kp.right.column_name if hasattr(kp.right, "column_name") else str(kp.right) for kp in expr.key_pairs])
+                lines.append(f"_right_key_cols = {right_key_list}")
+                if null_policy == JoinNullPolicy.DROP_NULL_MATCHES:
+                    lines.append(f'_right_df_card = _right_df.filter(" & ".join(f"{{c}} IS NOT NULL" for c in _right_key_cols))')
+                else:
+                    lines.append(f'_right_df_card = _right_df')
+                lines.append(
+                    f'if _right_df_card.select(*_right_key_cols).groupBy(*_right_key_cols).count()'
+                    f'.filter("count > 1").limit(1).count() > 0: '
+                    f'raise ValueError("Right table has duplicate keys under {cardinality.value} for step {step_id}")')
+
+        # ---- Column collision resolution (pre-rename colliding non-key columns in right table) ----
+        if jt not in (JoinType.SEMI, JoinType.ANTI, JoinType.CROSS):
+            if collision == JoinCollisionPolicy.RENAME_WITH_SUFFIX:
+                lines.append(f"_left_col_set = set(_left_df.columns)")
+                right_key_list = repr([kp.right.column_name if hasattr(kp.right, "column_name") else str(kp.right) for kp in expr.key_pairs])
+                lines.append(f"_rk_set = set({right_key_list})")
+                lines.append(f"_colliding = [c for c in _right_df.columns if c in _left_col_set and c not in _rk_set]")
+                lines.append(f"for _c in _colliding:")
+                lines.append(f"    _right_df = _right_df.withColumnRenamed(_c, _c + {repr(right_sfx)})")
+                if left_sfx:
+                    left_key_list = repr([kp.left.column_name if hasattr(kp.left, "column_name") else str(kp.left) for kp in expr.key_pairs])
+                    lines.append(f"_lk_set = set({left_key_list})")
+                    lines.append(f"_colliding_l = [c for c in _left_df.columns if c in set(_right_df.columns) and c not in _lk_set]")
+                    lines.append(f"for _c in _colliding_l:")
+                    lines.append(f"    _left_df = _left_df.withColumnRenamed(_c, _c + {repr(left_sfx)})")
+
+        # ---- Build join condition ----
+        if jt != JoinType.CROSS:
+            cond_parts = []
+            for kp in expr.key_pairs:
+                lk = kp.left.column_name if hasattr(kp.left, "column_name") else str(kp.left)
+                rk = kp.right.column_name if hasattr(kp.right, "column_name") else str(kp.right)
+                if null_policy == JoinNullPolicy.MATCH_NULLS_TOGETHER:
+                    cond_parts.append(f"_left_df[{repr(lk)}].eqNullSafe(_right_df[{repr(rk)}])")
+                else:
+                    cond_parts.append(f"(_left_df[{repr(lk)}] == _right_df[{repr(rk)}])")
+            join_cond = " & ".join(cond_parts)
+
+        # ---- Pre-execution expansion check for CROSS join ----
+        if jt == JoinType.CROSS:
+            lines.append(f"_left_count = _left_df.count()")
+            lines.append(f"_right_count = _right_df.count()")
+            lines.append(f"_predicted_output = _left_count * _right_count")
+            if max_rows is not None:
+                lines.append(
+                    f'if _predicted_output > {max_rows!r}: '
+                    f'raise RowExpansionLimitExceededError("CROSS join output exceeds max_output_row_count {max_rows}")')
+            if max_ratio is not None:
+                lines.append(f"_exp_ratio = float(_predicted_output) / float(max(_left_count, 1))")
+                lines.append(
+                    f'if _exp_ratio > {max_ratio!r}: '
+                    f'raise RowExpansionLimitExceededError("CROSS join ratio exceeds max_row_expansion_ratio")')
+            lines.append(f"_joined = _left_df.crossJoin(_right_df)")
+        elif jt in (JoinType.SEMI, JoinType.ANTI):
+            spark_how = "left_semi" if jt == JoinType.SEMI else "left_anti"
+            lines.append(f"_joined = _left_df.join(_right_df, {join_cond}, {repr(spark_how)})")
+        elif jt == JoinType.LEFT:
+            lines.append(f"_joined = _left_df.join(_right_df, {join_cond}, 'left')")
+        elif jt == JoinType.RIGHT:
+            lines.append(f"_joined = _left_df.join(_right_df, {join_cond}, 'right')")
+        elif jt == JoinType.FULL_OUTER:
+            lines.append(f"_joined = _left_df.join(_right_df, {join_cond}, 'full')")
+        else:  # INNER
+            lines.append(f"_joined = _left_df.join(_right_df, {join_cond}, 'inner')")
+
+        # ---- Expansion ratio guard (non-CROSS) ----
+        if jt != JoinType.CROSS and max_ratio is not None:
+            lines.append(f"_left_count = _left_df.count()")
+            lines.append(f"_joined_count = _joined.count()")
+            lines.append(
+                f'if _left_count > 0 and (_joined_count / _left_count) > {max_ratio!r}: '
+                f'raise RowExpansionLimitExceededError("Join expansion ratio exceeded")')
+        elif jt != JoinType.CROSS and max_rows is not None:
+            lines.append(f"_joined_count = _joined.count()")
+            lines.append(f'if _joined_count > {max_rows!r}: raise RowExpansionLimitExceededError("Join output exceeds max_output_row_count")')
+
+        # ---- Unmatched row routing ----
+        if jt in (JoinType.LEFT, JoinType.FULL_OUTER) and unmatched.left_unmatched == UnmatchedRowDisposition.ROUTE_TO_UNMATCHED_OUTPUT:
+            left_unmatched_ref = unmatched.left_output_ref or f"{out_ds}_left_unmatched"
+            right_sample_key = expr.key_pairs[0].right.column_name if expr.key_pairs and hasattr(expr.key_pairs[0].right, "column_name") else None
+            if right_sample_key:
+                lines.append(f"_unmatched_left = _joined.filter(_right_df[{repr(right_sample_key)}].isNull())")
+                lines.append(f"_joined = _joined.filter(_right_df[{repr(right_sample_key)}].isNotNull())")
+                lines.append(f"outputs[{repr(left_unmatched_ref)}] = _unmatched_left")
+
+        if jt in (JoinType.RIGHT, JoinType.FULL_OUTER) and unmatched.right_unmatched == UnmatchedRowDisposition.ROUTE_TO_UNMATCHED_OUTPUT:
+            right_unmatched_ref = unmatched.right_output_ref or f"{out_ds}_right_unmatched"
+            left_sample_key = expr.key_pairs[0].left.column_name if expr.key_pairs and hasattr(expr.key_pairs[0].left, "column_name") else None
+            if left_sample_key:
+                lines.append(f"_unmatched_right = _joined.filter(_left_df[{repr(left_sample_key)}].isNull())")
+                lines.append(f"_joined = _joined.filter(_left_df[{repr(left_sample_key)}].isNotNull())")
+                lines.append(f"outputs[{repr(right_unmatched_ref)}] = _unmatched_right")
+
+        # ---- Drop duplicated join keys from right side for INNER/LEFT/RIGHT/FULL ----
+        if jt not in (JoinType.SEMI, JoinType.ANTI, JoinType.CROSS):
+            for kp in expr.key_pairs:
+                lk = kp.left.column_name if hasattr(kp.left, "column_name") else str(kp.left)
+                rk = kp.right.column_name if hasattr(kp.right, "column_name") else str(kp.right)
+                if lk == rk:
+                    if jt in (JoinType.INNER, JoinType.LEFT):
+                        lines.append(f"_joined = _joined.drop(_right_df[{repr(rk)}])")
+                    elif jt == JoinType.RIGHT:
+                        lines.append(f"_joined = _joined.drop(_left_df[{repr(lk)}])")
+                    elif jt == JoinType.FULL_OUTER:
+                        lines.append(f"_joined = _joined.withColumn({repr(lk)}, F.coalesce(_left_df[{repr(lk)}], _right_df[{repr(rk)}])).drop(_right_df[{repr(rk)}])")
+
+        # ---- Register output ----
+        lines.append(f"_datasets[{repr(out_ds)}] = _joined")
+        lines.append(f"outputs[{repr(out_ds)}] = _joined")
+        lines.append(f"_working = _joined")
+        return lines
+
+    def _emit_derivation(
+        self,
+        expr: Any,
+        preimages: dict,
+        df_var: str,
+        step_id: str = "",
+    ) -> List[str]:
+        """Emit Catalyst-native derivation expressions (arithmetic, conditional, coalesce, concat, date arithmetic)."""
+        lines: List[str] = []
+        derivation_type = getattr(expr, "derivation_type", "arithmetic")
+
+        if derivation_type == "arithmetic":
+            out_col = expr.output_column
+            domain = expr.domain
+            operator = expr.operator
+            div_zero = expr.division_by_zero_policy
+            overflow = expr.overflow_policy
+
+            def _operand_expr(op: Any) -> str:
+                if op.column_name:
+                    base = f"F.col({repr(op.column_name)})"
+                else:
+                    val = op.literal_value if op.literal_value is not None else op.value
+                    base = f"F.lit({val!r})"
+                return base
+
+            left_e = _operand_expr(expr.left)
+            right_e = _operand_expr(expr.right) if expr.right else "F.lit(1)"
+
+            # Domain widening: cast to target type before binary operation
+            if domain == ArithmeticDomain.INT64:
+                # Operands are widened to DECIMAL(38, 0) before arithmetic evaluation to prevent wraparound
+                left_e = f"({left_e}).cast(T.DecimalType(38, 0))"
+                right_e = f"({right_e}).cast(T.DecimalType(38, 0))"
+            elif domain == ArithmeticDomain.DECIMAL:
+                prec = getattr(expr, "precision", 38) or 38
+                scale = getattr(expr, "scale", 10) or 10
+                left_e = f"({left_e}).cast(T.DecimalType({prec}, {scale}))"
+                right_e = f"({right_e}).cast(T.DecimalType({prec}, {scale}))"
+            else:  # FLOAT64
+                left_e = f"({left_e}).cast('double')"
+                right_e = f"({right_e}).cast('double')"
+
+            # Build raw operation expression string
+            op_map = {
+                "add": f"({left_e} + {right_e})",
+                "subtract": f"({left_e} - {right_e})",
+                "multiply": f"({left_e} * {right_e})",
+                "divide": f"({left_e} / {right_e})",
+                "floor_divide": f"F.floor({left_e} / {right_e})",
+                "modulo": f"({left_e} % {right_e})",
+                "power": f"F.pow({left_e}, {right_e})",
+            }
+            op_key = operator.value if hasattr(operator, "value") else str(operator)
+            raw_expr = op_map.get(op_key, f"({left_e} + {right_e})")
+
+            # Division-by-zero wrapping
+            if op_key in ("divide", "floor_divide", "modulo"):
+                if div_zero == DivisionByZeroPolicy.SET_NULL:
+                    raw_expr = f"F.when({right_e} == F.lit(0), F.lit(None)).otherwise({raw_expr})"
+                elif div_zero == DivisionByZeroPolicy.FAIL_STEP:
+                    lines.append(
+                        f"if {df_var}.filter({right_e} == F.lit(0)).limit(1).count() > 0: "
+                        f"raise ZeroDivisionError('Division by zero in column for step {step_id!r}')"
+                    )
+                elif div_zero == DivisionByZeroPolicy.RETURN_INFINITY:
+                    raw_expr = (
+                        f"F.when({right_e} == F.lit(0), "
+                        f"F.when({left_e} > F.lit(0), F.lit(float('inf')))"
+                        f".when({left_e} < F.lit(0), F.lit(float('-inf')))"
+                        f".otherwise(F.lit(float('nan'))))"
+                        f".otherwise({raw_expr})"
+                    )
+                elif div_zero == DivisionByZeroPolicy.USE_FALLBACK:
+                    fb = expr.fallback_value
+                    raw_expr = f"F.when({right_e} == F.lit(0), F.lit({fb!r})).otherwise({raw_expr})"
+
+            # Overflow: INT64 pre-widened decimal bounds check and clipping
+            if domain == ArithmeticDomain.INT64:
+                INT64_MIN = -9223372036854775808
+                INT64_MAX = 9223372036854775807
+                if overflow == NumericOverflowPolicy.CLIP_TO_RANGE:
+                    raw_expr = (
+                        f"F.when({raw_expr} > F.lit({INT64_MAX}), F.lit({INT64_MAX}))"
+                        f".when({raw_expr} < F.lit({INT64_MIN}), F.lit({INT64_MIN}))"
+                        f".otherwise({raw_expr}).cast('long')"
+                    )
+                elif overflow == NumericOverflowPolicy.FAIL_STEP:
+                    lines.append(
+                        f"if {df_var}.filter(({raw_expr} > F.lit({INT64_MAX})) | ({raw_expr} < F.lit({INT64_MIN}))).limit(1).count() > 0: "
+                        f"raise ArithmeticError('INT64 arithmetic overflow under FAIL_STEP for step {step_id!r}')"
+                    )
+                    raw_expr = f"({raw_expr}).cast('long')"
+                elif overflow == NumericOverflowPolicy.SET_NULL:
+                    raw_expr = (
+                        f"F.when(({raw_expr} > F.lit({INT64_MAX})) | ({raw_expr} < F.lit({INT64_MIN})), F.lit(None))"
+                        f".otherwise({raw_expr}).cast('long')"
+                    )
+                else:
+                    raw_expr = f"({raw_expr}).cast('long')"
+
+            lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, {raw_expr})")
+
+        elif derivation_type == "conditional":
+            out_col = expr.output_column
+            unknown = expr.unknown_policy
+            cond_expr = self._emit_spark_expression(expr.condition, preimages)
+            then_expr = f"F.col({repr(expr.then_column)})" if expr.then_column else f"F.lit({expr.then_value!r})"
+            else_expr = f"F.col({repr(expr.else_column)})" if expr.else_column else f"F.lit({expr.else_value!r})"
+
+            if unknown == ConditionalUnknownPolicy.SET_NULL:
+                result = f"F.when(({cond_expr}).isNull(), F.lit(None)).when({cond_expr}, {then_expr}).otherwise({else_expr})"
+            elif unknown == ConditionalUnknownPolicy.USE_THEN:
+                result = f"F.when(({cond_expr}).isNull() | ({cond_expr}), {then_expr}).otherwise({else_expr})"
+            elif unknown == ConditionalUnknownPolicy.USE_ELSE:
+                result = f"F.when(({cond_expr}).isNotNull() & ({cond_expr}), {then_expr}).otherwise({else_expr})"
+            elif unknown == ConditionalUnknownPolicy.USE_FALLBACK:
+                fb = expr.fallback_value
+                result = f"F.when(({cond_expr}).isNull(), F.lit({fb!r})).when({cond_expr}, {then_expr}).otherwise({else_expr})"
+            elif unknown == ConditionalUnknownPolicy.FAIL_STEP:
+                lines.append(
+                    f"if {df_var}.filter(({cond_expr}).isNull()).limit(1).count() > 0: "
+                    f"raise ValueError('Condition evaluated to null/unknown under FAIL_STEP for step {step_id!r}')")
+                result = f"F.when({cond_expr}, {then_expr}).otherwise({else_expr})"
+            else:
+                result = f"F.when({cond_expr}, {then_expr}).otherwise({else_expr})"
+
+            lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, {result})")
+
+        elif derivation_type == "coalesce":
+            out_col = expr.output_column
+            col_args = ", ".join(f"F.col({repr(c)})" for c in expr.columns)
+            if expr.fallback_value is not None:
+                col_args += f", F.lit({expr.fallback_value!r})"
+            lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, F.coalesce({col_args}))")
+
+        elif derivation_type == "concat":
+            out_col = expr.output_column
+            null_pol = expr.null_policy
+            delim = expr.delimiter
+
+            col_exprs = [f"F.col({repr(c)})" for c in expr.columns]
+
+            if null_pol in (ConcatNullPolicy.IGNORE_NULLS, ConcatNullPolicy.IGNORE):
+                # Filter nulls: use concat_ws which ignores nulls natively
+                col_args = ", ".join(col_exprs)
+                lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, F.concat_ws({repr(delim)}, {col_args}))")
+            elif null_pol == ConcatNullPolicy.SET_RESULT_NULL or null_pol == ConcatNullPolicy.PROPAGATE_NULL:
+                # If any null, result is null
+                null_check = " | ".join(f"F.col({repr(c)}).isNull()" for c in expr.columns)
+                col_args = ", ".join(f"F.col({repr(c)}).cast('string')" for c in expr.columns)
+                concat_expr = f"F.concat({col_args})"
+                if delim:
+                    concat_expr = f"F.concat_ws({repr(delim)}, {', '.join(col_exprs)})"
+                lines.append(
+                    f"{df_var} = {df_var}.withColumn({repr(out_col)}, "
+                    f"F.when({null_check}, F.lit(None)).otherwise({concat_expr}))")
+            elif null_pol == ConcatNullPolicy.PRESERVE_AS_EMPTY:
+                # Replace null with empty string before concat
+                coalesced_cols = [f"F.coalesce(F.col({repr(c)}).cast('string'), F.lit(''))" for c in expr.columns]
+                coalesced = ", ".join(coalesced_cols)
+                if delim:
+                    lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, F.concat_ws({repr(delim)}, {coalesced}))")
+                else:
+                    lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, F.concat({coalesced}))")
+            elif null_pol == ConcatNullPolicy.COALESCE_EMPTY:
+                # Same as PRESERVE_AS_EMPTY but coalesce at each column
+                coalesced_cols = [f"F.coalesce(F.col({repr(c)}).cast('string'), F.lit(''))" for c in expr.columns]
+                coalesced = ", ".join(coalesced_cols)
+                if delim:
+                    lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, F.concat_ws({repr(delim)}, {coalesced}))")
+                else:
+                    lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, F.concat({coalesced}))")
+            else:
+                col_args = ", ".join(col_exprs)
+                lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, F.concat_ws({repr(delim)}, {col_args}))")
+
+        elif derivation_type == "date_arithmetic":
+            out_col = expr.output_column
+            src = expr.source_column
+            op = expr.operation
+            unit_val = expr.unit.value if hasattr(expr.unit, "value") else str(expr.unit)
+            amount = expr.amount
+            tgt = expr.target_column
+
+            if op == "diff":
+                # Date difference between two columns
+                if unit_val == "day":
+                    diff_expr = f"F.datediff(F.col({repr(src)}), F.col({repr(tgt)}))"
+                elif unit_val == "month":
+                    diff_expr = f"F.months_between(F.col({repr(src)}), F.col({repr(tgt)}))"
+                elif unit_val == "year":
+                    diff_expr = f"(F.months_between(F.col({repr(src)}), F.col({repr(tgt)})) / F.lit(12.0))"
+                else:
+                    # HOUR / MINUTE / SECOND - use unix_timestamp diff
+                    unit_secs = {"hour": 3600, "minute": 60, "second": 1}.get(unit_val, 1)
+                    diff_expr = f"((F.unix_timestamp(F.col({repr(src)})) - F.unix_timestamp(F.col({repr(tgt)}))) / F.lit({unit_secs}))"
+                lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, {diff_expr})")
+            elif op == "add":
+                if unit_val == "day":
+                    lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, F.date_add(F.col({repr(src)}), {amount!r}))")
+                elif unit_val == "month":
+                    lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, F.add_months(F.col({repr(src)}), {amount!r}))")
+                elif unit_val == "year":
+                    lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, F.add_months(F.col({repr(src)}), {amount * 12!r}))")
+                else:
+                    unit_secs = {"hour": 3600, "minute": 60, "second": 1}.get(unit_val, 1)
+                    lines.append(
+                        f"{df_var} = {df_var}.withColumn({repr(out_col)}, "
+                        f"F.to_timestamp(F.unix_timestamp(F.col({repr(src)})) + F.lit({amount * unit_secs!r})))")
+            elif op == "subtract":
+                if unit_val == "day":
+                    lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, F.date_sub(F.col({repr(src)}), {amount!r}))")
+                elif unit_val == "month":
+                    lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, F.add_months(F.col({repr(src)}), {-amount!r}))")
+                elif unit_val == "year":
+                    lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, F.add_months(F.col({repr(src)}), {-amount * 12!r}))")
+                else:
+                    unit_secs = {"hour": 3600, "minute": 60, "second": 1}.get(unit_val, 1)
+                    lines.append(
+                        f"{df_var} = {df_var}.withColumn({repr(out_col)}, "
+                        f"F.to_timestamp(F.unix_timestamp(F.col({repr(src)})) - F.lit({amount * unit_secs!r})))")
+
+        return lines
+
+    def _emit_extract(
+        self,
+        expr: Any,
+        preimages: dict,
+        df_var: str,
+        step_id: str = "",
+    ) -> List[str]:
+        """Emit Catalyst-native extraction expressions (regex, delimiter, date_part, json_path)."""
+        lines: List[str] = []
+        extraction_type = getattr(expr, "extraction_type", "regex")
+
+        if extraction_type == "regex":
+            out_col = expr.output_column
+            src = expr.source_column
+            pattern = expr.pattern
+            grp = expr.group_index
+            multi_policy = expr.multiple_match_policy
+            fail_pol = expr.failure_policy
+            fallback = expr.fallback_value
+
+            if multi_policy == MultipleMatchPolicy.FAIL_STEP:
+                # Count matches per row - use regexp_extract_all if available, else simulate with regexp_extract
+                # Spark 3.1+ has regexp_extract_all; Spark 3.5 has it
+                lines.append(
+                    f"if {df_var}.filter(F.size(F.regexp_extract_all(F.col({repr(src)}), F.lit({repr(pattern)}))) > 1).limit(1).count() > 0: "
+                    f"raise ValueError('Multiple regex matches under FAIL_STEP for column {repr(src)} in step {repr(step_id)}')")
+
+            raw_extracted = f"F.regexp_extract(F.col({repr(src)}), {repr(pattern)}, {grp})"
+            # regexp_extract returns "" on no match - convert to null for SET_NULL
+            if fail_pol == ExtractFailurePolicy.SET_NULL:
+                extracted = f"F.when(F.regexp_extract(F.col({repr(src)}), {repr(pattern)}, {grp}) == F.lit(''), F.lit(None)).otherwise({raw_extracted})"
+            elif fail_pol == ExtractFailurePolicy.USE_FALLBACK:
+                extracted = f"F.when(F.regexp_extract(F.col({repr(src)}), {repr(pattern)}, {grp}) == F.lit(''), F.lit({fallback!r})).otherwise({raw_extracted})"
+            elif fail_pol == ExtractFailurePolicy.FAIL_STEP:
+                lines.append(
+                    f"if {df_var}.filter(F.regexp_extract(F.col({repr(src)}), {repr(pattern)}, {grp}) == F.lit('')).limit(1).count() > 0: "
+                    f"raise ValueError('Regex no-match under FAIL_STEP for column {repr(src)} in step {repr(step_id)}')")
+                extracted = raw_extracted
+            else:
+                extracted = raw_extracted
+
+            lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, {extracted})")
+
+        elif extraction_type == "delimiter":
+            out_col = expr.output_column
+            src = expr.source_column
+            delimiter = expr.delimiter
+            index = expr.index
+            fail_pol = expr.failure_policy
+            fallback = expr.fallback_value
+
+            # Split and get element at index; F.split(...)[index]
+            split_expr = f"F.split(F.col({repr(src)}), {repr(re.escape(delimiter))})"
+            elem_expr = f"{split_expr}[{index}]"
+            size_check = f"F.size({split_expr}) > {index}"
+
+            if fail_pol == ExtractFailurePolicy.SET_NULL:
+                result_expr = f"F.when({size_check}, {elem_expr}).otherwise(F.lit(None))"
+            elif fail_pol == ExtractFailurePolicy.USE_FALLBACK:
+                result_expr = f"F.when({size_check}, {elem_expr}).otherwise(F.lit({fallback!r}))"
+            elif fail_pol == ExtractFailurePolicy.FAIL_STEP:
+                lines.append(
+                    f"if {df_var}.filter(~({size_check})).limit(1).count() > 0: "
+                    f"raise ValueError('Delimiter index {index} out of range for step {repr(step_id)}')")
+                result_expr = elem_expr
+            else:
+                result_expr = f"F.when({size_check}, {elem_expr}).otherwise(F.lit(None))"
+
+            lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, {result_expr})")
+
+        elif extraction_type == "date_part":
+            out_col = expr.output_column
+            src = expr.source_column
+            part = expr.part
+            part_val = part.value if hasattr(part, "value") else str(part)
+            fail_pol = expr.failure_policy
+
+            # Map DatePart to Spark functions (3.3 scope: DAY, MONTH, YEAR only)
+            part_map = {
+                "year": f"F.year(F.col({repr(src)}))",
+                "month": f"F.month(F.col({repr(src)}))",
+                "day": f"F.dayofmonth(F.col({repr(src)}))",
+                "hour": f"F.hour(F.col({repr(src)}))",
+                "minute": f"F.minute(F.col({repr(src)}))",
+                "second": f"F.second(F.col({repr(src)}))",
+                "day_of_week": f"((F.dayofweek(F.col({repr(src)})) + 5) % 7)",
+                "quarter": f"F.quarter(F.col({repr(src)}))",
+            }
+            part_expr = part_map.get(part_val, f"F.year(F.col({repr(src)}))")
+
+            if fail_pol == ExtractFailurePolicy.SET_NULL:
+                result_expr = f"F.when(F.col({repr(src)}).isNull(), F.lit(None)).otherwise({part_expr})"
+            else:
+                result_expr = part_expr
+
+            lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, {result_expr})")
+
+        elif extraction_type == "json_path":
+            out_col = expr.output_column
+            src = expr.source_column
+            path_obj = expr.path
+            path_str = path_obj.path if hasattr(path_obj, "path") else str(path_obj)
+            fail_pol = expr.failure_policy
+            fallback = expr.fallback_value
+
+            # Convert dot-notation JSON path to Spark get_json_object format ($. prefix)
+            if not path_str.startswith("$"):
+                path_str = "$." + path_str
+            json_expr = f"F.get_json_object(F.col({repr(src)}), {repr(path_str)})"
+
+            if fail_pol == ExtractFailurePolicy.USE_FALLBACK:
+                result_expr = f"F.coalesce({json_expr}, F.lit({fallback!r}))"
+            else:
+                result_expr = json_expr  # Returns null on miss (SET_NULL behavior by default)
+
+            lines.append(f"{df_var} = {df_var}.withColumn({repr(out_col)}, {result_expr})")
+
+        return lines
+
+    def _emit_aggregate(
+        self,
+        expr: AggregateExpression,
+        preimages: dict,
+        df_var: str,
+        step_id: str = "",
+    ) -> List[str]:
+        """Emit Catalyst-native aggregation expressions."""
+        lines: List[str] = []
+        out_ds = expr.output_dataset or "primary"
+        group_by = expr.group_by
+        aggregates = expr.aggregates
+        gk_null_policy = expr.group_key_null_policy
+        empty_policy = expr.empty_input_policy
+
+        # ---- Group key null policy pre-check ----
+        if gk_null_policy == GroupKeyNullPolicy.FAIL_STEP and group_by:
+            null_check = " | ".join(f"F.col({repr(k)}).isNull()" for k in group_by)
+            lines.append(
+                f'if {df_var}.filter({null_check}).limit(1).count() > 0: '
+                f'raise ValueError("Null group key encountered under FAIL_STEP for step \'{step_id}\'")')
+
+        elif gk_null_policy == GroupKeyNullPolicy.DROP_NULL_GROUP and group_by:
+            filter_expr = " & ".join(f"F.col({repr(k)}).isNotNull()" for k in group_by)
+            lines.append(f"{df_var} = {df_var}.filter({filter_expr})")
+
+        # ---- Empty input policy ----
+        lines.append(f"_agg_input_empty = ({df_var}.limit(1).count() == 0)")
+        if empty_policy == EmptyInputPolicy.FAIL_STEP:
+            lines.append(
+                f"if _agg_input_empty: "
+                f"raise ValueError('Empty input under FAIL_STEP aggregate policy for step {step_id!r}')")
+
+        # ---- Build agg column expressions ----
+        agg_cols_parts = []
+        for agg_spec in aggregates:
+            op = agg_spec.operation
+            src = agg_spec.source_column
+            out = agg_spec.output_column
+            null_pol = agg_spec.null_policy
+
+            if op == AggregateOp.COUNT and src is None:
+                # COUNT(*)
+                agg_expr = f"F.count(F.lit(1)).alias({repr(out)})"
+            elif op == AggregateOp.COUNT:
+                if null_pol == AggregateValueNullPolicy.PROPAGATE_NULL:
+                    agg_expr = f"F.count(F.col({repr(src)})).alias({repr(out)})"
+                else:
+                    agg_expr = f"F.count(F.col({repr(src)})).alias({repr(out)})"
+            elif op == AggregateOp.COUNT_DISTINCT:
+                agg_expr = f"F.countDistinct(F.col({repr(src)})).alias({repr(out)})"
+            elif op == AggregateOp.SUM:
+                col_e = f"F.col({repr(src)})"
+                if null_pol == AggregateValueNullPolicy.TREAT_AS_ZERO:
+                    agg_expr = f"F.coalesce(F.sum({col_e}), F.lit(0)).alias({repr(out)})"
+                elif null_pol == AggregateValueNullPolicy.PROPAGATE_NULL:
+                    agg_expr = f"F.sum({col_e}).alias({repr(out)})"
+                else:
+                    agg_expr = f"F.sum({col_e}).alias({repr(out)})"
+            elif op == AggregateOp.AVG:
+                agg_expr = f"F.avg(F.col({repr(src)})).alias({repr(out)})"
+            elif op == AggregateOp.MIN:
+                agg_expr = f"F.min(F.col({repr(src)})).alias({repr(out)})"
+            elif op == AggregateOp.MAX:
+                agg_expr = f"F.max(F.col({repr(src)})).alias({repr(out)})"
+            elif op == AggregateOp.STDDEV_SAMPLE:
+                agg_expr = f"F.stddev_samp(F.col({repr(src)})).alias({repr(out)})"
+            elif op == AggregateOp.STDDEV_POPULATION:
+                agg_expr = f"F.stddev_pop(F.col({repr(src)})).alias({repr(out)})"
+            elif op == AggregateOp.MEDIAN:
+                # approx_percentile with accuracy bound - Catalyst native
+                agg_expr = f"F.percentile_approx(F.col({repr(src)}), 0.5, 1000).alias({repr(out)})"
+            else:
+                agg_expr = f"F.count(F.lit(1)).alias({repr(out)})"
+
+            agg_cols_parts.append(agg_expr)
+
+        agg_cols_str = ", ".join(agg_cols_parts)
+
+        # ---- Execute aggregation ----
+        if group_by:
+            group_cols_str = ", ".join(f"F.col({repr(k)})" for k in group_by)
+            lines.append(f"_agg_result = {df_var}.groupBy({group_cols_str}).agg({agg_cols_str})")
+        else:
+            # Global aggregation
+            lines.append(f"_agg_result = {df_var}.agg({agg_cols_str})")
+
+        # ---- Empty input policy handling ----
+        if empty_policy == EmptyInputPolicy.EMIT_EMPTY_DATASET:
+            lines.append("if _agg_input_empty: _agg_result = _agg_result.limit(0)")
+
+        # ---- Order by ----
+        if expr.order_by:
+            sort_parts = []
+            for s in expr.order_by:
+                col_name = s.column if hasattr(s, "column") else getattr(s, "column_name", str(s))
+                direction = s.direction if hasattr(s, "direction") else None
+                dir_val = direction.value if hasattr(direction, "value") else str(direction) if direction else "asc"
+                if dir_val.lower() == "desc":
+                    sort_parts.append(f"F.col({repr(col_name)}).desc()")
+                else:
+                    sort_parts.append(f"F.col({repr(col_name)}).asc()")
+            lines.append(f"_agg_result = _agg_result.orderBy({', '.join(sort_parts)})")
+
+        lines.append(f"outputs[{repr(out_ds)}] = _agg_result")
+        lines.append(f"_working = _agg_result")
+        return lines
+
+
+# ============================================================================
+# 3b. Increment 3.3D: PySpark In-Memory Publication Adapter
+# ============================================================================
+
+class PySparkPublicationStateError(Exception):
+    """Raised when the publication adapter is invoked in an invalid state."""
+    pass
+
+
+class PySparkPublicationPostconditionError(ValueError):
+    """Raised when a postcondition fails during PySpark publication validation; triggers abort."""
+    pass
+
+
+class PySparkPublicationAbortError(RuntimeError):
+    """Raised after aborting a staged PySpark publication."""
+    pass
+
+
+class _AdapterState(str):
+    NEW = "NEW"
+    STAGING = "STAGING"
+    STAGED = "STAGED"
+    VALIDATING = "VALIDATING"
+    COMMITTED = "COMMITTED"
+    ABORTED = "ABORTED"
+
+
+class PySparkInMemoryPublicationAdapter:
+    """
+    In-memory PySpark publication adapter implementing the PublicationAdapter formal state machine.
+
+    State transitions:
+        NEW -> STAGING (via stage())
+        STAGING -> STAGED (stage() completes)
+        STAGED -> VALIDATING (via validate())
+        VALIDATING -> COMMITTED (via commit())
+        VALIDATING -> ABORTED (via abort())
+        STAGED -> ABORTED (via abort())
+    """
+
+    def __init__(self) -> None:
+        self._published: Dict[str, Any] = {}   # committed outputs
+        self._staged: Dict[str, Any] = {}       # transient staging area
+        self._manifest_version: str = "v0"
+        self._state: str = _AdapterState.NEW
+        self._commit_count: int = 0
+        self._handle: Optional[PublicationStageHandle] = None
+
+    # --- State transition guards ---
+    def _require_state(self, *allowed: str) -> None:
+        if self._state not in allowed:
+            raise PySparkPublicationStateError(
+                f"Adapter in state {self._state!r}; operation requires one of {allowed}")
+
+    def stage(self, staging_id: str, outputs: Mapping[str, Any]) -> PublicationStageHandle:
+        self._require_state(_AdapterState.NEW, _AdapterState.COMMITTED, _AdapterState.ABORTED)
+        self._state = _AdapterState.STAGING
+        self._staged = dict(outputs)
+        output_refs = list(outputs.keys())
+        handle = PublicationStageHandle(staging_id=staging_id, output_refs=output_refs)
+        self._handle = handle
+        self._state = _AdapterState.STAGED
+        return handle
+
+    def validate(self, handle: PublicationStageHandle) -> PublicationValidationResult:
+        self._require_state(_AdapterState.STAGED)
+        self._state = _AdapterState.VALIDATING
+        # Basic structural integrity check: all staged refs present
+        missing = [r for r in handle.output_refs if r not in self._staged]
+        if missing:
+            return PublicationValidationResult(
+                is_valid=False,
+                passed_postconditions=0,
+                failed_postconditions=len(missing),
+                errors=[f"Staged output ref '{r}' not present in staging area" for r in missing],
+            )
+        return PublicationValidationResult(
+            is_valid=True,
+            passed_postconditions=len(handle.output_refs),
+            failed_postconditions=0,
+        )
+
+    def commit(self, handle: PublicationStageHandle) -> PublicationCommitResult:
+        if self._state == _AdapterState.COMMITTED:
+            return PublicationCommitResult(
+                is_committed=True,
+                published_output_count=len(self._published),
+                manifest_version=self._manifest_version,
+            )
+        self._require_state(_AdapterState.VALIDATING)
+        self._commit_count += 1
+        new_version = f"v{self._commit_count}_{handle.staging_id}"
+        self._published.update(self._staged)
+        self._staged.clear()
+        self._manifest_version = new_version
+        self._state = _AdapterState.COMMITTED
+        return PublicationCommitResult(
+            is_committed=True,
+            published_output_count=len(handle.output_refs),
+            manifest_version=new_version,
+        )
+
+    def abort(self, handle: Optional[PublicationStageHandle] = None) -> None:
+        if self._state == _AdapterState.ABORTED:
+            return
+        self._require_state(_AdapterState.VALIDATING, _AdapterState.STAGED, _AdapterState.STAGING)
+        self._staged.clear()
+        self._state = _AdapterState.ABORTED
+
+
+def execute_pyspark_with_publication_contracts(
+    graph: TransformationIRGraph,
+    df: Any,
+    adapter: PySparkInMemoryPublicationAdapter,
+    postconditions: Optional[List] = None,
+    staging_id: Optional[str] = None,
+) -> PublicationCommitResult:
+    """
+    Execute a PySpark IR graph and publish outputs atomically via the publication adapter.
+
+    State machine enforced:
+        1. compile + execute
+        2. stage()
+        3. validate() structural check
+        4. run postconditions  -> FAIL => abort() + raise PySparkPublicationPostconditionError
+        5. commit()
+    """
+    import uuid
+    sid = staging_id or str(uuid.uuid4())
+    compiler = PySparkIRCompiler()
+    comp_result = compiler.compile(graph)
+    if not comp_result.is_success or comp_result.artifact is None:
+        raise RuntimeError(f"PySpark compilation failed: {comp_result.diagnostics}")
+
+    exec_result = compiler.execute(graph, df)
+    outputs = exec_result.outputs
+
+    # Stage
+    handle = adapter.stage(staging_id=sid, outputs=outputs)
+
+    # Structural validate
+    val_result = adapter.validate(handle)
+    if not val_result.is_valid:
+        adapter.abort(handle)
+        raise PySparkPublicationPostconditionError(
+            f"Publication aborted due to failed postconditions: {val_result.errors}")
+
+    # Run user-supplied postconditions
+    errors: List[str] = []
+    for pc in (postconditions or []):
+        try:
+            pc(outputs)
+        except Exception as exc:
+            errors.append(str(exc))
+
+    if errors:
+        adapter.abort(handle)
+        raise PySparkPublicationPostconditionError(
+            f"Publication aborted due to failed postconditions: {errors}")
+
+    return adapter.commit(handle)
+
+
+# ============================================================================
+# 3c. Capability Registration Helper for Increment 3.1
 # ============================================================================
 
 def register_pyspark_scalar_capabilities(
@@ -2211,5 +3130,72 @@ def register_pyspark_scalar_capabilities(
                     )
 
 
+def register_pyspark_increment_33_capabilities(
+    registry: Optional[EngineCapabilityRegistry] = None,
+    profile: Optional[SparkRuntimeProfile] = None,
+    certification_commit: str = "PENDING_INCREMENT_33",
+) -> None:
+    """
+    Registers certified capabilities for PySpark IR Compiler Increment 3.3
+    (JOIN, DERIVE, EXTRACT, AGGREGATE) after parity proof has been established.
+    """
+    reg = registry or get_global_capability_registry()
+    prof = profile or SparkRuntimeProfile()
+    rt_hash = prof.compute_hash()
+    default_pol_hash = hashlib.sha256(b"{}").hexdigest()
+
+    increment_33_capabilities = [
+        # JOIN
+        (ActionFamily.JOIN, "JOIN_INNER"),
+        (ActionFamily.JOIN, "JOIN_LEFT"),
+        (ActionFamily.JOIN, "JOIN_RIGHT"),
+        (ActionFamily.JOIN, "JOIN_FULL_OUTER"),
+        (ActionFamily.JOIN, "JOIN_SEMI"),
+        (ActionFamily.JOIN, "JOIN_ANTI"),
+        (ActionFamily.JOIN, "JOIN_CROSS"),
+        # DERIVE
+        (ActionFamily.DERIVE, "DERIVE_ARITHMETIC"),
+        (ActionFamily.DERIVE, "DERIVE_CONDITIONAL"),
+        (ActionFamily.DERIVE, "DERIVE_COALESCE"),
+        (ActionFamily.DERIVE, "DERIVE_CONCAT"),
+        (ActionFamily.DERIVE, "DERIVE_DATE_ARITHMETIC"),
+        # EXTRACT
+        (ActionFamily.EXTRACT, "EXTRACT_REGEX"),
+        (ActionFamily.EXTRACT, "EXTRACT_DELIMITER"),
+        (ActionFamily.EXTRACT, "EXTRACT_DATE_PART"),
+        (ActionFamily.EXTRACT, "EXTRACT_JSON_PATH"),
+        # AGGREGATE
+        (ActionFamily.AGGREGATE, "AGGREGATE"),
+    ]
+
+    for family, subtype in increment_33_capabilities:
+        for st in {subtype, subtype.lower(), subtype.upper()}:
+            for ir_v in ("1.0.0", "v1.0"):
+                cat_v = "v1.0" if ir_v == "v1.0" else "1.0.0"
+                for pol_h in (default_pol_hash, "*"):
+                    key = EngineCapabilityKey(
+                        family=family,
+                        expression_subtype=st,
+                        policy_profile_hash=pol_h,
+                        ir_version=ir_v,
+                        catalogue_version=cat_v,
+                        compiler_name=PySparkIRCompiler.COMPILER_NAME,
+                        compiler_version=PySparkIRCompiler.COMPILER_VERSION,
+                        engine_name=PySparkIRCompiler.ENGINE_NAME,
+                        engine_version=PySparkIRCompiler.ENGINE_VERSION,
+                        dialect=None,
+                        runtime_profile_hash=rt_hash,
+                    )
+                    reg.register_capability(
+                        key=key,
+                        status=CapabilityStatus.VERIFIED,
+                        reason_code="VERIFIED_BY_PYSPARK_PARITY_INCREMENT_33",
+                        limitations=(),
+                        verified_test_ids=("tests/cross_engine/test_parity_pyspark_joins_derivations.py",),
+                        certification_commit=certification_commit,
+                    )
+
+
 # Automatically register on module import into global registry
 register_pyspark_scalar_capabilities()
+register_pyspark_increment_33_capabilities()

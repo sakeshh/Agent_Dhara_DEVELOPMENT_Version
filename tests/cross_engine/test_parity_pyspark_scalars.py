@@ -655,8 +655,9 @@ def test_pyspark_pass_through_control_disposition():
 # ============================================================================
 
 def test_pyspark_preflight_blocks_unsupported_family_atomically():
-    """Unsupported action family (e.g. JOIN or MASK in Increment 3.1) must fail preflight atomically."""
+    """Unsupported action family (e.g. uncertified family) must fail preflight atomically."""
     compiler = PySparkIRCompiler()
+    compiler.SUPPORTED_FAMILIES = set(PySparkIRCompiler.SUPPORTED_FAMILIES) - {ActionFamily.JOIN}
     step = TransformationStepIR(
         step_id="step_join_01",
         dataset_name="primary",
