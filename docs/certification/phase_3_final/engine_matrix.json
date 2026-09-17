@@ -1,0 +1,188 @@
+{
+  "milestone": "Phase 3 Finalization Program",
+  "certification_date": "2026-09-17",
+  "status": "APPROVED_FOR_PHASE_3_CLOSURE",
+  "frozen_engines": {
+    "pandas_reference": {
+      "role": "authoritative_reference_semantics",
+      "version": "2.2.0+",
+      "dialect": "pandas_vectorized",
+      "status": "CERTIFIED_REFERENCE"
+    },
+    "pyspark": {
+      "role": "verified_transformation_compiler",
+      "version": "3.5.1",
+      "dialect": "spark_sql_dataframe",
+      "runtime_profile_hash": "436359501db7295042a39050cf0593c70d0d7d7d",
+      "status": "CERTIFIED_TARGET"
+    },
+    "azure_sql_database": {
+      "role": "verified_tsql_compiler_directly_executed",
+      "version": "12.0.2000.8",
+      "compatibility_level": "160",
+      "dialect": "tsql",
+      "engine_edition": "5",
+      "runtime_profile_hash": "fd120d68b286ea9ad46551202083ac5cd28197922253dc4eec072c86a43dca4e",
+      "status": "CERTIFIED_TARGET"
+    },
+    "azure_data_factory": {
+      "role": "verified_orchestration_and_delegation_boundary",
+      "version": "v2",
+      "dialect": "adf_pipeline_json",
+      "runtime_profile_hash": "00adf00orchestration00v200profile00hash0000000000000000000000000000",
+      "status": "CERTIFIED_ORCHESTRATOR"
+    }
+  },
+  "family_dispositions": {
+    "MAP_VALUE": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY"
+    },
+    "CONDITIONAL_REPLACE": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY"
+    },
+    "CLIP": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY"
+    },
+    "FLAG": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY"
+    },
+    "IMPUTE": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY",
+      "azure_sql_scope": "Apply-only learned model with sha256 parameter manifest verification; SQL dynamic aggregation learning rejected"
+    },
+    "STANDARDIZE": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY"
+    },
+    "PARSE": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY",
+      "azure_sql_scope": "Standard ISO 8601, numeric casting; strict parse failure to null/error policies"
+    },
+    "EXTRACT": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "PARTIAL",
+      "adf": "ORCHESTRATION_ONLY",
+      "azure_sql_scope": {
+        "DatePartExtract": "VERIFIED (ISO normalized day-of-week ((DATEPART(weekday, col)+5)%7))",
+        "DelimiterExtract": "VERIFIED (CHARINDEX / SUBSTRING)",
+        "JsonPathExtract": "VERIFIED (JSON_VALUE with strict path normalization)",
+        "RegexExtract": "UNSUPPORTED (Mandatory Correction 5: Capture groups and multiple match governance unsupported in T-SQL)"
+      }
+    },
+    "DERIVE": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "PARTIAL",
+      "adf": "ORCHESTRATION_ONLY",
+      "azure_sql_scope": {
+        "ArithmeticDerivation": {
+          "DivisionByZeroPolicy.SET_NULL": "VERIFIED (NULLIF)",
+          "DivisionByZeroPolicy.FAIL_STEP": "VERIFIED (CAST failure trigger)",
+          "DivisionByZeroPolicy.RETURN_INFINITY": "UNSUPPORTED (Mandatory Correction 4: Rejected on Azure SQL numeric types)"
+        },
+        "ConditionalDerivation": "VERIFIED (CASE WHEN)",
+        "CoalesceDerivation": "VERIFIED (COALESCE)",
+        "ConcatDerivation": "VERIFIED (CONCAT / CAST NVARCHAR)",
+        "DateArithmeticDerivation": "VERIFIED (DATEADD)"
+      }
+    },
+    "FILTER": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY"
+    },
+    "JOIN": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY",
+      "azure_sql_scope": {
+        "INNER": "VERIFIED",
+        "LEFT": "VERIFIED",
+        "RIGHT": "VERIFIED",
+        "FULL_OUTER": "VERIFIED",
+        "CROSS": "VERIFIED with StepAuthorization envelope; rejected without authorization"
+      }
+    },
+    "AGGREGATE": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY"
+    },
+    "DEDUPLICATE": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY",
+      "azure_sql_scope": "ROW_NUMBER() window partitioning with tie breaker and filter rn=1"
+    },
+    "HASH": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "PARTIAL",
+      "adf": "ORCHESTRATION_ONLY",
+      "azure_sql_scope": {
+        "CANONICAL_SCALAR_V1_STRING": "VERIFIED (HASHBYTES SHA2_256 over CONVERT VARBINARY MAX)",
+        "CANONICAL_SCALAR_V1_INTEGER": "VERIFIED (HASHBYTES SHA2_256 over CONVERT VARBINARY 8 BIGINT)",
+        "CANONICAL_SCALAR_V1_DECIMAL": "NOT_TESTED (Mandatory Correction 3: Strictly blocked in Phase 3)",
+        "CANONICAL_SCALAR_V1_TIMESTAMP": "NOT_TESTED (Mandatory Correction 3: Strictly blocked in Phase 3)"
+      }
+    },
+    "MASK": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY"
+    },
+    "SCHEMA_MUTATION": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY",
+      "azure_sql_scope": "RENAME, CAST, REORDER, DROP (protected technical columns protected)"
+    },
+    "VALIDATE": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "ORCHESTRATION_ONLY",
+      "azure_sql_scope": "Deterministic 3-way validation queries (__valid, __warning, __error)"
+    },
+    "QUARANTINE": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "DEFERRED_WITH_APPROVED_SCOPE",
+      "adf": "ORCHESTRATION_ONLY",
+      "azure_sql_scope": "Multi-table split routing deferred to Phase 4 multi-sink orchestration"
+    },
+    "PASS_THROUGH": {
+      "pandas": "VERIFIED",
+      "pyspark": "VERIFIED",
+      "azure_sql": "VERIFIED",
+      "adf": "VERIFIED_ORCHESTRATION"
+    }
+  }
+}

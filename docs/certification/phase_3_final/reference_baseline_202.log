@@ -1,0 +1,256 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.6, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\python.exe
+cachedir: .pytest_cache
+rootdir: c:\Users\ssakesh\OneDrive - Capgemini\Documents\Agent-Dhara---Backend-App
+configfile: pytest.ini
+plugins: anyio-4.12.0, langsmith-0.4.58, asyncio-1.3.0, repeat-0.9.4, rerunfailures-16.1, xdist-3.8.0, typeguard-4.5.2
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 202 items
+
+tests/test_pandas_ir_compiler.py::test_compiler_accounting_all_dispositions_and_invariants PASSED [  0%]
+tests/test_pandas_ir_compiler.py::test_compiler_rejection_of_schema_binding_failure PASSED [  0%]
+tests/test_pandas_ir_compiler.py::test_selective_preimage_symbol_generation_and_no_full_copy PASSED [  1%]
+tests/test_pandas_ir_compiler.py::test_predicate_unknown_policies_on_null_and_nan PASSED [  1%]
+tests/test_pandas_ir_compiler.py::test_infinity_handling_policies_in_clip PASSED [  2%]
+tests/test_pandas_ir_compiler.py::test_all_11_scalar_map_operations_execution PASSED [  2%]
+tests/test_pandas_ir_compiler.py::test_determinism_and_operation_specific_idempotency PASSED [  3%]
+tests/test_pandas_ir_compiler.py::test_ast_safety_prohibits_dangerous_constructs PASSED [  3%]
+tests/test_pandas_ir_compiler.py::test_scalar_string_operations_preserve_null_semantics PASSED [  4%]
+tests/test_pandas_ir_compiler.py::test_clip_incomplete_bounds_and_unbounded_infinity_policies PASSED [  4%]
+tests/test_pandas_ir_compiler.py::test_unknown_predicate_policies_fail_and_separate_flagging PASSED [  5%]
+tests/test_pandas_ir_compiler.py::test_statistical_imputation_fit_apply_separation PASSED [  5%]
+tests/test_pandas_ir_compiler.py::test_grouped_imputation_with_composite_keys_and_missing_group_policies PASSED [  6%]
+tests/test_pandas_ir_compiler.py::test_imputation_indicator_captured_before_fill PASSED [  6%]
+tests/test_pandas_ir_compiler.py::test_parse_numeric_and_original_null_distinction PASSED [  7%]
+tests/test_pandas_ir_compiler.py::test_parse_failure_policies_execution PASSED [  7%]
+tests/test_pandas_ir_compiler.py::test_parse_dates_temporal_and_calendar_contracts PASSED [  8%]
+tests/test_pandas_ir_compiler.py::test_standardize_boolean_format_spec_disjoint_tokens PASSED [  8%]
+tests/test_pandas_ir_compiler.py::test_model_snapshot_hash_verification PASSED [  9%]
+tests/test_pandas_ir_compiler_routing.py::test_quarantine_predicate_true_means_quarantine PASSED [  9%]
+tests/test_pandas_ir_compiler_routing.py::test_quarantine_partition_multiset_reconciliation PASSED [ 10%]
+tests/test_pandas_ir_compiler_routing.py::test_quarantine_copy_mode PASSED [ 10%]
+tests/test_pandas_ir_compiler_routing.py::test_quarantine_separate_unknown_output PASSED [ 11%]
+tests/test_pandas_ir_compiler_routing.py::test_filter_retain_matching_true_and_false PASSED [ 11%]
+tests/test_pandas_ir_compiler_routing.py::test_filter_export_dropped_and_drop_accounting PASSED [ 12%]
+tests/test_pandas_ir_compiler_routing.py::test_filter_unknown_policies PASSED [ 12%]
+tests/test_pandas_ir_compiler_routing.py::test_deduplicate_deterministic_ordering_with_tie_breaker PASSED [ 13%]
+tests/test_pandas_ir_compiler_routing.py::test_deduplicate_null_key_policies PASSED [ 13%]
+tests/test_pandas_ir_compiler_routing.py::test_deduplicate_export_modes PASSED [ 14%]
+tests/test_pandas_ir_compiler_routing.py::test_validate_non_mutating_semantics PASSED [ 14%]
+tests/test_pandas_ir_compiler_routing.py::test_validation_preserves_raw_unknown_count_after_policy_resolution PASSED [ 15%]
+tests/test_pandas_ir_compiler_routing.py::test_validate_severity_warning_vs_error PASSED [ 15%]
+tests/test_pandas_ir_compiler_routing.py::test_parse_failure_to_quarantine_integration PASSED [ 16%]
+tests/test_pandas_ir_compiler_routing.py::test_source_stable_identity_uses_bound_coordinate_columns PASSED [ 16%]
+tests/test_pandas_ir_compiler_routing.py::test_source_stable_identity_rejects_duplicate_coordinates PASSED [ 17%]
+tests/test_pandas_ir_compiler_routing.py::test_execution_local_identity_does_not_claim_cross_run_stability PASSED [ 17%]
+tests/test_pandas_ir_compiler_routing.py::test_occurrence_identity_is_lowest_priority_dedup_tie_breaker PASSED [ 18%]
+tests/test_pandas_ir_compiler_routing.py::test_null_distinct_policy_does_not_disable_non_null_deduplication PASSED [ 18%]
+tests/test_pandas_ir_compiler_routing.py::test_output_refs_reject_case_normalization_collisions PASSED [ 19%]
+tests/test_pandas_ir_compiler_routing.py::test_reconciliation_precedes_identity_publication_stripping PASSED [ 19%]
+tests/test_pandas_ir_compiler_routing.py::test_graph_final_primary_output_has_explicit_producer_kind PASSED [ 20%]
+tests/test_pandas_ir_compiler_routing.py::test_compiler_does_not_unintentionally_mutate_caller_dataframe PASSED [ 20%]
+tests/test_pandas_ir_compiler_routing.py::test_single_output_entrypoint_guards_multi_output_artifact PASSED [ 21%]
+tests/test_pandas_ir_compiler_security_schema.py::test_hash_digest_deterministic_sha256 PASSED [ 21%]
+tests/test_pandas_ir_compiler_security_schema.py::test_hash_hmac_sha256_standard_test_vector PASSED [ 22%]
+tests/test_pandas_ir_compiler_security_schema.py::test_hash_missing_key_provider_fails_immediately PASSED [ 22%]
+tests/test_pandas_ir_compiler_security_schema.py::test_hash_secret_resolution_failure_invalid_expired_revoked PASSED [ 23%]
+tests/test_pandas_ir_compiler_security_schema.py::test_hash_domain_separated_null_vs_string_null PASSED [ 23%]
+tests/test_pandas_ir_compiler_security_schema.py::test_hash_number_normalization_integer_float_zero PASSED [ 24%]
+tests/test_pandas_ir_compiler_security_schema.py::test_hash_unicode_normalization_nfc_compatibility PASSED [ 24%]
+tests/test_pandas_ir_compiler_security_schema.py::test_hash_truncation_governance_minimum_length PASSED [ 25%]
+tests/test_pandas_ir_compiler_security_schema.py::test_hash_target_collision_prevention PASSED [ 25%]
+tests/test_pandas_ir_compiler_security_schema.py::test_hash_zero_secrets_in_ast_and_repr PASSED [ 26%]
+tests/test_pandas_ir_compiler_security_schema.py::test_hash_process_restart_stability PASSED [ 26%]
+tests/test_pandas_ir_compiler_security_schema.py::test_hash_key_rotation_different_digests PASSED [ 27%]
+tests/test_pandas_ir_compiler_security_schema.py::test_hash_null_policies_preserve_set_empty_fail PASSED [ 27%]
+tests/test_pandas_ir_compiler_security_schema.py::test_mask_preserve_last_n PASSED [ 28%]
+tests/test_pandas_ir_compiler_security_schema.py::test_mask_preserve_first_n PASSED [ 28%]
+tests/test_pandas_ir_compiler_security_schema.py::test_mask_short_value_policies PASSED [ 29%]
+tests/test_pandas_ir_compiler_security_schema.py::test_mask_email_domain_policies PASSED [ 29%]
+tests/test_pandas_ir_compiler_security_schema.py::test_mask_empty_and_short_strings PASSED [ 30%]
+tests/test_pandas_ir_compiler_security_schema.py::test_mask_custom_unicode_character PASSED [ 30%]
+tests/test_pandas_ir_compiler_security_schema.py::test_mask_null_policies PASSED [ 31%]
+tests/test_pandas_ir_compiler_security_schema.py::test_mask_existing_column_policy PASSED [ 31%]
+tests/test_pandas_ir_compiler_security_schema.py::test_mask_non_reversibility_contract PASSED [ 32%]
+tests/test_pandas_ir_compiler_security_schema.py::test_schema_rename_cycles_and_chains PASSED [ 32%]
+tests/test_pandas_ir_compiler_security_schema.py::test_schema_drop_without_authorization_rejected PASSED [ 33%]
+tests/test_pandas_ir_compiler_security_schema.py::test_schema_drop_with_valid_authorization_succeeds PASSED [ 33%]
+tests/test_pandas_ir_compiler_security_schema.py::test_schema_drop_protected_column_role_rejected PASSED [ 34%]
+tests/test_pandas_ir_compiler_security_schema.py::test_schema_project_and_reorder PASSED [ 34%]
+tests/test_pandas_ir_compiler_security_schema.py::test_schema_snapshot_hash_catches_stale_source PASSED [ 35%]
+tests/test_pandas_ir_compiler_security_schema.py::test_schema_cast_failure_policies PASSED [ 35%]
+tests/test_pandas_ir_compiler_security_schema.py::test_schema_caller_dataframe_isolation PASSED [ 36%]
+tests/test_pandas_ir_compiler_security_schema.py::test_schema_composite_security_pipeline_publication_boundary PASSED [ 36%]
+tests/test_pandas_ir_compiler_security_schema.py::test_schema_atomic_compilation_failure_zero_artifacts PASSED [ 37%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_canonical_decimal_equivalent_scale_normalization PASSED [ 37%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_canonical_decimal_negative_zero_canonical_zero PASSED [ 38%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_canonical_decimal_preserve_declared_scale PASSED [ 38%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_canonical_decimal_rejects_non_finite PASSED [ 39%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_canonical_timestamp_nanosecond_overflow_rejection PASSED [ 39%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_canonical_naive_timestamp_without_policy_rejected PASSED [ 40%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_canonical_nat_dedicated_domain_tag PASSED [ 40%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_canonical_date_tag_not_timezone_shifted PASSED [ 41%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_canonical_unsupported_object_zero_string_fallback PASSED [ 41%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_canonical_bool_handled_before_int PASSED [ 42%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_arithmetic_derivation_int64_overflow_and_clip_to_range PASSED [ 42%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_arithmetic_derivation_float_division_by_zero_policies PASSED [ 43%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_conditional_derivation_unknown_policy PASSED [ 43%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_coalesce_and_concat_derivations PASSED [ 44%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_bounded_json_path_extraction PASSED [ 44%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_bounded_json_path_rejects_wildcards_and_excessive_depth PASSED [ 45%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_regex_extract_multiple_match_policy PASSED [ 45%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_delimiter_and_date_part_extraction PASSED [ 46%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_join_inner_and_cardinality_guard PASSED [ 46%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_cross_join_requires_step_authorization_and_enforces_max_rows PASSED [ 47%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_join_semi_and_anti_preserve_left_schema_only PASSED [ 47%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_join_unmatched_policy_routing PASSED [ 48%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_aggregation_count_star_vs_count_column_and_distinct PASSED [ 48%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_aggregation_group_key_null_policy_and_all_null_sum PASSED [ 49%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_atomic_publication_failure_aborts_and_commits_zero_outputs PASSED [ 49%]
+tests/test_pandas_ir_compiler_joins_derivations.py::test_atomic_publication_success_updates_manifest_and_commits_outputs PASSED [ 50%]
+tests/test_transformation_ir.py::test_value_version_semantics PASSED     [ 50%]
+tests/test_transformation_ir.py::test_validate_is_pure_assertion_without_row_routing PASSED [ 50%]
+tests/test_transformation_ir.py::test_quarantine_partitions_rows PASSED  [ 51%]
+tests/test_transformation_ir.py::test_composite_relationship_decomposes_into_validate_and_quarantine PASSED [ 51%]
+tests/test_transformation_ir.py::test_hash_family_and_effects PASSED     [ 52%]
+tests/test_transformation_ir.py::test_mask_family_and_effects PASSED     [ 52%]
+tests/test_transformation_ir.py::test_impute_family_and_effects PASSED   [ 53%]
+tests/test_transformation_ir.py::test_pass_through_control_construct_and_effects PASSED [ 53%]
+tests/test_transformation_ir.py::test_schema_mutation_drop_vs_project_exclude PASSED [ 54%]
+tests/test_transformation_ir.py::test_vertical_slice_1_discount_cap_and_flag_scenario PASSED [ 54%]
+tests/test_transformation_ir.py::test_engine_capability_preflight_authorization PASSED [ 55%]
+tests/test_transformation_ir.py::test_preimage_formal_contract_and_reversibility PASSED [ 55%]
+tests/test_transformation_ir.py::test_scalar_map_typed_operations_and_validation PASSED [ 56%]
+tests/test_transformation_ir.py::test_authoritative_action_taxonomy_and_inventory_record PASSED [ 56%]
+tests/test_transformation_ir.py::test_dynamic_legacy_action_migration_registry_reconciliation PASSED [ 57%]
+tests/test_transformation_ir.py::test_effect_derivation_invariant_tamper_rejection PASSED [ 57%]
+tests/test_transformation_ir.py::test_two_tier_semantic_and_plan_node_hashing PASSED [ 58%]
+tests/test_transformation_ir.py::test_layer_1_intrinsic_expression_validators PASSED [ 58%]
+tests/test_transformation_ir.py::test_layer_2_schema_binding_and_validation PASSED [ 59%]
+tests/test_transformation_ir.py::test_quarantine_row_identity_and_routing_modes PASSED [ 59%]
+tests/test_transformation_ir.py::test_transformation_ir_graph_envelope_and_acyclic_invariants PASSED [ 60%]
+tests/test_transformation_ir.py::test_authoritative_legacy_adapters_and_graph_conversion PASSED [ 60%]
+tests/test_transformation_ir.py::test_ir_json_serialization_round_trip PASSED [ 61%]
+tests/test_etl_semantic_loss_prevention.py::test_llm_fallback_unmapped_action_preserved_as_advisory PASSED [ 61%]
+tests/test_etl_semantic_loss_prevention.py::test_advisory_proposal_model_validators PASSED [ 62%]
+tests/test_etl_semantic_loss_prevention.py::test_pyspark_codegen_fails_fast_on_unsupported_action PASSED [ 62%]
+tests/test_etl_semantic_loss_prevention.py::test_python_codegen_fails_fast_on_unsupported_action PASSED [ 63%]
+tests/test_etl_semantic_loss_prevention.py::test_sql_codegen_fails_fast_on_unsupported_action PASSED [ 63%]
+tests/test_etl_semantic_loss_prevention.py::test_adf_expressions_fails_fast_on_unsupported_action PASSED [ 64%]
+tests/test_etl_semantic_loss_prevention.py::test_atomic_codegen_result_no_partial_artifacts PASSED [ 64%]
+tests/test_etl_semantic_loss_prevention.py::test_reconciliation_bidirectional_success PASSED [ 65%]
+tests/test_etl_semantic_loss_prevention.py::test_reconciliation_detects_unreconciled_evidence PASSED [ 65%]
+tests/test_etl_semantic_loss_prevention.py::test_reconciliation_detects_orphan_steps PASSED [ 66%]
+tests/test_etl_semantic_loss_prevention.py::test_reconciliation_supports_rule_linked_steps PASSED [ 66%]
+tests/test_etl_semantic_loss_prevention.py::test_acyclic_duplicate_graph_validation PASSED [ 67%]
+tests/test_etl_semantic_loss_prevention.py::test_canonical_rule_intake_bypasses_4_keyword_filter PASSED [ 67%]
+tests/test_etl_semantic_loss_prevention.py::test_canonical_assert_rules_strictly_excluded_from_transformation PASSED [ 68%]
+tests/test_etl_semantic_loss_prevention.py::test_manual_review_decision_validation PASSED [ 68%]
+tests/test_etl_semantic_loss_prevention.py::test_source_system_deferral_model PASSED [ 69%]
+tests/test_etl_semantic_loss_prevention.py::test_enrich_manual_review_item_readiness_tagging PASSED [ 69%]
+tests/test_etl_semantic_loss_prevention.py::test_bidirectional_lineage_strict_validation PASSED [ 70%]
+tests/test_etl_semantic_loss_prevention.py::test_informational_profiling_evidence_retained_not_remediation_target PASSED [ 70%]
+tests/test_etl_semantic_loss_prevention.py::test_hybrid_mode_shadow_only_isolation PASSED [ 71%]
+tests/test_etl_semantic_loss_prevention.py::test_codegen_failure_signing_and_persistence_spy PASSED [ 71%]
+tests/test_etl_semantic_loss_prevention.py::test_advisory_proposal_cannot_generate_direct_plan_step PASSED [ 72%]
+tests/test_planning_bridge.py::test_build_proposed_plan_excludes_condition_only_rules PASSED [ 72%]
+tests/test_planning_bridge.py::test_end_to_end_planning_signing_and_execution_flow PASSED [ 73%]
+tests/test_planning_bridge.py::test_revoked_plan_blocked_at_execution PASSED [ 73%]
+tests/test_issue_forwarding_and_deduplication.py::test_issue_identity_normalization PASSED [ 74%]
+tests/test_issue_forwarding_and_deduplication.py::test_merge_steps_provenance_preservation PASSED [ 74%]
+tests/test_issue_forwarding_and_deduplication.py::test_planning_step_deduplication PASSED [ 75%]
+tests/test_issue_forwarding_and_deduplication.py::test_issue_forwarding_zero_omissions PASSED [ 75%]
+tests/test_issue_forwarding_and_deduplication.py::test_tsql_structural_checks_and_postprocessing PASSED [ 76%]
+tests/test_issue_forwarding_and_deduplication.py::test_tsql_level2_coverage_validation PASSED [ 76%]
+tests/test_issue_forwarding_and_deduplication.py::test_llm_resolution_fallback_budget_and_validation PASSED [ 77%]
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache PASSED [ 77%]
+tests/test_etl_codegen_quality.py::TestNoFakeIDGeneration::test_sale_id_not_filled_with_mean PASSED [ 78%]
+tests/test_etl_codegen_quality.py::TestNoFakeIDGeneration::test_campaign_id_not_filled_with_median PASSED [ 78%]
+tests/test_etl_codegen_quality.py::TestNoFakeIDGeneration::test_factory_id_not_filled_with_mean PASSED [ 79%]
+tests/test_etl_codegen_quality.py::TestNoCategoricalCastToNumeric::test_region_not_cast_to_long PASSED [ 79%]
+tests/test_etl_codegen_quality.py::TestNoCategoricalCastToNumeric::test_channel_not_cast_to_long PASSED [ 80%]
+tests/test_etl_codegen_quality.py::TestNoCategoricalCastToNumeric::test_non_categorical_cast_is_allowed PASSED [ 80%]
+tests/test_etl_codegen_quality.py::TestSafeDeduplication::test_dedup_without_business_key_flags_not_drops PASSED [ 81%]
+tests/test_etl_codegen_quality.py::TestSafeDeduplication::test_dedup_with_business_key_uses_row_number PASSED [ 81%]
+tests/test_etl_codegen_quality.py::TestSafeDateParsing::test_parse_dates_safe_emits_flag PASSED [ 82%]
+tests/test_etl_codegen_quality.py::TestSafeDateParsing::test_plain_parse_dates_still_works PASSED [ 82%]
+tests/test_etl_codegen_quality.py::TestDomainViolationFlagging::test_flag_domain_violation_action PASSED [ 83%]
+tests/test_etl_codegen_quality.py::TestPhase1FallbackActions::test_normalize_registered_placeholder_emits_nulling_logic PASSED [ 83%]
+tests/test_etl_codegen_quality.py::TestPhase1FallbackActions::test_flag_cross_field_violation_emits_flag_column PASSED [ 84%]
+tests/test_etl_codegen_quality.py::TestPhase1FallbackActions::test_flag_business_key_duplicate_emits_flag_column PASSED [ 84%]
+tests/test_etl_codegen_quality.py::TestPhase1FallbackActions::test_flag_near_duplicate_cluster_emits_flag_column PASSED [ 85%]
+tests/test_etl_codegen_quality.py::TestPostProcessingPlanEnforcement::test_enforce_plan_steps_restores_placeholder_and_cross_field_logic PASSED [ 85%]
+tests/test_etl_codegen_quality.py::TestPythonCodegenSafeActions::test_parse_dates_safe_emits_invalid_flag PASSED [ 86%]
+tests/test_etl_codegen_quality.py::TestPythonCodegenSafeActions::test_flag_domain_violation_emits_python_flag PASSED [ 86%]
+tests/test_etl_codegen_quality.py::TestPythonCodegenSafeActions::test_fill_nulls_flag_preserves_original_values PASSED [ 87%]
+tests/test_etl_codegen_quality.py::TestPythonCodegenSafeActions::test_replace_sentinel_values_default_params_are_populated PASSED [ 87%]
+tests/test_etl_codegen_quality.py::TestReadinessPctAfterResolution::test_readiness_increases_with_resolved_items PASSED [ 88%]
+tests/test_etl_codegen_quality.py::TestClassifyStepsBuckets::test_user_promoted_step_gets_auto_bucket PASSED [ 88%]
+tests/test_etl_codegen_quality.py::TestClassifyStepsBuckets::test_non_fixable_resolution_gets_auto_bucket PASSED [ 89%]
+tests/test_etl_codegen_quality.py::TestClassifyStepsBuckets::test_new_actions_in_auto_set PASSED [ 89%]
+tests/test_etl_codegen_quality.py::TestIssueCompilerMappings::test_duplicate_primary_key_routes_to_manual PASSED [ 90%]
+tests/test_etl_codegen_quality.py::TestIssueCompilerMappings::test_mixed_case_routes_to_trim PASSED [ 90%]
+tests/test_etl_codegen_quality.py::TestIssueCompilerMappings::test_placeholder_routes_to_nullify PASSED [ 91%]
+tests/test_etl_codegen_quality.py::TestIssueCompilerMappings::test_digit_strings_route_to_flag PASSED [ 91%]
+tests/test_etl_codegen_quality.py::TestIssueCompilerMappings::test_invalid_date_format_routes_to_safe_parse PASSED [ 92%]
+tests/test_etl_codegen_quality.py::TestIssueCompilerMappings::test_duplicate_pk_in_complex_types PASSED [ 92%]
+tests/test_etl_codegen_quality.py::TestIssueCompilerMappings::test_string_with_digits_in_complex_types PASSED [ 93%]
+tests/test_etl_codegen_quality.py::TestPySparkProductionSafety::test_json_reader_uses_multiline PASSED [ 93%]
+tests/test_etl_codegen_quality.py::TestPySparkProductionSafety::test_no_avg_on_string_location_column PASSED [ 94%]
+tests/test_etl_codegen_quality.py::TestPySparkProductionSafety::test_cast_double_before_percentile_approx_on_string_numeric PASSED [ 94%]
+tests/test_etl_codegen_quality.py::TestPySparkProductionSafety::test_categorical_channel_numeric_fill_sanitization PASSED [ 95%]
+tests/test_etl_codegen_quality.py::TestPySparkProductionSafety::test_action_reflection_audit_for_coerce_numeric_and_cast_type PASSED [ 95%]
+tests/test_etl_codegen_quality.py::TestPySparkProductionSafety::test_validation_rejects_numeric_aggregation_on_categorical_location PASSED [ 96%]
+tests/test_etl_codegen_quality.py::TestPySparkProductionSafety::test_validation_requires_cast_for_percentile_approx_on_string_numeric PASSED [ 96%]
+tests/test_etl_codegen_quality.py::TestPySparkProductionSafety::test_validation_rejects_rlike_on_numeric_column PASSED [ 97%]
+tests/test_etl_codegen_quality.py::TestSafeGenerationContract::test_generated_pyspark_code_is_guarded_from_import_execution PASSED [ 97%]
+tests/test_etl_codegen_quality.py::TestSafeGenerationContract::test_generated_pyspark_code_uses_staging_tables_for_fabric_writes PASSED [ 98%]
+tests/test_etl_codegen_quality.py::TestSafeGenerationContract::test_generated_pyspark_code_creates_companion_columns_for_numeric_casts PASSED [ 98%]
+tests/test_etl_codegen_quality.py::TestRemoveRunPipelineCode::test_function_order_permutations PASSED [ 99%]
+tests/test_etl_codegen_quality.py::TestRemoveRunPipelineCode::test_idempotence PASSED [ 99%]
+tests/test_etl_codegen_quality.py::TestRemoveRunPipelineCode::test_no_accidental_name_matching PASSED [100%]
+
+============================== warnings summary ===============================
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+  C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\Lib\site-packages\matplotlib\_fontconfig_pattern.py:64: PyparsingDeprecationWarning: 'oneOf' deprecated - use 'one_of'
+    prop = Group((name + Suppress("=") + comma_separated(value)) | oneOf(_CONSTANTS))
+
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+  C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\Lib\site-packages\matplotlib\_fontconfig_pattern.py:85: PyparsingDeprecationWarning: 'parseString' deprecated - use 'parse_string'
+    parse = parser.parseString(pattern)
+
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+  C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\Lib\site-packages\matplotlib\_fontconfig_pattern.py:89: PyparsingDeprecationWarning: 'resetCache' deprecated - use 'reset_cache'
+    parser.resetCache()
+
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+  C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\Lib\site-packages\matplotlib\_mathtext.py:45: PyparsingDeprecationWarning: 'enablePackrat' deprecated - use 'enable_packrat'
+    ParserElement.enablePackrat()
+
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+  c:\Users\ssakesh\OneDrive - Capgemini\Documents\Agent-Dhara---Backend-App\agent\specialists\ydata_profiler.py:40: DeprecationWarning: 
+      `import ydata_profiling` is deprecated and will not receive more updates. 
+      Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.
+      
+    import ydata_profiling  # type: ignore  # noqa: F401
+
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+  C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\Lib\site-packages\ydata_profiling\model\describe.py:85: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    date_start = datetime.utcnow()
+
+tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fingerprint_cache
+  C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\Lib\site-packages\ydata_profiling\model\describe.py:190: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    date_end = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+====================== 202 passed, 17 warnings in 20.03s ======================
