@@ -1,0 +1,82 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.6, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\ssakesh\OneDrive - Capgemini\Documents\Agent-Dhara---Backend-App
+configfile: pytest.ini
+plugins: anyio-4.12.0, langsmith-0.4.58, asyncio-1.3.0, repeat-0.9.4, rerunfailures-16.1, xdist-3.8.0, typeguard-4.5.2
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 62 items
+
+tests/cross_engine/test_cross_engine_contracts.py::test_engine_capability_key_11_fields_and_compact_representation PASSED [  1%]
+tests/cross_engine/test_cross_engine_contracts.py::test_capability_decision_explicit_execution_eligibility PASSED [  3%]
+tests/cross_engine/test_cross_engine_contracts.py::test_capability_registry_default_to_blocked PASSED [  4%]
+tests/cross_engine/test_cross_engine_contracts.py::test_capability_registry_deviation_expiration PASSED [  6%]
+tests/cross_engine/test_cross_engine_contracts.py::test_runtime_profile_hashing_determinism_and_semantic_sensitivity PASSED [  8%]
+tests/cross_engine/test_cross_engine_contracts.py::test_canonical_scalar_v1_vectors_and_integrity_hash PASSED [  9%]
+tests/cross_engine/test_cross_engine_contracts.py::test_canonical_scalar_v1_rejection_invariants PASSED [ 11%]
+tests/cross_engine/test_cross_engine_contracts.py::test_category_specific_assertions_byte_decimal_float_temporal PASSED [ 12%]
+tests/cross_engine/test_cross_engine_contracts.py::test_mode_specific_row_occurrence_multiset_conservation PASSED [ 14%]
+tests/cross_engine/test_cross_engine_contracts.py::test_validation_metrics_and_failure_parity PASSED [ 16%]
+tests/cross_engine/test_parity_harness_negative.py::test_negative_wrong_null_result PASSED [ 17%]
+tests/cross_engine/test_parity_harness_negative.py::test_negative_missing_row_in_multiset PASSED [ 19%]
+tests/cross_engine/test_parity_harness_negative.py::test_negative_decimal_scale_mismatch PASSED [ 20%]
+tests/cross_engine/test_parity_harness_negative.py::test_negative_timestamp_timezone_shift PASSED [ 22%]
+tests/cross_engine/test_parity_harness_negative.py::test_negative_wrong_routing_destination PASSED [ 24%]
+tests/cross_engine/test_parity_harness_negative.py::test_negative_hmac_byte_mismatch PASSED [ 25%]
+tests/cross_engine/test_parity_harness_negative.py::test_negative_unexpected_success_when_failure_expected PASSED [ 27%]
+tests/cross_engine/test_parity_harness_negative.py::test_negative_expired_deviation_is_rejected PASSED [ 29%]
+tests/cross_engine/test_parity_pyspark_dedup.py::test_pyspark_dedup_preserve_first_parity PASSED [ 30%]
+tests/cross_engine/test_parity_pyspark_dedup.py::test_pyspark_dedup_preserve_last_parity PASSED [ 32%]
+tests/cross_engine/test_parity_pyspark_dedup.py::test_pyspark_dedup_source_stable_partition_independence PASSED [ 33%]
+tests/cross_engine/test_parity_pyspark_dedup.py::test_pyspark_dedup_null_key_fail_step PASSED [ 35%]
+tests/cross_engine/test_parity_pyspark_dedup.py::test_pyspark_dedup_null_key_treat_each_distinct PASSED [ 37%]
+tests/cross_engine/test_parity_pyspark_increment_32_e2e.py::test_increment_32_combined_multi_step_parity PASSED [ 38%]
+tests/cross_engine/test_parity_pyspark_routing.py::test_pyspark_routing_identity_execution_local_materialized_once PASSED [ 40%]
+tests/cross_engine/test_parity_pyspark_routing.py::test_pyspark_routing_identity_source_stable_parity PASSED [ 41%]
+tests/cross_engine/test_parity_pyspark_routing.py::test_pyspark_routing_duplicate_coordinates_detected PASSED [ 43%]
+tests/cross_engine/test_parity_pyspark_routing.py::test_pyspark_quarantine_copy_mode_parity PASSED [ 45%]
+tests/cross_engine/test_parity_pyspark_routing.py::test_pyspark_filter_export_dropped_parity PASSED [ 46%]
+tests/cross_engine/test_parity_pyspark_routing.py::test_pyspark_source_stable_collision_fixtures_negative PASSED [ 48%]
+tests/cross_engine/test_parity_pyspark_routing.py::test_pyspark_identity_materialization_and_cache_release PASSED [ 50%]
+tests/cross_engine/test_parity_pyspark_scalars.py::test_pyspark_compiler_deterministic_artifact_bytes PASSED [ 51%]
+tests/cross_engine/test_parity_pyspark_scalars.py::test_pyspark_scalar_map_trim_lower_upper_parity PASSED [ 53%]
+tests/cross_engine/test_parity_pyspark_scalars.py::test_pyspark_scalar_map_regex_and_lookup_parity PASSED [ 54%]
+tests/cross_engine/test_parity_pyspark_scalars.py::test_pyspark_conditional_replace_parity PASSED [ 56%]
+tests/cross_engine/test_parity_pyspark_scalars.py::test_pyspark_clip_and_flag_parity PASSED [ 58%]
+tests/cross_engine/test_parity_pyspark_scalars.py::test_pyspark_standardize_boolean_parity PASSED [ 59%]
+tests/cross_engine/test_parity_pyspark_scalars.py::test_pyspark_parse_numeric_and_date_parity PASSED [ 61%]
+tests/cross_engine/test_parity_pyspark_scalars.py::test_pyspark_impute_constant_and_statistical_divergent_mean_parity PASSED [ 62%]
+tests/cross_engine/test_parity_pyspark_scalars.py::test_pyspark_impute_grouped_with_fallback_parity PASSED [ 64%]
+tests/cross_engine/test_parity_pyspark_scalars.py::test_pyspark_pass_through_control_disposition PASSED [ 66%]
+tests/cross_engine/test_parity_pyspark_scalars.py::test_pyspark_preflight_blocks_unsupported_family_atomically PASSED [ 67%]
+tests/cross_engine/test_parity_pyspark_scalars.py::test_pyspark_imputation_snapshot_hash_tamper_rejected PASSED [ 69%]
+tests/cross_engine/test_parity_pyspark_scalars.py::test_pyspark_ast_safety_rejects_arbitrary_code_and_runtime_agg PASSED [ 70%]
+tests/cross_engine/test_parity_pyspark_schema.py::test_pyspark_schema_mutation_rename_and_reorder PASSED [ 72%]
+tests/cross_engine/test_parity_pyspark_schema.py::test_pyspark_schema_mutation_protected_column_direct_drop_rejected PASSED [ 74%]
+tests/cross_engine/test_parity_pyspark_schema.py::test_pyspark_schema_mutation_project_exclusion_of_protected_column_rejected PASSED [ 75%]
+tests/cross_engine/test_parity_pyspark_schema.py::test_pyspark_schema_mutation_destructive_drop_authorization_checks PASSED [ 77%]
+tests/cross_engine/test_parity_pyspark_schema.py::test_pyspark_schema_mutation_pre_post_hash_runtime_enforcement PASSED [ 79%]
+tests/cross_engine/test_parity_pyspark_schema.py::test_pyspark_schema_protected_rename_then_drop_rejected PASSED [ 80%]
+tests/cross_engine/test_parity_pyspark_schema.py::test_pyspark_schema_cannot_drop_technical_routing_identity PASSED [ 82%]
+tests/cross_engine/test_parity_pyspark_security.py::test_pyspark_masking_preserve_last_n_and_first_n_parity PASSED [ 83%]
+tests/cross_engine/test_parity_pyspark_security.py::test_pyspark_masking_email_and_redact_all_parity PASSED [ 85%]
+tests/cross_engine/test_parity_pyspark_security.py::test_pyspark_canonical_hashing_boolean_and_integer_parity PASSED [ 87%]
+tests/cross_engine/test_parity_pyspark_security.py::test_pyspark_canonical_byte_level_parity_and_null_policies PASSED [ 88%]
+tests/cross_engine/test_parity_pyspark_security.py::test_pyspark_string_canonical_hashing_default_denial PASSED [ 90%]
+tests/cross_engine/test_parity_pyspark_security.py::test_pyspark_hmac_boundary_rejection_and_reference_test PASSED [ 91%]
+tests/cross_engine/test_parity_pyspark_validation.py::test_pyspark_validation_non_mutating_metric_parity PASSED [ 93%]
+tests/cross_engine/test_parity_pyspark_validation.py::test_pyspark_validation_unknown_policy_count_as_violation PASSED [ 95%]
+tests/cross_engine/test_parity_pyspark_validation.py::test_pyspark_validation_unknown_policy_count_as_pass PASSED [ 96%]
+tests/cross_engine/test_parity_pyspark_validation.py::test_pyspark_validation_severity_error_raises PASSED [ 98%]
+tests/cross_engine/test_parity_pyspark_validation.py::test_pyspark_validation_fail_step_on_unknown PASSED [100%]
+
+======================== 62 passed in 90.00s (0:01:29) ========================
+SUCCESS: The process with PID 26332 (child process of PID 19824) has been terminated.
+
+--- STDERR ---
+ERROR: The process with PID 26084 (child process of PID 8996) could not be terminated.
+Reason: There is no running instance of the task.
+
+ERROR: The process with PID 8996 (child process of PID 26332) could not be terminated.
+Reason: There is no running instance of the task.
+

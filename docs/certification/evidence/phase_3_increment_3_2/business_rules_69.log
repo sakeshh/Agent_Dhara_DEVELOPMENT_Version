@@ -1,0 +1,123 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.6, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\ssakesh\OneDrive - Capgemini\Documents\Agent-Dhara---Backend-App
+configfile: pytest.ini
+plugins: anyio-4.12.0, langsmith-0.4.58, asyncio-1.3.0, repeat-0.9.4, rerunfailures-16.1, xdist-3.8.0, typeguard-4.5.2
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 69 items
+
+tests/test_canonical.py::test_scheme_and_version PASSED                  [  1%]
+tests/test_canonical.py::test_numeric_equivalence PASSED                 [  2%]
+tests/test_canonical.py::test_scientific_and_zero_normalization PASSED   [  4%]
+tests/test_canonical.py::test_type_collision_prevention PASSED           [  5%]
+tests/test_canonical.py::test_user_mapping_namespace_separation PASSED   [  7%]
+tests/test_canonical.py::test_datetime_serialization PASSED              [  8%]
+tests/test_canonical.py::test_set_sorting_deterministic PASSED           [ 10%]
+tests/test_canonical.py::test_strict_string_keys PASSED                  [ 11%]
+tests/test_canonical.py::test_key_collision_on_normalization PASSED      [ 13%]
+tests/test_canonical.py::test_pydantic_and_enum PASSED                   [ 14%]
+tests/test_canonical.py::test_two_stage_idempotency PASSED               [ 15%]
+tests/test_canonical.py::test_non_finite_float_rejected PASSED           [ 17%]
+tests/test_rule_models.py::test_intake_validation_success PASSED         [ 18%]
+tests/test_rule_models.py::test_intake_validation_missing_and_unexpected PASSED [ 20%]
+tests/test_rule_models.py::test_intake_interpreted_canonical_id_enforcement PASSED [ 21%]
+tests/test_rule_models.py::test_ast_normalization_commutative_sorting PASSED [ 23%]
+tests/test_rule_models.py::test_ast_arity_validation PASSED              [ 24%]
+tests/test_rule_models.py::test_semantic_rule_id_excludes_governance PASSED [ 26%]
+tests/test_rule_models.py::test_lifecycle_transition_chain_validation PASSED [ 27%]
+tests/test_rule_models.py::test_independent_entities_do_not_collide PASSED [ 28%]
+tests/test_assessment_models.py::test_valid_population_partition PASSED  [ 30%]
+tests/test_assessment_models.py::test_invalid_partition_sum_raises PASSED [ 31%]
+tests/test_assessment_models.py::test_complete_evaluation_metrics PASSED [ 33%]
+tests/test_assessment_models.py::test_zero_row_empty_dataset_handling PASSED [ 34%]
+tests/test_assessment_models.py::test_evidence_creation_and_hash PASSED  [ 36%]
+tests/test_conflict_resolver.py::test_matrix_completeness_and_invariants PASSED [ 37%]
+tests/test_conflict_resolver.py::test_wildcard_resource_unresolved PASSED [ 39%]
+tests/test_conflict_resolver.py::test_disjoint_resources_parallel PASSED [ 40%]
+tests/test_conflict_resolver.py::test_identical_idempotent_duplicate PASSED [ 42%]
+tests/test_conflict_resolver.py::test_idempotent_non_identical_writes_exclusive PASSED [ 43%]
+tests/test_conflict_resolver.py::test_read_write_timing_semantics PASSED [ 44%]
+tests/test_conflict_resolver.py::test_aggregate_compatibility_precedence PASSED [ 46%]
+tests/test_conflict_resolver.py::test_aggregate_contradictory_ordering PASSED [ 47%]
+tests/test_conflict_resolver.py::test_dependency_graph_validation PASSED [ 49%]
+tests/test_conflict_resolver.py::test_topological_sort_and_cycle_detection PASSED [ 50%]
+tests/test_authorization_gate.py::test_ed25519_manifest_signing_and_execution_success PASSED [ 52%]
+tests/test_authorization_gate.py::test_tampered_code_bytes_rejected PASSED [ 53%]
+tests/test_authorization_gate.py::test_unauthorized_engine_rejected PASSED [ 55%]
+tests/test_golden_scenarios.py::test_scenario_01_range_check PASSED      [ 56%]
+tests/test_golden_scenarios.py::test_scenario_02_categorical_inclusion PASSED [ 57%]
+tests/test_golden_scenarios.py::test_scenario_03_nullability_assertion PASSED [ 59%]
+tests/test_golden_scenarios.py::test_scenario_04_uniqueness_assertion PASSED [ 60%]
+tests/test_golden_scenarios.py::test_scenario_05_regex_format PASSED     [ 62%]
+tests/test_golden_scenarios.py::test_scenario_06_value_standardization PASSED [ 63%]
+tests/test_golden_scenarios.py::test_scenario_07_imputation PASSED       [ 65%]
+tests/test_golden_scenarios.py::test_scenario_08_quarantine PASSED       [ 66%]
+tests/test_golden_scenarios.py::test_scenario_09_drop_invalid_rows PASSED [ 68%]
+tests/test_golden_scenarios.py::test_scenario_10_explicit_vs_inferred PASSED [ 69%]
+tests/test_golden_scenarios.py::test_scenario_11_additive_audit_coexistence PASSED [ 71%]
+tests/test_golden_scenarios.py::test_scenario_12_scope_specificity PASSED [ 72%]
+tests/test_golden_scenarios.py::test_scenario_13a_cross_column_single_dataset PASSED [ 73%]
+tests/test_golden_scenarios.py::test_scenario_13b_cross_dataset_referential_integrity PASSED [ 75%]
+tests/test_golden_scenarios.py::test_scenario_14_anomaly_detection PASSED [ 76%]
+tests/test_golden_scenarios.py::test_scenario_15_ordered_composition PASSED [ 78%]
+tests/test_golden_scenarios.py::test_scenario_16_idempotent_duplicate PASSED [ 79%]
+tests/test_golden_scenarios.py::test_scenario_17_preserved_unmapped_notes PASSED [ 81%]
+tests/test_golden_scenarios.py::test_scenario_18_degraded_assessment_only PASSED [ 82%]
+tests/test_golden_scenarios.py::test_scenario_19_mutually_exclusive_conflict PASSED [ 84%]
+tests/test_ingestion_bridge.py::test_ingest_structured_rules_success PASSED [ 85%]
+tests/test_ingestion_bridge.py::test_ambiguous_assertion_routed_to_manual_review PASSED [ 86%]
+tests/test_ingestion_bridge.py::test_duplicate_rule_occurrence_consolidation PASSED [ 88%]
+tests/test_ingestion_bridge.py::test_business_rules_loader_ingestion_bridge PASSED [ 89%]
+tests/test_assessment_bridge.py::test_evaluate_canonical_rules_against_dataframe PASSED [ 91%]
+tests/test_assessment_bridge.py::test_notes_assessment_mode_planning_only PASSED [ 92%]
+tests/test_assessment_bridge.py::test_notes_assessment_mode_pre_assessment PASSED [ 94%]
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules PASSED [ 95%]
+tests/test_planning_bridge.py::test_build_proposed_plan_excludes_condition_only_rules PASSED [ 97%]
+tests/test_planning_bridge.py::test_end_to_end_planning_signing_and_execution_flow PASSED [ 98%]
+tests/test_planning_bridge.py::test_revoked_plan_blocked_at_execution PASSED [100%]
+
+============================== warnings summary ===============================
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+  C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\Lib\site-packages\matplotlib\_fontconfig_pattern.py:64: PyparsingDeprecationWarning: 'oneOf' deprecated - use 'one_of'
+    prop = Group((name + Suppress("=") + comma_separated(value)) | oneOf(_CONSTANTS))
+
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+  C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\Lib\site-packages\matplotlib\_fontconfig_pattern.py:85: PyparsingDeprecationWarning: 'parseString' deprecated - use 'parse_string'
+    parse = parser.parseString(pattern)
+
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+  C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\Lib\site-packages\matplotlib\_fontconfig_pattern.py:89: PyparsingDeprecationWarning: 'resetCache' deprecated - use 'reset_cache'
+    parser.resetCache()
+
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+  C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\Lib\site-packages\matplotlib\_mathtext.py:45: PyparsingDeprecationWarning: 'enablePackrat' deprecated - use 'enable_packrat'
+    ParserElement.enablePackrat()
+
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+  C:\Users\ssakesh\OneDrive - Capgemini\Documents\Agent-Dhara---Backend-App\agent\specialists\ydata_profiler.py:40: DeprecationWarning: 
+      `import ydata_profiling` is deprecated and will not receive more updates. 
+      Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.
+      
+    import ydata_profiling  # type: ignore  # noqa: F401
+
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+  C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\Lib\site-packages\ydata_profiling\model\describe.py:85: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    date_start = datetime.utcnow()
+
+tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_rules
+  C:\Users\ssakesh\AppData\Local\Programs\Python\Python313\Lib\site-packages\ydata_profiling\model\describe.py:190: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    date_end = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+====================== 69 passed, 17 warnings in 25.11s =======================
