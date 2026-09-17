@@ -253,4 +253,4 @@ tests/test_issue_forwarding_and_deduplication.py::test_assessment_profiling_fing
     date_end = datetime.utcnow()
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-====================== 202 passed, 17 warnings in 10.32s ======================
+====================== 202 passed, 17 warnings in 18.95s ======================

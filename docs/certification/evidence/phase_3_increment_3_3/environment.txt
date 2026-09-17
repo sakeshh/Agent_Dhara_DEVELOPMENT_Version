@@ -1,0 +1,7 @@
+python_version: 3.13.6 (tags/v3.13.6:4e66535, Aug  6 2025, 14:36:00) [MSC v.1944 64 bit (AMD64)]
+platform: Windows-11-10.0.26200-SP0
+machine: AMD64
+pyspark_version: 3.5.1
+pandas_version: 2.3.3
+pydantic_version: 2.12.5
+pytest_version: 9.0.2

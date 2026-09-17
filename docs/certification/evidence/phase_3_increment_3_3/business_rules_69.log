@@ -120,4 +120,4 @@ tests/test_assessment_bridge.py::test_load_and_profile_with_canonical_business_r
     date_end = datetime.utcnow()
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-======================= 69 passed, 17 warnings in 8.64s =======================
+====================== 69 passed, 17 warnings in 16.98s =======================

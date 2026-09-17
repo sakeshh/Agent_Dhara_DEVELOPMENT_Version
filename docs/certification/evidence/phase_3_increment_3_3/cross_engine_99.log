@@ -107,11 +107,11 @@ tests/cross_engine/test_parity_pyspark_validation.py::test_pyspark_validation_un
 tests/cross_engine/test_parity_pyspark_validation.py::test_pyspark_validation_severity_error_raises PASSED [ 98%]
 tests/cross_engine/test_parity_pyspark_validation.py::test_pyspark_validation_fail_step_on_unknown PASSED [100%]
 
-============================= 99 passed in 52.56s =============================
-SUCCESS: The process with PID 11128 (child process of PID 12452) has been terminated.
-SUCCESS: The process with PID 12452 (child process of PID 30648) has been terminated.
+======================== 99 passed in 82.72s (0:01:22) ========================
+SUCCESS: The process with PID 25840 (child process of PID 31032) has been terminated.
+SUCCESS: The process with PID 31032 (child process of PID 24792) has been terminated.
 
 --- STDERR ---
-ERROR: The process with PID 652 (child process of PID 11128) could not be terminated.
+ERROR: The process with PID 23364 (child process of PID 25840) could not be terminated.
 Reason: There is no running instance of the task.
 
