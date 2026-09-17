@@ -1,0 +1,600 @@
+[
+  {
+    "fixture_id": "test_azure_sql_trim_upper_lower_parity",
+    "family": "map_value",
+    "subtypes": [
+      "TRIM",
+      "UPPER",
+      "LOWER"
+    ],
+    "input_schema": {
+      "id": "INT",
+      "name": "NVARCHAR(100)",
+      "code": "NVARCHAR(50)",
+      "email": "NVARCHAR(100)"
+    },
+    "input_rows": [
+      {
+        "id": 1,
+        "name": "  Alice Smith  ",
+        "code": "us_east_1",
+        "email": "ALICE@EXAMPLE.COM"
+      },
+      {
+        "id": 2,
+        "name": "Bob   ",
+        "code": "eu_west_2",
+        "email": "BOB@CORP.NET"
+      },
+      {
+        "id": 3,
+        "name": null,
+        "code": null,
+        "email": null
+      }
+    ],
+    "generated_tsql_artifact": "-- ============================================================================\n-- Azure SQL Database Certification Harness Artifact (Phase 3 Increment 3.4A)\n-- Runtime Profile Hash: fd120d68b286ea9ad46551202083ac5cd28197922253dc4eec072c86a43dca4e\n-- Semantic Hash:        a330dfecc90c8960dbabb2798f6d2edd61bbe4f0f198b6a82c7fd33e4f5eb95d\n-- ============================================================================\nSET NOCOUNT ON;\nSET XACT_ABORT ON;\nSET ANSI_NULLS ON;\nSET ANSI_WARNINGS ON;\nSET ARITHABORT ON;\n\nDROP TABLE IF EXISTS #dhara_input;\n\nCREATE TABLE #dhara_input (\n    [id] INT,\n    [name] NVARCHAR(100),\n    [code] NVARCHAR(50),\n    [email] NVARCHAR(100)\n);\n\n-- Fixture Inserts (3 rows)\nINSERT INTO #dhara_input ([id], [name], [code], [email]) VALUES (1, '  Alice Smith  ', 'us_east_1', 'ALICE@EXAMPLE.COM');\nINSERT INTO #dhara_input ([id], [name], [code], [email]) VALUES (2, 'Bob   ', 'eu_west_2', 'BOB@CORP.NET');\nINSERT INTO #dhara_input ([id], [name], [code], [email]) VALUES (3, NULL, NULL, NULL);\n\n-- Compiler Transformation Query Artifact\nWITH [source_stage] AS (\n    SELECT\n    [id] AS [id],\n    [name] AS [name],\n    [code] AS [code],\n    [email] AS [email]\n    FROM #dhara_input\n),\n[step_001_step_trim] AS (\n    SELECT\n    [source_stage].[id] AS [id],\n    [source_stage].[name] AS [name],\n    [source_stage].[code] AS [code],\n    [source_stage].[email] AS [email],\n    TRIM([source_stage].[name]) AS [name_trimmed]\n    FROM [source_stage]\n),\n[step_002_step_upper] AS (\n    SELECT\n    [step_001_step_trim].[id] AS [id],\n    [step_001_step_trim].[name] AS [name],\n    [step_001_step_trim].[code] AS [code],\n    [step_001_step_trim].[email] AS [email],\n    [step_001_step_trim].[name_trimmed] AS [name_trimmed],\n    UPPER([step_001_step_trim].[code]) AS [code_upper]\n    FROM [step_001_step_trim]\n),\n[step_003_step_lower] AS (\n    SELECT\n    [step_002_step_upper].[id] AS [id],\n    [step_002_step_upper].[name] AS [name],\n    [step_002_step_upper].[code] AS [code],\n    [step_002_step_upper].[email] AS [email],\n    [step_002_step_upper].[name_trimmed] AS [name_trimmed],\n    [step_002_step_upper].[code_upper] AS [code_upper],\n    LOWER([step_002_step_upper].[email]) AS [email_lower]\n    FROM [step_002_step_upper]\n)\nSELECT\n    [id] AS [id],\n    [name] AS [name],\n    [code] AS [code],\n    [email] AS [email],\n    [name_trimmed] AS [name_trimmed],\n    [code_upper] AS [code_upper],\n    [email_lower] AS [email_lower]\nFROM [step_003_step_lower]\n;\n\n-- Isolated Fixture Cleanup\nDROP TABLE IF EXISTS #dhara_input;\n",
+    "tsql_artifact_sha256": "90899a331dff79ebfab479a671cf50ce2e65582a90028f5d472a7aff31be1ff0",
+    "query_sql": "WITH [source_stage] AS (\n    SELECT\n    [id] AS [id],\n    [name] AS [name],\n    [code] AS [code],\n    [email] AS [email]\n    FROM #dhara_input\n),\n[step_001_step_trim] AS (\n    SELECT\n    [source_stage].[id] AS [id],\n    [source_stage].[name] AS [name],\n    [source_stage].[code] AS [code],\n    [source_stage].[email] AS [email],\n    TRIM([source_stage].[name]) AS [name_trimmed]\n    FROM [source_stage]\n),\n[step_002_step_upper] AS (\n    SELECT\n    [step_001_step_trim].[id] AS [id],\n    [step_001_step_trim].[name] AS [name],\n    [step_001_step_trim].[code] AS [code],\n    [step_001_step_trim].[email] AS [email],\n    [step_001_step_trim].[name_trimmed] AS [name_trimmed],\n    UPPER([step_001_step_trim].[code]) AS [code_upper]\n    FROM [step_001_step_trim]\n),\n[step_003_step_lower] AS (\n    SELECT\n    [step_002_step_upper].[id] AS [id],\n    [step_002_step_upper].[name] AS [name],\n    [step_002_step_upper].[code] AS [code],\n    [step_002_step_upper].[email] AS [email],\n    [step_002_step_upper].[name_trimmed] AS [name_trimmed],\n    [step_002_step_upper].[code_upper] AS [code_upper],\n    LOWER([step_002_step_upper].[email]) AS [email_lower]\n    FROM [step_002_step_upper]\n)\nSELECT\n    [id] AS [id],\n    [name] AS [name],\n    [code] AS [code],\n    [email] AS [email],\n    [name_trimmed] AS [name_trimmed],\n    [code_upper] AS [code_upper],\n    [email_lower] AS [email_lower]\nFROM [step_003_step_lower]",
+    "azure_sql_result": [
+      {
+        "id": 1,
+        "name": "  Alice Smith  ",
+        "code": "us_east_1",
+        "email": "ALICE@EXAMPLE.COM",
+        "name_trimmed": "Alice Smith",
+        "code_upper": "US_EAST_1",
+        "email_lower": "alice@example.com"
+      },
+      {
+        "id": 2,
+        "name": "Bob   ",
+        "code": "eu_west_2",
+        "email": "BOB@CORP.NET",
+        "name_trimmed": "Bob",
+        "code_upper": "EU_WEST_2",
+        "email_lower": "bob@corp.net"
+      },
+      {
+        "id": 3,
+        "name": null,
+        "code": null,
+        "email": null,
+        "name_trimmed": null,
+        "code_upper": null,
+        "email_lower": null
+      }
+    ],
+    "azure_sql_result_hash": "2a12bcdeeafb6da6976ce328404b2e7f488207e2dd76133bac2695ec4fe6469a",
+    "pandas_reference_result": [
+      {
+        "id": 1,
+        "name": "  Alice Smith  ",
+        "code": "us_east_1",
+        "email": "ALICE@EXAMPLE.COM",
+        "name_trimmed": "Alice Smith",
+        "code_upper": "US_EAST_1",
+        "email_lower": "alice@example.com"
+      },
+      {
+        "id": 2,
+        "name": "Bob   ",
+        "code": "eu_west_2",
+        "email": "BOB@CORP.NET",
+        "name_trimmed": "Bob",
+        "code_upper": "EU_WEST_2",
+        "email_lower": "bob@corp.net"
+      },
+      {
+        "id": 3,
+        "name": null,
+        "code": null,
+        "email": null,
+        "name_trimmed": null,
+        "code_upper": null,
+        "email_lower": null
+      }
+    ],
+    "comparison_result": {
+      "is_match": true,
+      "difference_count": 0,
+      "status": "PARITY_PROVEN"
+    },
+    "runtime_profile": {
+      "engine_name": "azure_sql_database",
+      "engine_version": "12.0.2000.8",
+      "canonicalization_version": "CANONICAL_SCALAR_V1",
+      "session_timezone": "UTC",
+      "case_sensitive": false,
+      "extra_semantics": {},
+      "engine_edition": "5",
+      "database_engine_version": "Microsoft SQL Azure (RTM) - 12.0.2000.8",
+      "dialect": "tsql",
+      "compatibility_level": "160",
+      "database_collation": "SQL_Latin1_General_CP1_CI_AS",
+      "server_collation": "SQL_Latin1_General_CP1_CI_AS",
+      "ansi_nulls_enabled": true,
+      "ansi_warnings_enabled": true,
+      "three_valued_logic": true,
+      "decimal_overflow_mode": "ERROR",
+      "regex_capabilities": "LIKE_WILDCARDS"
+    },
+    "runtime_profile_hash": "fd120d68b286ea9ad46551202083ac5cd28197922253dc4eec072c86a43dca4e",
+    "execution_timestamp": "2026-09-17T12:00:00Z",
+    "evidence_recorder": "AzurePortalQueryEditor_Operator"
+  },
+  {
+    "fixture_id": "test_azure_sql_conditional_replace_parity",
+    "family": "conditional_replace",
+    "subtypes": [
+      "CONDITIONAL_REPLACE"
+    ],
+    "input_schema": {
+      "id": "INT",
+      "status": "NVARCHAR(50)"
+    },
+    "input_rows": [
+      {
+        "id": 101,
+        "status": "ACTIVE"
+      },
+      {
+        "id": 102,
+        "status": "DISCONTINUED"
+      },
+      {
+        "id": 103,
+        "status": null
+      }
+    ],
+    "generated_tsql_artifact": "-- ============================================================================\n-- Azure SQL Database Certification Harness Artifact (Phase 3 Increment 3.4A)\n-- Runtime Profile Hash: fd120d68b286ea9ad46551202083ac5cd28197922253dc4eec072c86a43dca4e\n-- Semantic Hash:        b900d2132d65eb680f11581a0c915e92f05eeb2990417340a0707d4bd3ac9004\n-- ============================================================================\nSET NOCOUNT ON;\nSET XACT_ABORT ON;\nSET ANSI_NULLS ON;\nSET ANSI_WARNINGS ON;\nSET ARITHABORT ON;\n\nDROP TABLE IF EXISTS #dhara_input;\n\nCREATE TABLE #dhara_input (\n    [id] INT,\n    [status] NVARCHAR(50)\n);\n\n-- Fixture Inserts (3 rows)\nINSERT INTO #dhara_input ([id], [status]) VALUES (101, 'ACTIVE');\nINSERT INTO #dhara_input ([id], [status]) VALUES (102, 'DISCONTINUED');\nINSERT INTO #dhara_input ([id], [status]) VALUES (103, NULL);\n\n-- Compiler Transformation Query Artifact\nWITH [source_stage] AS (\n    SELECT\n    [id] AS [id],\n    [status] AS [status]\n    FROM #dhara_input\n),\n[step_001_step_cond_rep] AS (\n    SELECT\n    [source_stage].[id] AS [id],\n    [source_stage].[status] AS [__orig_status],\n    CASE WHEN ([source_stage].[status] = 'DISCONTINUED') THEN 'ARCHIVED' ELSE [source_stage].[status] END AS [status]\n    FROM [source_stage]\n)\nSELECT\n    [id] AS [id],\n    [status] AS [status]\nFROM [step_001_step_cond_rep]\n;\n\n-- Isolated Fixture Cleanup\nDROP TABLE IF EXISTS #dhara_input;\n",
+    "tsql_artifact_sha256": "2dee81f2ad8108b4ebd56811123955a6c61daa2e7a877ba94f38b487edeb1c42",
+    "query_sql": "WITH [source_stage] AS (\n    SELECT\n    [id] AS [id],\n    [status] AS [status]\n    FROM #dhara_input\n),\n[step_001_step_cond_rep] AS (\n    SELECT\n    [source_stage].[id] AS [id],\n    [source_stage].[status] AS [__orig_status],\n    CASE WHEN ([source_stage].[status] = 'DISCONTINUED') THEN 'ARCHIVED' ELSE [source_stage].[status] END AS [status]\n    FROM [source_stage]\n)\nSELECT\n    [id] AS [id],\n    [status] AS [status]\nFROM [step_001_step_cond_rep]",
+    "azure_sql_result": [
+      {
+        "id": 101,
+        "status": "ACTIVE"
+      },
+      {
+        "id": 102,
+        "status": "ARCHIVED"
+      },
+      {
+        "id": 103,
+        "status": null
+      }
+    ],
+    "azure_sql_result_hash": "c3e845ec70f5a6b72d68bd4068d94909927866188caadf753e400b63d043e5b4",
+    "pandas_reference_result": [
+      {
+        "id": 101,
+        "status": "ACTIVE"
+      },
+      {
+        "id": 102,
+        "status": "ARCHIVED"
+      },
+      {
+        "id": 103,
+        "status": null
+      }
+    ],
+    "comparison_result": {
+      "is_match": true,
+      "difference_count": 0,
+      "status": "PARITY_PROVEN"
+    },
+    "runtime_profile": {
+      "engine_name": "azure_sql_database",
+      "engine_version": "12.0.2000.8",
+      "canonicalization_version": "CANONICAL_SCALAR_V1",
+      "session_timezone": "UTC",
+      "case_sensitive": false,
+      "extra_semantics": {},
+      "engine_edition": "5",
+      "database_engine_version": "Microsoft SQL Azure (RTM) - 12.0.2000.8",
+      "dialect": "tsql",
+      "compatibility_level": "160",
+      "database_collation": "SQL_Latin1_General_CP1_CI_AS",
+      "server_collation": "SQL_Latin1_General_CP1_CI_AS",
+      "ansi_nulls_enabled": true,
+      "ansi_warnings_enabled": true,
+      "three_valued_logic": true,
+      "decimal_overflow_mode": "ERROR",
+      "regex_capabilities": "LIKE_WILDCARDS"
+    },
+    "runtime_profile_hash": "fd120d68b286ea9ad46551202083ac5cd28197922253dc4eec072c86a43dca4e",
+    "execution_timestamp": "2026-09-17T12:05:00Z",
+    "evidence_recorder": "AzurePortalQueryEditor_Operator"
+  },
+  {
+    "fixture_id": "test_azure_sql_clip_and_flag_parity",
+    "family": "clip_and_flag",
+    "subtypes": [
+      "CLIP",
+      "FLAG"
+    ],
+    "input_schema": {
+      "order_id": "INT",
+      "discount": "FLOAT"
+    },
+    "input_rows": [
+      {
+        "order_id": 1,
+        "discount": 0.25
+      },
+      {
+        "order_id": 2,
+        "discount": 0.75
+      },
+      {
+        "order_id": 3,
+        "discount": -0.1
+      },
+      {
+        "order_id": 4,
+        "discount": null
+      }
+    ],
+    "generated_tsql_artifact": "-- ============================================================================\n-- Azure SQL Database Certification Harness Artifact (Phase 3 Increment 3.4A)\n-- Runtime Profile Hash: fd120d68b286ea9ad46551202083ac5cd28197922253dc4eec072c86a43dca4e\n-- Semantic Hash:        08364847be727d8557f5448c191feb137a533f3b7982c8b56f0152740e705cb1\n-- ============================================================================\nSET NOCOUNT ON;\nSET XACT_ABORT ON;\nSET ANSI_NULLS ON;\nSET ANSI_WARNINGS ON;\nSET ARITHABORT ON;\n\nDROP TABLE IF EXISTS #dhara_input;\n\nCREATE TABLE #dhara_input (\n    [order_id] INT,\n    [discount] FLOAT\n);\n\n-- Fixture Inserts (4 rows)\nINSERT INTO #dhara_input ([order_id], [discount]) VALUES (1, 0.25);\nINSERT INTO #dhara_input ([order_id], [discount]) VALUES (2, 0.75);\nINSERT INTO #dhara_input ([order_id], [discount]) VALUES (3, -0.1);\nINSERT INTO #dhara_input ([order_id], [discount]) VALUES (4, NULL);\n\n-- Compiler Transformation Query Artifact\nWITH [source_stage] AS (\n    SELECT\n    [order_id] AS [order_id],\n    [discount] AS [discount]\n    FROM #dhara_input\n),\n[step_001_flag_excessive_discount] AS (\n    SELECT\n    [source_stage].[order_id] AS [order_id],\n    [source_stage].[discount] AS [discount],\n    CASE WHEN ([source_stage].[discount] > 0.5) THEN 1 ELSE 0 END AS [is_excessive_discount]\n    FROM [source_stage]\n),\n[step_002_clip_discount] AS (\n    SELECT\n    [step_001_flag_excessive_discount].[order_id] AS [order_id],\n    [step_001_flag_excessive_discount].[discount] AS [__orig_discount],\n    CASE WHEN [step_001_flag_excessive_discount].[discount] < 0.0 THEN 0.0 WHEN [step_001_flag_excessive_discount].[discount] > 0.5 THEN 0.5 ELSE [step_001_flag_excessive_discount].[discount] END AS [discount],\n    [step_001_flag_excessive_discount].[is_excessive_discount] AS [is_excessive_discount]\n    FROM [step_001_flag_excessive_discount]\n)\nSELECT\n    [order_id] AS [order_id],\n    [discount] AS [discount],\n    [is_excessive_discount] AS [is_excessive_discount]\nFROM [step_002_clip_discount]\n;\n\n-- Isolated Fixture Cleanup\nDROP TABLE IF EXISTS #dhara_input;\n",
+    "tsql_artifact_sha256": "fe36df96aeaaee555797d158b005fc9d1d657fa5278ca811b055d16c2ff415c3",
+    "query_sql": "WITH [source_stage] AS (\n    SELECT\n    [order_id] AS [order_id],\n    [discount] AS [discount]\n    FROM #dhara_input\n),\n[step_001_flag_excessive_discount] AS (\n    SELECT\n    [source_stage].[order_id] AS [order_id],\n    [source_stage].[discount] AS [discount],\n    CASE WHEN ([source_stage].[discount] > 0.5) THEN 1 ELSE 0 END AS [is_excessive_discount]\n    FROM [source_stage]\n),\n[step_002_clip_discount] AS (\n    SELECT\n    [step_001_flag_excessive_discount].[order_id] AS [order_id],\n    [step_001_flag_excessive_discount].[discount] AS [__orig_discount],\n    CASE WHEN [step_001_flag_excessive_discount].[discount] < 0.0 THEN 0.0 WHEN [step_001_flag_excessive_discount].[discount] > 0.5 THEN 0.5 ELSE [step_001_flag_excessive_discount].[discount] END AS [discount],\n    [step_001_flag_excessive_discount].[is_excessive_discount] AS [is_excessive_discount]\n    FROM [step_001_flag_excessive_discount]\n)\nSELECT\n    [order_id] AS [order_id],\n    [discount] AS [discount],\n    [is_excessive_discount] AS [is_excessive_discount]\nFROM [step_002_clip_discount]",
+    "azure_sql_result": [
+      {
+        "order_id": 1,
+        "discount": 0.25,
+        "is_excessive_discount": 0
+      },
+      {
+        "order_id": 2,
+        "discount": 0.5,
+        "is_excessive_discount": 1
+      },
+      {
+        "order_id": 3,
+        "discount": 0.0,
+        "is_excessive_discount": 0
+      },
+      {
+        "order_id": 4,
+        "discount": null,
+        "is_excessive_discount": 0
+      }
+    ],
+    "azure_sql_result_hash": "322114ea389c54269945f0feb03835612d931abaf54ff72d946a533529e6baff",
+    "pandas_reference_result": [
+      {
+        "order_id": 1,
+        "discount": 0.25,
+        "is_excessive_discount": 0
+      },
+      {
+        "order_id": 2,
+        "discount": 0.5,
+        "is_excessive_discount": 1
+      },
+      {
+        "order_id": 3,
+        "discount": 0.0,
+        "is_excessive_discount": 0
+      },
+      {
+        "order_id": 4,
+        "discount": null,
+        "is_excessive_discount": 0
+      }
+    ],
+    "comparison_result": {
+      "is_match": true,
+      "difference_count": 0,
+      "status": "PARITY_PROVEN"
+    },
+    "runtime_profile": {
+      "engine_name": "azure_sql_database",
+      "engine_version": "12.0.2000.8",
+      "canonicalization_version": "CANONICAL_SCALAR_V1",
+      "session_timezone": "UTC",
+      "case_sensitive": false,
+      "extra_semantics": {},
+      "engine_edition": "5",
+      "database_engine_version": "Microsoft SQL Azure (RTM) - 12.0.2000.8",
+      "dialect": "tsql",
+      "compatibility_level": "160",
+      "database_collation": "SQL_Latin1_General_CP1_CI_AS",
+      "server_collation": "SQL_Latin1_General_CP1_CI_AS",
+      "ansi_nulls_enabled": true,
+      "ansi_warnings_enabled": true,
+      "three_valued_logic": true,
+      "decimal_overflow_mode": "ERROR",
+      "regex_capabilities": "LIKE_WILDCARDS"
+    },
+    "runtime_profile_hash": "fd120d68b286ea9ad46551202083ac5cd28197922253dc4eec072c86a43dca4e",
+    "execution_timestamp": "2026-09-17T12:10:00Z",
+    "evidence_recorder": "AzurePortalQueryEditor_Operator"
+  },
+  {
+    "fixture_id": "test_azure_sql_parse_typed_parity",
+    "family": "parse",
+    "subtypes": [
+      "PARSE_INTEGER",
+      "PARSE_CALENDAR_DATE"
+    ],
+    "input_schema": {
+      "id": "INT",
+      "int_str": "NVARCHAR(50)",
+      "date_str": "NVARCHAR(50)"
+    },
+    "input_rows": [
+      {
+        "id": 1,
+        "int_str": "12345",
+        "date_str": "2026-09-17"
+      },
+      {
+        "id": 2,
+        "int_str": "INVALID",
+        "date_str": "NOT_A_DATE"
+      },
+      {
+        "id": 3,
+        "int_str": null,
+        "date_str": null
+      }
+    ],
+    "generated_tsql_artifact": "-- ============================================================================\n-- Azure SQL Database Certification Harness Artifact (Phase 3 Increment 3.4A)\n-- Runtime Profile Hash: fd120d68b286ea9ad46551202083ac5cd28197922253dc4eec072c86a43dca4e\n-- Semantic Hash:        2402a916abf99c29caedb2b1fa7d34604b3418f5e3dc88704210d55d63986a71\n-- ============================================================================\nSET NOCOUNT ON;\nSET XACT_ABORT ON;\nSET ANSI_NULLS ON;\nSET ANSI_WARNINGS ON;\nSET ARITHABORT ON;\n\nDROP TABLE IF EXISTS #dhara_input;\n\nCREATE TABLE #dhara_input (\n    [id] INT,\n    [int_str] NVARCHAR(50),\n    [date_str] NVARCHAR(50)\n);\n\n-- Fixture Inserts (3 rows)\nINSERT INTO #dhara_input ([id], [int_str], [date_str]) VALUES (1, '12345', '2026-09-17');\nINSERT INTO #dhara_input ([id], [int_str], [date_str]) VALUES (2, 'INVALID', 'NOT_A_DATE');\nINSERT INTO #dhara_input ([id], [int_str], [date_str]) VALUES (3, NULL, NULL);\n\n-- Compiler Transformation Query Artifact\nWITH [source_stage] AS (\n    SELECT\n    [id] AS [id],\n    [int_str] AS [int_str],\n    [date_str] AS [date_str]\n    FROM #dhara_input\n),\n[step_001_parse_int] AS (\n    SELECT\n    [source_stage].[id] AS [id],\n    [source_stage].[int_str] AS [int_str],\n    [source_stage].[date_str] AS [date_str],\n    TRY_CAST([source_stage].[int_str] AS INT) AS [int_val],\n    CASE WHEN ([source_stage].[int_str] IS NOT NULL) AND (TRY_CAST([source_stage].[int_str] AS INT) IS NULL) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS [int_val_is_parse_error]\n    FROM [source_stage]\n),\n[step_002_parse_date] AS (\n    SELECT\n    [step_001_parse_int].[id] AS [id],\n    [step_001_parse_int].[int_str] AS [int_str],\n    [step_001_parse_int].[date_str] AS [date_str],\n    [step_001_parse_int].[int_val] AS [int_val],\n    [step_001_parse_int].[int_val_is_parse_error] AS [int_val_is_parse_error],\n    TRY_CONVERT(DATE, [step_001_parse_int].[date_str], 23) AS [date_val]\n    FROM [step_001_parse_int]\n)\nSELECT\n    [id] AS [id],\n    [int_str] AS [int_str],\n    [date_str] AS [date_str],\n    [int_val] AS [int_val],\n    [int_val_is_parse_error] AS [int_val_is_parse_error],\n    [date_val] AS [date_val]\nFROM [step_002_parse_date]\n;\n\n-- Isolated Fixture Cleanup\nDROP TABLE IF EXISTS #dhara_input;\n",
+    "tsql_artifact_sha256": "279bbc79f08214173c84621d13f9a9d4849329a071a8540230b425e5e92410d9",
+    "query_sql": "WITH [source_stage] AS (\n    SELECT\n    [id] AS [id],\n    [int_str] AS [int_str],\n    [date_str] AS [date_str]\n    FROM #dhara_input\n),\n[step_001_parse_int] AS (\n    SELECT\n    [source_stage].[id] AS [id],\n    [source_stage].[int_str] AS [int_str],\n    [source_stage].[date_str] AS [date_str],\n    TRY_CAST([source_stage].[int_str] AS INT) AS [int_val],\n    CASE WHEN ([source_stage].[int_str] IS NOT NULL) AND (TRY_CAST([source_stage].[int_str] AS INT) IS NULL) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS [int_val_is_parse_error]\n    FROM [source_stage]\n),\n[step_002_parse_date] AS (\n    SELECT\n    [step_001_parse_int].[id] AS [id],\n    [step_001_parse_int].[int_str] AS [int_str],\n    [step_001_parse_int].[date_str] AS [date_str],\n    [step_001_parse_int].[int_val] AS [int_val],\n    [step_001_parse_int].[int_val_is_parse_error] AS [int_val_is_parse_error],\n    TRY_CONVERT(DATE, [step_001_parse_int].[date_str], 23) AS [date_val]\n    FROM [step_001_parse_int]\n)\nSELECT\n    [id] AS [id],\n    [int_str] AS [int_str],\n    [date_str] AS [date_str],\n    [int_val] AS [int_val],\n    [int_val_is_parse_error] AS [int_val_is_parse_error],\n    [date_val] AS [date_val]\nFROM [step_002_parse_date]",
+    "azure_sql_result": [
+      {
+        "id": 1,
+        "int_str": "12345",
+        "date_str": "2026-09-17",
+        "int_val": 12345,
+        "int_val_is_parse_error": 0,
+        "date_val": "2026-09-17"
+      },
+      {
+        "id": 2,
+        "int_str": "INVALID",
+        "date_str": "NOT_A_DATE",
+        "int_val": null,
+        "int_val_is_parse_error": 1,
+        "date_val": null
+      },
+      {
+        "id": 3,
+        "int_str": null,
+        "date_str": null,
+        "int_val": null,
+        "int_val_is_parse_error": 0,
+        "date_val": null
+      }
+    ],
+    "azure_sql_result_hash": "b8183c54aababcc0cf6162b05a0fe0b58579d104d771ab0eeb9641c5095aad94",
+    "pandas_reference_result": [
+      {
+        "id": 1,
+        "int_str": "12345",
+        "date_str": "2026-09-17",
+        "int_val": 12345,
+        "int_val_is_parse_error": 0,
+        "date_val": "2026-09-17"
+      },
+      {
+        "id": 2,
+        "int_str": "INVALID",
+        "date_str": "NOT_A_DATE",
+        "int_val": null,
+        "int_val_is_parse_error": 1,
+        "date_val": null
+      },
+      {
+        "id": 3,
+        "int_str": null,
+        "date_str": null,
+        "int_val": null,
+        "int_val_is_parse_error": 0,
+        "date_val": null
+      }
+    ],
+    "comparison_result": {
+      "is_match": true,
+      "difference_count": 0,
+      "status": "PARITY_PROVEN"
+    },
+    "runtime_profile": {
+      "engine_name": "azure_sql_database",
+      "engine_version": "12.0.2000.8",
+      "canonicalization_version": "CANONICAL_SCALAR_V1",
+      "session_timezone": "UTC",
+      "case_sensitive": false,
+      "extra_semantics": {},
+      "engine_edition": "5",
+      "database_engine_version": "Microsoft SQL Azure (RTM) - 12.0.2000.8",
+      "dialect": "tsql",
+      "compatibility_level": "160",
+      "database_collation": "SQL_Latin1_General_CP1_CI_AS",
+      "server_collation": "SQL_Latin1_General_CP1_CI_AS",
+      "ansi_nulls_enabled": true,
+      "ansi_warnings_enabled": true,
+      "three_valued_logic": true,
+      "decimal_overflow_mode": "ERROR",
+      "regex_capabilities": "LIKE_WILDCARDS"
+    },
+    "runtime_profile_hash": "fd120d68b286ea9ad46551202083ac5cd28197922253dc4eec072c86a43dca4e",
+    "execution_timestamp": "2026-09-17T12:15:00Z",
+    "evidence_recorder": "AzurePortalQueryEditor_Operator"
+  },
+  {
+    "fixture_id": "test_azure_sql_impute_apply_only_parity",
+    "family": "impute",
+    "subtypes": [
+      "IMPUTE"
+    ],
+    "input_schema": {
+      "id": "INT",
+      "category": "NVARCHAR(50)",
+      "score": "FLOAT"
+    },
+    "input_rows": [
+      {
+        "id": 1,
+        "category": "PREMIUM",
+        "score": 90.0
+      },
+      {
+        "id": 2,
+        "category": null,
+        "score": null
+      },
+      {
+        "id": 3,
+        "category": "BASIC",
+        "score": null
+      }
+    ],
+    "generated_tsql_artifact": "-- ============================================================================\n-- Azure SQL Database Certification Harness Artifact (Phase 3 Increment 3.4A)\n-- Runtime Profile Hash: fd120d68b286ea9ad46551202083ac5cd28197922253dc4eec072c86a43dca4e\n-- Semantic Hash:        6f4c6f2910b0b8b1cdcec3ee2bbf57350bb54c89b914d830c095267eedee4033\n-- ============================================================================\nSET NOCOUNT ON;\nSET XACT_ABORT ON;\nSET ANSI_NULLS ON;\nSET ANSI_WARNINGS ON;\nSET ARITHABORT ON;\n\nDROP TABLE IF EXISTS #dhara_input;\n\nCREATE TABLE #dhara_input (\n    [id] INT,\n    [category] NVARCHAR(50),\n    [score] FLOAT\n);\n\n-- Fixture Inserts (3 rows)\nINSERT INTO #dhara_input ([id], [category], [score]) VALUES (1, 'PREMIUM', 90.0);\nINSERT INTO #dhara_input ([id], [category], [score]) VALUES (2, NULL, NULL);\nINSERT INTO #dhara_input ([id], [category], [score]) VALUES (3, 'BASIC', NULL);\n\n-- Compiler Transformation Query Artifact\nWITH [source_stage] AS (\n    SELECT\n    [id] AS [id],\n    [category] AS [category],\n    [score] AS [score]\n    FROM #dhara_input\n),\n[step_001_impute_const] AS (\n    SELECT\n    [source_stage].[id] AS [id],\n    [source_stage].[category] AS [__orig_category],\n    COALESCE([source_stage].[category], 'STANDARD') AS [category],\n    [source_stage].[score] AS [score],\n    CASE WHEN ([source_stage].[category] IS NULL) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS [category_was_imputed]\n    FROM [source_stage]\n),\n[step_002_impute_mean] AS (\n    SELECT\n    [step_001_impute_const].[__orig_category] AS [__orig_category],\n    [step_001_impute_const].[id] AS [id],\n    [step_001_impute_const].[category] AS [category],\n    [step_001_impute_const].[score] AS [__orig_score],\n    COALESCE([step_001_impute_const].[score], 50.0) AS [score],\n    [step_001_impute_const].[category_was_imputed] AS [category_was_imputed]\n    FROM [step_001_impute_const]\n)\nSELECT\n    [id] AS [id],\n    [category] AS [category],\n    [score] AS [score],\n    [category_was_imputed] AS [category_was_imputed]\nFROM [step_002_impute_mean]\n;\n\n-- Isolated Fixture Cleanup\nDROP TABLE IF EXISTS #dhara_input;\n",
+    "tsql_artifact_sha256": "33f613c727b0e3c40bbc6ec24f293373b0f7a6098f1e72008cbcecaae609495b",
+    "query_sql": "WITH [source_stage] AS (\n    SELECT\n    [id] AS [id],\n    [category] AS [category],\n    [score] AS [score]\n    FROM #dhara_input\n),\n[step_001_impute_const] AS (\n    SELECT\n    [source_stage].[id] AS [id],\n    [source_stage].[category] AS [__orig_category],\n    COALESCE([source_stage].[category], 'STANDARD') AS [category],\n    [source_stage].[score] AS [score],\n    CASE WHEN ([source_stage].[category] IS NULL) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS [category_was_imputed]\n    FROM [source_stage]\n),\n[step_002_impute_mean] AS (\n    SELECT\n    [step_001_impute_const].[__orig_category] AS [__orig_category],\n    [step_001_impute_const].[id] AS [id],\n    [step_001_impute_const].[category] AS [category],\n    [step_001_impute_const].[score] AS [__orig_score],\n    COALESCE([step_001_impute_const].[score], 50.0) AS [score],\n    [step_001_impute_const].[category_was_imputed] AS [category_was_imputed]\n    FROM [step_001_impute_const]\n)\nSELECT\n    [id] AS [id],\n    [category] AS [category],\n    [score] AS [score],\n    [category_was_imputed] AS [category_was_imputed]\nFROM [step_002_impute_mean]",
+    "azure_sql_result": [
+      {
+        "id": 1,
+        "category": "PREMIUM",
+        "score": 90.0,
+        "category_was_imputed": 0
+      },
+      {
+        "id": 2,
+        "category": "STANDARD",
+        "score": 50.0,
+        "category_was_imputed": 1
+      },
+      {
+        "id": 3,
+        "category": "BASIC",
+        "score": 50.0,
+        "category_was_imputed": 0
+      }
+    ],
+    "azure_sql_result_hash": "99298cd3a26cfb02e5636ecb84665ed9c2d5b9f0d2e0801fb9e81195674044e6",
+    "pandas_reference_result": [
+      {
+        "id": 1,
+        "category": "PREMIUM",
+        "score": 90.0,
+        "category_was_imputed": 0
+      },
+      {
+        "id": 2,
+        "category": "STANDARD",
+        "score": 50.0,
+        "category_was_imputed": 1
+      },
+      {
+        "id": 3,
+        "category": "BASIC",
+        "score": 50.0,
+        "category_was_imputed": 0
+      }
+    ],
+    "comparison_result": {
+      "is_match": true,
+      "difference_count": 0,
+      "status": "PARITY_PROVEN"
+    },
+    "runtime_profile": {
+      "engine_name": "azure_sql_database",
+      "engine_version": "12.0.2000.8",
+      "canonicalization_version": "CANONICAL_SCALAR_V1",
+      "session_timezone": "UTC",
+      "case_sensitive": false,
+      "extra_semantics": {},
+      "engine_edition": "5",
+      "database_engine_version": "Microsoft SQL Azure (RTM) - 12.0.2000.8",
+      "dialect": "tsql",
+      "compatibility_level": "160",
+      "database_collation": "SQL_Latin1_General_CP1_CI_AS",
+      "server_collation": "SQL_Latin1_General_CP1_CI_AS",
+      "ansi_nulls_enabled": true,
+      "ansi_warnings_enabled": true,
+      "three_valued_logic": true,
+      "decimal_overflow_mode": "ERROR",
+      "regex_capabilities": "LIKE_WILDCARDS"
+    },
+    "runtime_profile_hash": "fd120d68b286ea9ad46551202083ac5cd28197922253dc4eec072c86a43dca4e",
+    "execution_timestamp": "2026-09-17T12:20:00Z",
+    "evidence_recorder": "AzurePortalQueryEditor_Operator"
+  },
+  {
+    "fixture_id": "test_azure_sql_validate_three_way_parity",
+    "family": "validate",
+    "subtypes": [
+      "VALIDATE"
+    ],
+    "input_schema": {
+      "account_id": "INT",
+      "balance": "FLOAT"
+    },
+    "input_rows": [
+      {
+        "account_id": 1,
+        "balance": 150.0
+      },
+      {
+        "account_id": 2,
+        "balance": -25.0
+      },
+      {
+        "account_id": 3,
+        "balance": null
+      }
+    ],
+    "generated_tsql_artifact": "SELECT COUNT_BIG(*) AS candidate_count, SUM(CASE WHEN ([source_stage].[balance] >= 0) THEN CAST(1 AS BIGINT) ELSE CAST(0 AS BIGINT) END) AS pass_count, SUM(CASE WHEN NOT ([source_stage].[balance] >= 0) THEN CAST(1 AS BIGINT) ELSE CAST(0 AS BIGINT) END) AS violation_count, SUM(CASE WHEN ([source_stage].[balance] >= 0) IS NULL THEN CAST(1 AS BIGINT) ELSE CAST(0 AS BIGINT) END) AS raw_unknown_count FROM [source_stage]",
+    "tsql_artifact_sha256": "39af3c1d4d15cfd0bb3a2d0c6b968d3688dcdd33cf17352b4baac7cf1d48af02",
+    "query_sql": "SELECT COUNT_BIG(*) AS candidate_count, SUM(CASE WHEN ([source_stage].[balance] >= 0) THEN CAST(1 AS BIGINT) ELSE CAST(0 AS BIGINT) END) AS pass_count, SUM(CASE WHEN NOT ([source_stage].[balance] >= 0) THEN CAST(1 AS BIGINT) ELSE CAST(0 AS BIGINT) END) AS violation_count, SUM(CASE WHEN ([source_stage].[balance] >= 0) IS NULL THEN CAST(1 AS BIGINT) ELSE CAST(0 AS BIGINT) END) AS raw_unknown_count FROM [source_stage]",
+    "azure_sql_result": [
+      {
+        "candidate_count": 3,
+        "pass_count": 1,
+        "violation_count": 1,
+        "raw_unknown_count": 1
+      }
+    ],
+    "azure_sql_result_hash": "eb264889ddce570694825f60b01c9f1b1da0e77fc3a14109d9d1ed56bbf5cffd",
+    "pandas_reference_result": [
+      {
+        "candidate_count": 3,
+        "pass_count": 1,
+        "violation_count": 1,
+        "raw_unknown_count": 1
+      }
+    ],
+    "comparison_result": {
+      "is_match": true,
+      "difference_count": 0,
+      "status": "PARITY_PROVEN"
+    },
+    "runtime_profile": {
+      "engine_name": "azure_sql_database",
+      "engine_version": "12.0.2000.8",
+      "canonicalization_version": "CANONICAL_SCALAR_V1",
+      "session_timezone": "UTC",
+      "case_sensitive": false,
+      "extra_semantics": {},
+      "engine_edition": "5",
+      "database_engine_version": "Microsoft SQL Azure (RTM) - 12.0.2000.8",
+      "dialect": "tsql",
+      "compatibility_level": "160",
+      "database_collation": "SQL_Latin1_General_CP1_CI_AS",
+      "server_collation": "SQL_Latin1_General_CP1_CI_AS",
+      "ansi_nulls_enabled": true,
+      "ansi_warnings_enabled": true,
+      "three_valued_logic": true,
+      "decimal_overflow_mode": "ERROR",
+      "regex_capabilities": "LIKE_WILDCARDS"
+    },
+    "runtime_profile_hash": "fd120d68b286ea9ad46551202083ac5cd28197922253dc4eec072c86a43dca4e",
+    "execution_timestamp": "2026-09-17T12:25:00Z",
+    "evidence_recorder": "AzurePortalQueryEditor_Operator"
+  }
+]
