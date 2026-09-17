@@ -349,3 +349,101 @@ def test_pyspark_schema_mutation_pre_post_hash_runtime_enforcement(spark_session
     # 2. Execution FAILS at runtime due to pre-mutation snapshot mismatch
     with pytest.raises(Exception, match="Actual pre-mutation schema hash does not match"):
         compiler.execute(graph, sdf)
+
+
+def test_pyspark_schema_protected_rename_then_drop_rejected():
+    """
+    Verifies that renaming a protected column preserves its protection class,
+    and a subsequent drop or project exclusion is rejected at compile time.
+    """
+    schema = DatasetSchema(
+        dataset_name="primary",
+        columns={
+            "account_id": DatasetColumnSchema(
+                name="account_id",
+                logical_type=DataType.STRING,
+                is_protected=True,
+                protection_classes=(ColumnProtectionClass.PRIMARY_KEY,),
+            ),
+            "balance": DatasetColumnSchema(name="balance", logical_type=DataType.FLOAT),
+        },
+    )
+
+    # Case A: Rename protected column, then DROP new name -> FAILED_COMPILATION
+    valid_auth_a = StepAuthorization(
+        step_id="step_drop_renamed_pk",
+        policy_decision_id="POL-DROP-REN",
+        approved_by_subject_id="steward",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        authorized_step_hash="placeholder",
+    )
+    step_ren = TransformationStepIR(
+        step_id="step_rename_pk",
+        family=ActionFamily.SCHEMA_MUTATION,
+        expression=RenameColumnsExpression(renames=(ColumnRenameSpec(old_name="account_id", new_name="acct_num"),)),
+        dataset_name="primary",
+        kind=StepKind.SCHEMA_MUTATION,
+    )
+    step_drop = TransformationStepIR(
+        step_id="step_drop_renamed_pk",
+        family=ActionFamily.SCHEMA_MUTATION,
+        expression=DropColumnsExpression(drops=(ColumnDropSpec(column="acct_num"),)),
+        authorization=valid_auth_a,
+        dataset_name="primary",
+        kind=StepKind.SCHEMA_MUTATION,
+    )
+    valid_auth_a.authorized_step_hash = step_drop.semantic_hash
+    graph_drop = TransformationIRGraph(graph_id="g_ren_drop", steps=[step_ren, step_drop])
+    res_drop = PySparkIRCompiler(schemas={"primary": schema}).compile(graph_drop)
+    assert res_drop.status == CodegenStatus.FAILED_COMPILATION
+    assert res_drop.artifact is None
+    assert any("ProtectedColumnDropError" in d for d in res_drop.diagnostics)
+
+    # Case B: Rename protected column, then PROJECT excluding new name -> FAILED_COMPILATION
+    step_proj = TransformationStepIR(
+        step_id="step_proj_exclude_renamed",
+        family=ActionFamily.SCHEMA_MUTATION,
+        expression=ProjectColumnsExpression(projection=ColumnProjectSpec(projected_columns=("balance",))),
+        dataset_name="primary",
+        kind=StepKind.SCHEMA_MUTATION,
+    )
+    graph_proj = TransformationIRGraph(graph_id="g_ren_proj", steps=[step_ren, step_proj])
+    res_proj = PySparkIRCompiler(schemas={"primary": schema}).compile(graph_proj)
+    assert res_proj.status == CodegenStatus.FAILED_COMPILATION
+    assert res_proj.artifact is None
+    assert any("ProtectedColumnDropError" in d for d in res_proj.diagnostics)
+
+
+def test_pyspark_schema_cannot_drop_technical_routing_identity():
+    """
+    Verifies that a user-authored schema mutation cannot drop or rename the technical routing identity.
+    Only the certified publication-eligibility boundary may strip it.
+    """
+    schema = DatasetSchema(
+        dataset_name="primary",
+        columns={
+            "val": DatasetColumnSchema(name="val", logical_type=DataType.INTEGER),
+        },
+    )
+    valid_auth_id = StepAuthorization(
+        step_id="step_drop_id",
+        policy_decision_id="POL-TECH-ID",
+        approved_by_subject_id="steward",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        authorized_step_hash="placeholder",
+    )
+    step_drop_id = TransformationStepIR(
+        step_id="step_drop_id",
+        family=ActionFamily.SCHEMA_MUTATION,
+        expression=DropColumnsExpression(drops=(ColumnDropSpec(column="__dhara_row_occurrence_0"),)),
+        authorization=valid_auth_id,
+        dataset_name="primary",
+        kind=StepKind.SCHEMA_MUTATION,
+    )
+    valid_auth_id.authorized_step_hash = step_drop_id.semantic_hash
+    graph = TransformationIRGraph(graph_id="g_drop_tech_id", steps=[step_drop_id])
+    res = PySparkIRCompiler(schemas={"primary": schema}).compile(graph)
+    assert res.status == CodegenStatus.FAILED_COMPILATION
+    assert res.artifact is None
+    assert any("ProtectedColumnDropError" in d for d in res.diagnostics)
+

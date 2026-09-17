@@ -29,10 +29,21 @@ import os
 import tempfile
 from typing import Any, Dict, List, Optional
 
+import hashlib
 import numpy as np
 import pandas as pd
 import pytest
 from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
+
+from agent.etl_pipeline.canonical_encoding import (
+    canonical_encode_scalar_v1,
+    TAG_BOOL_FALSE,
+    TAG_BOOL_TRUE,
+    TAG_BYTES_PREFIX,
+    TAG_INT_PREFIX,
+    TAG_NULL,
+)
 
 from agent.etl_pipeline.codegen_shared import CodegenStatus
 from agent.etl_pipeline.pandas_ir_compiler import PandasIRCompiler
@@ -289,6 +300,113 @@ def test_pyspark_canonical_hashing_boolean_and_integer_parity(spark_session: Spa
     # Compare exact SHA-256 digests
     assert py_out["flag_hash"].tolist() == pd_out["flag_hash"].tolist()
     assert py_out["num_hash"].tolist() == pd_out["num_hash"].tolist()
+
+
+def test_pyspark_canonical_byte_level_parity_and_null_policies(spark_session: SparkSession):
+    """
+    Direct proving sequence:
+    1. Spark Catalyst canonical byte expressions == reference canonical_encode_scalar_v1 bytes
+       for NULL, BOOLEAN, INTEGER, and BYTES.
+    2. Spark SHA-256 digest == SHA-256(reference canonical bytes).
+    3. Null hashing policy certification:
+       - PRESERVE_NULL: Input NULL -> Output NULL
+       - HASH_NULL: Input NULL -> TAG_NULL -> SHA-256(TAG_NULL)
+       - Proves TAG_NULL digest != digest("null") != digest(b"") != digest(0).
+    """
+    import struct
+
+    # 1. Direct byte inspection
+    pdf = pd.DataFrame({
+        "b_true": [True],
+        "b_false": [False],
+        "b_null": [None],
+        "int_pos": [42],
+        "int_neg": [-42],
+        "int_zero": [0],
+        "int_null": [None],
+    })
+    sdf = df_to_spark(spark_session, pdf)
+
+    # Catalyst SQL expressions identical to compiler emission
+    sdf_bytes = sdf.select(
+        # Boolean
+        F.when(F.col("b_true") == True, F.lit(TAG_BOOL_TRUE)).alias("raw_b_true"),
+        F.when(F.col("b_false") == False, F.lit(TAG_BOOL_FALSE)).alias("raw_b_false"),
+        F.when(F.col("b_null").isNull(), F.lit(TAG_NULL)).alias("raw_b_null"),
+        # Integer
+        F.concat(F.lit(TAG_INT_PREFIX), F.unhex(F.lpad(F.hex(F.col("int_pos").cast("long")), 16, "0"))).alias("raw_int_pos"),
+        F.concat(F.lit(TAG_INT_PREFIX), F.unhex(F.lpad(F.hex(F.col("int_neg").cast("long")), 16, "0"))).alias("raw_int_neg"),
+        F.concat(F.lit(TAG_INT_PREFIX), F.unhex(F.lpad(F.hex(F.col("int_zero").cast("long")), 16, "0"))).alias("raw_int_zero"),
+        F.when(F.col("int_null").isNull(), F.lit(TAG_NULL)).alias("raw_int_null"),
+    )
+    row = sdf_bytes.collect()[0]
+
+    # Verify Spark canonical bytes == canonical_encode_scalar_v1
+    assert bytes(row.raw_b_true) == canonical_encode_scalar_v1(True) == b"\x01BOOL\x01"
+    assert bytes(row.raw_b_false) == canonical_encode_scalar_v1(False) == b"\x01BOOL\x00"
+    assert bytes(row.raw_b_null) == canonical_encode_scalar_v1(None) == b"\x00DHARA_NULL_V1"
+    assert bytes(row.raw_int_pos) == canonical_encode_scalar_v1(42)
+    assert bytes(row.raw_int_neg) == canonical_encode_scalar_v1(-42)
+    assert bytes(row.raw_int_zero) == canonical_encode_scalar_v1(0)
+    assert bytes(row.raw_int_null) == canonical_encode_scalar_v1(None)
+
+    # 2. Null hashing policy certification
+    tag_null_digest = hashlib.sha256(TAG_NULL).hexdigest()
+    str_null_digest = hashlib.sha256(canonical_encode_scalar_v1("null")).hexdigest()
+    empty_bytes_digest = hashlib.sha256(canonical_encode_scalar_v1(b"")).hexdigest()
+    int_zero_digest = hashlib.sha256(canonical_encode_scalar_v1(0)).hexdigest()
+
+    # Assert distinct domain digests
+    assert tag_null_digest != str_null_digest, "TAG_NULL must not collide with string 'null'!"
+    assert tag_null_digest != empty_bytes_digest, "TAG_NULL must not collide with empty bytes!"
+    assert tag_null_digest != int_zero_digest, "TAG_NULL must not collide with integer zero!"
+
+    # 3. Compiler execution test for PRESERVE_NULL vs HASH_NULL
+    schema = DatasetSchema(
+        dataset_name="primary",
+        columns={
+            "flag": DatasetColumnSchema(name="flag", logical_type=DataType.BOOLEAN),
+        },
+    )
+    step_preserve = TransformationStepIR(
+        step_id="step_hash_preserve",
+        family=ActionFamily.HASH,
+        expression=HashExpression(
+            source_column="flag",
+            target_column="flag_preserve",
+            mode=HashMode.DIGEST,
+            algorithm=HashAlgorithm.SHA256,
+            null_policy=HashNullPolicy.PRESERVE_NULL,
+        ),
+        dataset_name="primary",
+        kind=StepKind.ROW_TRANSFORMATION,
+    )
+    step_hash = TransformationStepIR(
+        step_id="step_hash_hash_null",
+        family=ActionFamily.HASH,
+        expression=HashExpression(
+            source_column="flag",
+            target_column="flag_hashed",
+            mode=HashMode.DIGEST,
+            algorithm=HashAlgorithm.SHA256,
+            null_policy=HashNullPolicy.HASH_NULL,
+        ),
+        dataset_name="primary",
+        kind=StepKind.ROW_TRANSFORMATION,
+    )
+    graph = TransformationIRGraph(
+        graph_id="test_null_hash_policies",
+        steps=[step_preserve, step_hash],
+    )
+    pdf_null = pd.DataFrame({"flag": [None]})
+    sdf_null = df_to_spark(spark_session, pdf_null)
+    exec_res = PySparkIRCompiler(schemas={"primary": schema}).execute(graph, sdf_null)
+    out = exec_res.outputs["primary"].toPandas()
+
+    # Under PRESERVE_NULL, null row is None / NaN
+    assert pd.isna(out["flag_preserve"].iloc[0])
+    # Under HASH_NULL, null row is SHA-256(TAG_NULL)
+    assert out["flag_hashed"].iloc[0] == tag_null_digest
 
 
 # ============================================================================

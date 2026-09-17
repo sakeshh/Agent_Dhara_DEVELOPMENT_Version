@@ -13,7 +13,7 @@ from decimal import Decimal
 import hashlib
 import json
 import struct
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 import unicodedata
 
 import numpy as np
@@ -34,6 +34,7 @@ TAG_DECIMAL_PREFIX = b"\x04DEC\x00"
 TAG_STRING_PREFIX = b"\x05STR\x00"
 TAG_TIMESTAMP_PREFIX = b"\x06TS\x00"
 TAG_BYTES_PREFIX = b"\x07BYTES\x00"
+TAG_TUPLE_PREFIX = b"\x08TUP\x00"
 TAG_NAT = b"\x09NAT\x00"
 TAG_DATE_PREFIX = b"\x0aDATE\x00"
 
@@ -281,3 +282,41 @@ CANONICAL_TEST_VECTORS_V1: List[Dict[str, Any]] = [
 CANONICAL_VECTORS_HASH_V1 = hashlib.sha256(
     json.dumps(CANONICAL_TEST_VECTORS_V1, sort_keys=True, separators=(",", ":")).encode("utf-8")
 ).hexdigest()
+
+
+def canonical_encode_coordinate_tuple_v1(
+    coords: Sequence[Tuple[str, Any]],
+) -> bytes:
+    """
+    CANONICAL_COORDINATE_TUPLE_V1:
+    Unambiguous, length-prefixed, typed binary encoding for source-stable coordinate tuples.
+    Guarantees structural and domain collision-freedom across all coordinate types:
+      - ("a_b", "c") vs ("a", "b_c")
+      - ("", "a") vs ("_", "a")
+      - (None, "a") vs ("", "a")
+      - 1 (int) vs "1" (str)
+      - True (bool) vs "true" (str)
+
+    Binary protocol layout:
+      TAG_TUPLE_PREFIX (5 bytes: b"\\x08TUP\\x00")
+      + coordinate_count (4 bytes uint32 big-endian)
+      + for each (field_name, field_value):
+          field_name:  TAG_STRING_PREFIX + 4-byte uint32 len + utf-8 bytes
+          field_value: canonical_encode_scalar_v1(field_value)
+    """
+    buf = bytearray()
+    buf.extend(TAG_TUPLE_PREFIX)
+    buf.extend(struct.pack(">I", len(coords)))
+    for name, val in coords:
+        name_b = name.encode("utf-8")
+        buf.extend(TAG_STRING_PREFIX)
+        buf.extend(struct.pack(">I", len(name_b)))
+        buf.extend(name_b)
+        buf.extend(canonical_encode_scalar_v1(val))
+    return bytes(buf)
+
+
+def canonical_hash_coordinate_tuple_v1(coords: Sequence[Tuple[str, Any]]) -> str:
+    """Computes authoritative SHA-256 hex digest over canonical coordinate tuple bytes."""
+    return hashlib.sha256(canonical_encode_coordinate_tuple_v1(coords)).hexdigest()
+

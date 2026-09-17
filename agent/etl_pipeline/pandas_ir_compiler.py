@@ -589,6 +589,7 @@ class PandasIRCompiler:
             "import re",
             "import struct",
             "import unicodedata",
+            "from agent.etl_pipeline.canonical_encoding import canonical_hash_coordinate_tuple_v1",
             "try:",
             "    OutputColumnCollisionError",
             "except NameError:",
@@ -611,15 +612,18 @@ class PandasIRCompiler:
         ]
 
         if scope == OccurrenceIdentityScope.SOURCE_STABLE and spec:
-            extra_file = f" + '_' + _working[{repr(spec.source_file_column)}].astype(str)" if spec.source_file_column else ""
-            extra_ing = f" + '_' + _working[{repr(spec.ingestion_run_column)}].astype(str)" if spec.ingestion_run_column else ""
+            coords_tuple_exprs = [f"('snapshot_id', {repr(spec.snapshot_id)})"]
+            coords_tuple_exprs.append(f"({repr(spec.partition_column)}, row[{repr(spec.partition_column)}])")
+            coords_tuple_exprs.append(f"({repr(spec.row_offset_column)}, row[{repr(spec.row_offset_column)}])")
+            if spec.source_file_column:
+                coords_tuple_exprs.append(f"({repr(spec.source_file_column)}, row[{repr(spec.source_file_column)}])")
+            if spec.ingestion_run_column:
+                coords_tuple_exprs.append(f"({repr(spec.ingestion_run_column)}, row[{repr(spec.ingestion_run_column)}])")
+            coords_list_str = "[" + ", ".join(coords_tuple_exprs) + "]"
             code_lines.append(
-                f"    _working[_identity_col] = ("
-                f"{repr(spec.snapshot_id)} + '_' + "
-                f"_working[{repr(spec.partition_column)}].astype(str) + '_' + "
-                f"_working[{repr(spec.row_offset_column)}].astype(str)"
-                f"{extra_file}{extra_ing}"
-                f")"
+                f"    _working[_identity_col] = ["
+                f"canonical_hash_coordinate_tuple_v1({coords_list_str}) "
+                f"for _, row in _working.iterrows()]"
             )
             code_lines.append(f"    if bool(_working[_identity_col].duplicated().any()):")
             code_lines.append(f"        raise ValueError('Duplicate source-stable coordinates detected in input DataFrame')")
@@ -1580,7 +1584,8 @@ class PandasIRCompiler:
         lines.append(f"    if hasattr(v, 'isoformat'):")
         lines.append(f"        return b'\\x06TS\\x00' + v.isoformat().encode('utf-8')")
         lines.append(f"    if isinstance(v, (bytes, bytearray)):")
-        lines.append(f"        return b'\\x07BYTES\\x00' + bytes(v)")
+        lines.append(f"        b_val = bytes(v)")
+        lines.append(f"        return b'\\x07BYTES\\x00' + struct.pack('>I', len(b_val)) + b_val")
         lines.append(f"    norm = unicodedata.normalize({norm_form}, str(v))")
         lines.append(f"    return b'\\x08OTHER\\x00' + norm.encode('utf-8')")
 
@@ -2519,10 +2524,10 @@ class PandasIRCompiler:
                     if alias.name not in {"numpy", "pandas", "np", "pd", "collections", "hashlib", "hmac", "struct", "unicodedata", "json", "decimal", "re"}:
                         raise ValueError(f"Prohibited import: {alias.name}")
             elif isinstance(node, ast.ImportFrom):
-                if node.module not in {"collections", "hashlib", "hmac", "struct", "unicodedata", "json", "decimal", "re"}:
+                if node.module not in {"collections", "hashlib", "hmac", "struct", "unicodedata", "json", "decimal", "re", "agent.etl_pipeline.canonical_encoding"}:
                     raise ValueError(f"Prohibited import module: {node.module}")
                 for alias in node.names:
-                    if alias.name not in {"Counter", "Decimal", "ROUND_HALF_UP"}:
+                    if alias.name not in {"Counter", "Decimal", "ROUND_HALF_UP", "canonical_hash_coordinate_tuple_v1"}:
                         raise ValueError(f"Prohibited import: {alias.name}")
 
 

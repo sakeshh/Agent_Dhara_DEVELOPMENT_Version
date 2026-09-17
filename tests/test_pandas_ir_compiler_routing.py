@@ -723,8 +723,18 @@ def test_source_stable_identity_uses_bound_coordinate_columns():
 
     df_in = pd.DataFrame({"part_dt": ["2026-09-01", "2026-09-01"], "offset_id": [100, 101]})
     out = _execute_single(res.artifact, df_in)
-    assert "__dhara_row_occurrence_0" in out.columns
-    assert list(out["__dhara_row_occurrence_0"]) == ["snap_2026_09_2026-09-01_100", "snap_2026_09_2026-09-01_101"]
+    from agent.etl_pipeline.canonical_encoding import canonical_hash_coordinate_tuple_v1
+    exp_0 = canonical_hash_coordinate_tuple_v1([
+        ("snapshot_id", "snap_2026_09"),
+        ("part_dt", "2026-09-01"),
+        ("offset_id", 100),
+    ])
+    exp_1 = canonical_hash_coordinate_tuple_v1([
+        ("snapshot_id", "snap_2026_09"),
+        ("part_dt", "2026-09-01"),
+        ("offset_id", 101),
+    ])
+    assert list(out["__dhara_row_occurrence_0"]) == [exp_0, exp_1]
 
 
 def test_source_stable_identity_rejects_duplicate_coordinates():

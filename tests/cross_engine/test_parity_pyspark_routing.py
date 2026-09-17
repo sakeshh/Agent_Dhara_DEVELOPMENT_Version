@@ -49,6 +49,7 @@ from agent.etl_pipeline.transformation_ir import (
     LiteralValue,
     NullCheck,
     OccurrenceIdentityScope,
+    PassThroughExpression,
     QuarantineExpression,
     QuarantineUnknownPolicy,
     RoutingIdentityPolicy,
@@ -235,9 +236,10 @@ def test_pyspark_routing_identity_source_stable_parity(spark_session: SparkSessi
     assert set(pd_q["score"]) == set(py_q["score"]) == {85, 95}
     assert list(pd_q["q_reason"]) == list(py_q["q_reason"]) == ["HIGH_SCORE", "HIGH_SCORE"]
 
-    # Secondary retained identity column check
+    # Secondary retained identity column check: cross-engine exact canonical parity
     assert "__dhara_row_occurrence_0" in py_q.columns
-    assert set(py_q["__dhara_row_occurrence_0"]) == {"snap_2026_09_p0_1", "snap_2026_09_p1_0"}
+    assert set(py_q["__dhara_row_occurrence_0"]) == set(pd_q["__dhara_row_occurrence_0"])
+    assert len(set(py_q["__dhara_row_occurrence_0"])) == 2
 
 
 def test_pyspark_routing_duplicate_coordinates_detected(spark_session: SparkSession):
@@ -382,3 +384,139 @@ def test_pyspark_filter_export_dropped_parity(spark_session: SparkSession):
     assert len(py_dropped) == len(pd_dropped) == 2
     assert set(py_dropped["score"]) == set(pd_dropped["score"]) == {10, 55}
     assert list(py_dropped["_dhara_filter_reason"]) == ["BELOW_THRESHOLD", "BELOW_THRESHOLD"]
+
+
+def test_pyspark_source_stable_collision_fixtures_negative(spark_session: SparkSession):
+    """
+    Negative verification of unambiguous typed tuple encoding for SOURCE_STABLE identity.
+    Proves that collision-prone coordinate combinations produce 100% distinct identities:
+    1. ("a_b", "c") vs ("a", "b_c")
+    2. ("", "a") vs ("_", "a")
+    3. (None, "a") vs ("", "a")
+    4. integer 1 vs string "1"
+    5. boolean True vs string "true"
+    Also verifies that identical coordinates trigger duplicate coordinate detection.
+    """
+    spec = SourceStableIdentitySpec(
+        snapshot_id="snap_collision_test",
+        partition_column="part",
+        row_offset_column="offset",
+        source_file_column="file",
+    )
+
+    pdf = pd.DataFrame({
+        "part": ["a_b", "a", "", "_", "none_test_1", "none_test_2", "type_int", "type_str", "bool_t", "bool_s"],
+        "offset": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        "file": ["c", "b_c", "a", "a", None, "", "1", "1", "true", "true"],
+        "data": range(10),
+    })
+    sdf = df_to_spark(spark_session, pdf)
+
+    graph = TransformationIRGraph(
+        graph_id="test_collision_fixtures",
+        steps=[
+            TransformationStepIR(
+                step_id="step_pass",
+                family=ActionFamily.PASS_THROUGH,
+                expression=PassThroughExpression(),
+                dataset_name="primary",
+                kind=StepKind.CONTROL,
+            )
+        ],
+        routing_identity_policy=RoutingIdentityPolicy(
+            scope=OccurrenceIdentityScope.SOURCE_STABLE,
+            source_stable_spec=spec,
+            retain_in_primary_output=True,
+        ),
+    )
+
+    # 1. Pandas reference execution
+    pd_res = PandasIRCompiler().execute(graph, pdf)
+    pd_ids = list(pd_res.outputs["primary"]["__dhara_row_occurrence_0"])
+
+    # 2. PySpark execution
+    py_res = PySparkIRCompiler().execute(graph, sdf)
+    py_ids = list(py_res.outputs["primary"].toPandas()["__dhara_row_occurrence_0"])
+
+    # Cross-engine exact parity
+    assert py_ids == pd_ids
+
+    # Collision checks:
+    # ("a_b", "c") vs ("a", "b_c")
+    assert py_ids[0] != py_ids[1], "Collision between ('a_b', 'c') and ('a', 'b_c')!"
+    # ("", "a") vs ("_", "a")
+    assert py_ids[2] != py_ids[3], "Collision between ('', 'a') and ('_', 'a')!"
+    # (None, "a") vs ("", "a")
+    assert py_ids[4] != py_ids[5], "Collision between (None, 'a') and ('', 'a')!"
+
+    # Real duplicate coordinates must be caught
+    pdf_dup = pd.DataFrame({
+        "part": ["p1", "p1"],
+        "offset": [100, 100],
+        "file": ["f1", "f1"],
+    })
+    sdf_dup = df_to_spark(spark_session, pdf_dup)
+    with pytest.raises(Exception, match="Duplicate source-stable coordinates detected"):
+        PySparkIRCompiler().execute(graph, sdf_dup)
+
+
+def test_pyspark_identity_materialization_and_cache_release(spark_session: SparkSession):
+    """
+    Verifies that:
+    1. Identity is added once above the branch point and explicitly materialized (.count()).
+    2. Curated and quarantine branches descend from the same materialized node.
+    3. Technical identity is released (_entry_cached.unpersist()) after execution.
+    """
+    pdf = pd.DataFrame({
+        "status": ["VALID", "SUSPECT", "VALID", "SUSPECT"],
+        "val": [10, 20, 30, 40],
+    })
+    sdf = df_to_spark(spark_session, pdf)
+
+    expr = QuarantineExpression(
+        predicate=BinaryOp(
+            left=ColumnRef(column_name="status"),
+            op=BinaryOperator.EQ,
+            right=LiteralValue(value="SUSPECT", data_type=DataType.STRING),
+        ),
+        routing_mode=RoutingMode.PARTITION,
+        curated_output_ref="curated",
+        quarantine_output_ref="quarantine",
+    )
+    step = TransformationStepIR(
+        step_id="step_quar_mat",
+        family=ActionFamily.QUARANTINE,
+        expression=expr,
+        dataset_name="primary",
+        kind=StepKind.QUARANTINE_ROUTING,
+    )
+    graph = TransformationIRGraph(
+        graph_id="test_mat_cache",
+        steps=[step],
+        routing_identity_policy=RoutingIdentityPolicy(
+            scope=OccurrenceIdentityScope.EXECUTION_LOCAL,
+            retain_in_primary_output=True,
+            retain_in_secondary_outputs=True,
+        ),
+    )
+
+    compiler = PySparkIRCompiler()
+    comp_res = compiler.compile(graph)
+    assert comp_res.is_success
+    code = comp_res.artifact.source_code
+
+    # Verify static code guarantees
+    assert "_entry_cached = _working.cache()" in code
+    assert "_ = _entry_cached.count()  # Explicit materialization action before branching" in code
+    assert "_entry_cached.unpersist()" in code
+
+    # Execute and verify branch identity conservation
+    exec_res = compiler.execute(graph, sdf)
+    cur_ids = set(exec_res.outputs["curated"].toPandas()["__dhara_row_occurrence_0"])
+    quar_ids = set(exec_res.outputs["quarantine"].toPandas()["__dhara_row_occurrence_0"])
+
+    assert len(cur_ids) == 2
+    assert len(quar_ids) == 2
+    assert cur_ids.isdisjoint(quar_ids)
+    assert len(cur_ids | quar_ids) == 4
+

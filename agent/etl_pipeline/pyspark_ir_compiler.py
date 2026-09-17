@@ -43,6 +43,7 @@ from enum import Enum
 import hashlib
 import json
 import re
+import struct
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from pydantic import BaseModel, Field, computed_field, model_validator
@@ -161,6 +162,15 @@ from agent.etl_pipeline.transformation_ir import (
     is_column_effectively_protected,
     verify_imputation_model,
 )
+from agent.etl_pipeline.canonical_encoding import (
+    TAG_BOOL_FALSE,
+    TAG_BOOL_TRUE,
+    TAG_BYTES_PREFIX,
+    TAG_INT_PREFIX,
+    TAG_NULL,
+    TAG_STRING_PREFIX,
+    TAG_TUPLE_PREFIX,
+)
 
 
 # ============================================================================
@@ -277,6 +287,9 @@ class PySparkIRCompiler:
 
         # 1. Bidirectional Accounting Pre-Check
         input_step_ids = {s.step_id for s in graph.steps}
+        policy = graph.routing_identity_policy
+        internal_col = policy.internal_column if policy else "__dhara_row_occurrence_0"
+        simulated_columns: Dict[str, Dict[str, Any]] = {ds: dict(s.columns) for ds, s in self.schemas.items()}
 
         # 2. Step-by-Step Preflight and Disposition
         for step in graph.steps:
@@ -302,6 +315,10 @@ class PySparkIRCompiler:
                     step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
                     diagnostics.append(f"Step '{sid}' destructive drop requires a valid StepAuthorization (UnauthorizedDestructiveActionError)")
                     continue
+                if auth.step_id != sid:
+                    step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
+                    diagnostics.append(f"Step '{sid}' StepAuthorization step_id mismatch: expected '{sid}', got '{auth.step_id}' (UnauthorizedDestructiveActionError)")
+                    continue
                 if auth.expires_at < datetime.now(timezone.utc):
                     step_dispositions[sid] = CompilerStepDisposition.INVALID_IR
                     diagnostics.append(f"Step '{sid}' StepAuthorization is expired (UnauthorizedDestructiveActionError)")
@@ -314,19 +331,24 @@ class PySparkIRCompiler:
             # B2. Static Schema Binding Checks for SchemaMutation
             if isinstance(step.expression, SchemaMutationExpression):
                 ds_name = step.dataset_name or "primary"
-                ds_schema = self.schemas.get(ds_name)
-                if ds_schema:
+                curr_cols = simulated_columns.get(ds_name)
+                if curr_cols is not None:
                     expr_mut = step.expression
                     if expr_mut.op == SchemaMutationOp.DROP_COLUMN:
                         drop_cols = [d.column for d in expr_mut.drops] if expr_mut.drops else ([expr_mut.target_column] if expr_mut.target_column else [])
                         failed_drop = False
                         for dc in drop_cols:
-                            if dc not in ds_schema.columns:
+                            if dc == internal_col:
+                                step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
+                                diagnostics.append(f"Step '{sid}' attempts to drop protected technical routing identity column '{dc}' (ProtectedColumnDropError)")
+                                failed_drop = True
+                                break
+                            if dc not in curr_cols:
                                 step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
                                 diagnostics.append(f"Step '{sid}' attempts to drop non-existent column '{dc}' (SCHEMA_BINDING_FAILURE)")
                                 failed_drop = True
                                 break
-                            col_meta = ds_schema.columns[dc]
+                            col_meta = curr_cols[dc]
                             if is_column_effectively_protected(col_meta):
                                 step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
                                 diagnostics.append(f"Step '{sid}' attempts to drop protected column '{dc}' (ProtectedColumnDropError)")
@@ -334,22 +356,32 @@ class PySparkIRCompiler:
                                 break
                         if failed_drop:
                             continue
+                        for dc in drop_cols:
+                            curr_cols.pop(dc, None)
 
                     elif expr_mut.op == SchemaMutationOp.RENAME_COLUMN:
                         failed_ren = False
                         for r in expr_mut.renames:
-                            if r.old_name not in ds_schema.columns:
+                            if r.old_name == internal_col:
+                                step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
+                                diagnostics.append(f"Step '{sid}' attempts to rename protected technical routing identity column '{r.old_name}' (ProtectedColumnDropError)")
+                                failed_ren = True
+                                break
+                            if r.old_name not in curr_cols:
                                 step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
                                 diagnostics.append(f"Step '{sid}' attempts to rename non-existent column '{r.old_name}' (SCHEMA_BINDING_FAILURE)")
                                 failed_ren = True
                                 break
-                            if r.new_name in ds_schema.columns and r.new_name != r.old_name:
+                            if r.new_name in curr_cols and r.new_name != r.old_name:
                                 step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
                                 diagnostics.append(f"Step '{sid}' rename target '{r.new_name}' collides with existing column (SCHEMA_BINDING_FAILURE)")
                                 failed_ren = True
                                 break
                         if failed_ren:
                             continue
+                        for r in expr_mut.renames:
+                            col_meta = curr_cols.pop(r.old_name)
+                            curr_cols[r.new_name] = col_meta
 
                     elif expr_mut.op == SchemaMutationOp.PROJECT:
                         if expr_mut.projection:
@@ -357,7 +389,7 @@ class PySparkIRCompiler:
                             proj_set = set(expr_mut.projection.projected_columns)
                             if not expr_mut.projection.allow_missing:
                                 for pc in expr_mut.projection.projected_columns:
-                                    if pc not in ds_schema.columns:
+                                    if pc not in curr_cols:
                                         step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
                                         diagnostics.append(f"Step '{sid}' projected column '{pc}' not in schema (SCHEMA_BINDING_FAILURE)")
                                         failed_proj = True
@@ -365,7 +397,7 @@ class PySparkIRCompiler:
                             if failed_proj:
                                 continue
                             # Protected columns check: PROJECT cannot drop protected column by excluding it
-                            for col_name, col_meta in ds_schema.columns.items():
+                            for col_name, col_meta in curr_cols.items():
                                 if col_name not in proj_set and is_column_effectively_protected(col_meta):
                                     step_dispositions[sid] = CompilerStepDisposition.INVALID_SCHEMA_BINDING
                                     diagnostics.append(f"Step '{sid}' PROJECT excludes protected column '{col_name}' (ProtectedColumnDropError)")
@@ -373,6 +405,8 @@ class PySparkIRCompiler:
                                     break
                             if failed_proj:
                                 continue
+                            curr_cols = {c: m for c, m in curr_cols.items() if c in proj_set}
+                            simulated_columns[ds_name] = curr_cols
 
             # B3. Preflight Checks for HashExpression
             if isinstance(step.expression, HashExpression):
@@ -517,24 +551,55 @@ class PySparkIRCompiler:
         code_lines.append(f"    # --- Occurrence Identity Lifecycle ({scope.value}) ---")
         code_lines.append(f"    _identity_col = {repr(internal_col)}")
         if scope == OccurrenceIdentityScope.SOURCE_STABLE and spec:
-            parts = [
-                f"F.lit({repr(spec.snapshot_id)})",
-                f"F.col({repr(spec.partition_column)}).cast('string')",
-                f"F.col({repr(spec.row_offset_column)}).cast('string')",
+            coords_spec = [
+                ("snapshot_id", "string", f"F.lit({repr(spec.snapshot_id)})"),
+                (spec.partition_column, "string", f"F.col({repr(spec.partition_column)})"),
+                (spec.row_offset_column, "integer", f"F.col({repr(spec.row_offset_column)})"),
             ]
             if spec.source_file_column:
-                parts.append(f"F.col({repr(spec.source_file_column)}).cast('string')")
+                coords_spec.append((spec.source_file_column, "string", f"F.col({repr(spec.source_file_column)})"))
             if spec.ingestion_run_column:
-                parts.append(f"F.col({repr(spec.ingestion_run_column)}).cast('string')")
-            parts_expr = ", ".join(parts)
-            code_lines.append(f"    _working = _working.withColumn(_identity_col, F.concat_ws('_', {parts_expr}))")
-            code_lines.append(f"    _working = _working.cache()")
+                coords_spec.append((spec.ingestion_run_column, "string", f"F.col({repr(spec.ingestion_run_column)})"))
+
+            header_bytes = TAG_TUPLE_PREFIX + struct.pack(">I", len(coords_spec))
+            concat_parts = [f"F.lit({repr(header_bytes)})"]
+            for c_name, c_type, c_expr in coords_spec:
+                c_name_b = c_name.encode("utf-8")
+                c_name_lit = TAG_STRING_PREFIX + struct.pack(">I", len(c_name_b)) + c_name_b
+                concat_parts.append(f"F.lit({repr(c_name_lit)})")
+                if c_type == "integer":
+                    val_expr = (
+                        f"F.when({c_expr}.isNull(), F.lit(b'\\x00DHARA_NULL_V1')).otherwise("
+                        f"F.concat(F.lit(b'\\x02INT\\x00'), F.unhex(F.lpad(F.hex({c_expr}.cast('long')), 16, '0'))))"
+                    )
+                elif c_type == "boolean":
+                    val_expr = (
+                        f"F.when({c_expr}.isNull(), F.lit(b'\\x00DHARA_NULL_V1'))"
+                        f".when({c_expr} == True, F.lit(b'\\x01BOOL\\x01'))"
+                        f".otherwise(F.lit(b'\\x01BOOL\\x00'))"
+                    )
+                else:
+                    # String
+                    val_expr = (
+                        f"F.when({c_expr}.isNull(), F.lit(b'\\x00DHARA_NULL_V1')).otherwise("
+                        f"F.concat(F.lit(b'\\x05STR\\x00'), F.unhex(F.lpad(F.hex(F.length(F.encode({c_expr}.cast('string'), 'utf-8'))), 8, '0')), F.encode({c_expr}.cast('string'), 'utf-8')))"
+                    )
+                concat_parts.append(val_expr)
+
+            tuple_bytes_expr = f"F.concat({', '.join(concat_parts)})"
+            code_lines.append(f"    _working = _working.withColumn(_identity_col, F.sha2({tuple_bytes_expr}, 256))")
+            code_lines.append(f"    _entry_cached = _working.cache()")
+            code_lines.append(f"    _ = _entry_cached.count()  # Explicit materialization action before branching")
+            code_lines.append(f"    _working = _entry_cached")
             code_lines.append(f"    if _working.groupBy(_identity_col).count().filter('count > 1').limit(1).count() > 0:")
+            code_lines.append(f"        _entry_cached.unpersist()")
             code_lines.append(f"        raise ValueError('Duplicate source-stable coordinates detected in input DataFrame')")
         else:
-            # EXECUTION_LOCAL: monotonically_increasing_id bound once at graph entry and cached!
+            # EXECUTION_LOCAL: monotonically_increasing_id bound once at graph entry and explicitly materialized!
             code_lines.append(f"    _working = _working.withColumn(_identity_col, F.monotonically_increasing_id())")
-            code_lines.append(f"    _working = _working.cache()")
+            code_lines.append(f"    _entry_cached = _working.cache()")
+            code_lines.append(f"    _ = _entry_cached.count()  # Explicit materialization action before branching")
+            code_lines.append(f"    _working = _entry_cached")
         code_lines.append("")
 
         # Preamble: Selective Series Pre-images
@@ -598,6 +663,7 @@ class PySparkIRCompiler:
             code_lines.append(f"        if _sec_ref != _primary_key and _identity_col in outputs[_sec_ref].columns:")
             code_lines.append(f"            outputs[_sec_ref] = outputs[_sec_ref].drop(_identity_col)")
 
+        code_lines.append(f"    _entry_cached.unpersist()")
         code_lines.append(f"    transform_datasets.validation_summaries = validation_summaries")
         code_lines.append("    return outputs")
         code_lines.append("")
@@ -681,6 +747,7 @@ class PySparkIRCompiler:
                     self.outputs = outputs
                     self.validation_summaries = val_summaries
                     self.primary_output = next(iter(outputs.values())) if outputs else None
+                    self.publication_eligible = True
             return PySparkExecutionResult(res_dict, val_summaries)
         single_fn = loc.get("transform")
         if single_fn:
@@ -691,6 +758,7 @@ class PySparkIRCompiler:
                     self.outputs = {"primary": primary}
                     self.validation_summaries = val_summaries
                     self.primary_output = primary
+                    self.publication_eligible = True
             return PySparkExecutionResult(primary_out, val_summaries)
         raise RuntimeError("No valid entrypoint found in compiled PySpark artifact")
 
@@ -1582,6 +1650,8 @@ class PySparkIRCompiler:
         if expr.op == SchemaMutationOp.DROP_COLUMN:
             drop_cols = [d.column for d in expr.drops] if expr.drops else ([expr.target_column] if expr.target_column else [])
             for dc in drop_cols:
+                lines.append(f"if {repr(dc)} == _identity_col:")
+                lines.append(f"    raise ValueError('Cannot drop technical routing identity column: ' + {repr(dc)})")
                 lines.append(f"if {repr(dc)} not in {df_var}.columns:")
                 lines.append(f"    raise ValueError('Cannot drop non-existent column: ' + {repr(dc)})")
             lines.append(f"{df_var} = {df_var}.drop(*{repr(drop_cols)})")
@@ -1797,7 +1867,7 @@ class PySparkIRCompiler:
         elif col_dtype == DataType.BINARY:
             raw_bytes_expr = (
                 f"F.when({col_ref}.isNull(), F.lit(b'\\x00DHARA_NULL_V1'))"
-                f".otherwise(F.concat(F.lit(b'\\x07BYTES\\x00'), {col_ref}))"
+                f".otherwise(F.concat(F.lit(b'\\x07BYTES\\x00'), F.unhex(F.lpad(F.hex(F.length({col_ref})), 8, '0')), {col_ref}))"
             )
         else:
             raw_bytes_expr = (
