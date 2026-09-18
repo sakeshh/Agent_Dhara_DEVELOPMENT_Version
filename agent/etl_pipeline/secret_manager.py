@@ -6,7 +6,8 @@ Enforces:
 1. Gated resolution: Secrets can ONLY be resolved when ExecutionGateDecision.dispatch_allowed is True.
 2. Tenant & purpose validation.
 3. Zero-leakage representation: __repr__ and __str__ always return [REDACTED]; no secret bytes in logs/ASTs/exceptions.
-4. Finally disposal: ScopedSecretSession context manager deterministically wipes resolved secret bytes on exit.
+4. Scoped lifecycle: ScopedSecretSession context manager releases provider handles, overwrites managed references
+   on exit, eliminates application-level references, and minimizes secret lifetime (without claiming absolute process-wide memory erasure).
 """
 from __future__ import annotations
 
@@ -63,7 +64,7 @@ class RedactedSecretHandle:
         return self.get_secret_str().encode("utf-8")
 
     def wipe(self) -> None:
-        """Explicitly overwrites and clears the secret from memory."""
+        """Eliminates application-level references and releases managed secret buffers."""
         self._secret_value = None
         self._is_wiped = True
 
@@ -77,7 +78,7 @@ class RedactedSecretHandle:
 class ScopedSecretSession:
     """
     Context manager that governs the lifecycle of resolved execution secrets.
-    Deterministically wipes all resolved secret handles upon exit in the finally clause.
+    Overwrites managed buffers, releases provider handles, and eliminates application references on exit.
     """
 
     def __init__(self, session_id: str = "default_session"):

@@ -1,15 +1,15 @@
 {
   "matrix_version": "v4.0.0",
-  "status": "AUTHORIZED_FOR_PRODUCTION",
+  "status": "CONDITIONALLY_AUTHORIZED_FOR_PRODUCTION",
   "certified_date": "2026-09-18",
-  "certification_commit": "225ebfae926ba51147cc0553a20af1c450f92721",
+  "certification_commit": "c3c8f3f82029759ba0e53a2510b64be16bb0243e",
   "production_gate": {
     "manifest_signing": "ED25519_VERIFIED",
     "preflight_gate": "CENTRALIZED_10_CHECK_ENFORCED",
-    "secret_custody": "SCOPED_ZERO_LEAKAGE_REDACTED",
+    "secret_custody": "SCOPED_MANAGED_REFERENCE_ELIMINATED",
     "authorization_revalidation": "EXPIRY_HASH_REVOCATION_VERIFIED",
-    "controlled_dispatch": "TIMEOUT_CANCEL_RESOURCE_LIMITS_CLEANUP_GUARANTEED",
-    "durable_publication": "TWO_PHASE_COMMIT_FENCING_OCC_RECOVERY"
+    "controlled_dispatch": "BOUNDED_WAIT_CANCEL_RESOURCE_LIMITS_CLEANUP_GUARANTEED",
+    "durable_publication": "TWO_PHASE_COMMIT_FENCING_OCC_PROTOCOL_CERTIFIED"
   },
   "certified_engines": {
     "pandas": {
@@ -18,7 +18,7 @@
       "verified_versions": ["2.2.0", "2.2.1", "2.2.2", "2.2.3"],
       "compiler": "pandas_ir_compiler (v1.0.0)",
       "execution_boundary": "ControlledDispatcher (in-memory isolated runner)",
-      "production_status": "CERTIFIED_PRODUCTION"
+      "production_status": "CONDITIONALLY_AUTHORIZED_PRODUCTION"
     },
     "pyspark": {
       "role": "Distributed Transformation Engine",
@@ -26,7 +26,7 @@
       "verified_versions": ["3.5.1"],
       "compiler": "pyspark_ir_compiler (v1.0)",
       "execution_boundary": "FabricNotebookExecutor / Synapse Activity Dispatch",
-      "production_status": "CERTIFIED_PRODUCTION"
+      "production_status": "CONDITIONALLY_AUTHORIZED_PRODUCTION"
     },
     "azure_sql_database": {
       "role": "Direct Relational Target",
@@ -34,7 +34,7 @@
       "verified_versions": ["12.0.2000.8", "160"],
       "compiler": "azure_sql_tsql_ir_compiler (v1.0.0)",
       "execution_boundary": "AzureSqlDirectExecutionAdapter / Script Activity",
-      "production_status": "CERTIFIED_PRODUCTION"
+      "production_status": "CONDITIONALLY_AUTHORIZED_PRODUCTION"
     },
     "azure_data_factory": {
       "role": "Orchestration & Delegation Boundary",
@@ -44,7 +44,7 @@
       "execution_boundary": "AdfOrchestrationAdapter (13-field execution envelope)",
       "orchestration_status": "VERIFIED_ORCHESTRATION",
       "delegated_transformation_status": "ORCHESTRATION_ONLY",
-      "production_status": "CERTIFIED_PRODUCTION"
+      "production_status": "CONDITIONALLY_AUTHORIZED_PRODUCTION"
     }
   }
 }

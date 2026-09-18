@@ -5,8 +5,8 @@ Phase 4C: Controlled Engine Dispatch, Runtime Limits, and Governance (PROD-5).
 Reuses existing engine adapters (Pandas, PySpark, Azure SQL Database, ADF delegation)
 and enforces strict execution governance:
 1. Preflight Execution Gate evaluation (dispatch_allowed = False => execution_started = False, publication_started = False).
-2. Execution Timeout fencing.
-3. Cooperative Cancellation support.
+2. Execution Timeout fencing (enforces bounded caller waiting and initiates cancellation; does not claim uncooperative hard kernel termination).
+3. Cooperative and target-specific Cancellation support.
 4. Input / Output row limits.
 5. Join-expansion row ratio limits.
 6. Aggregation cardinality caps.
@@ -155,7 +155,10 @@ class ControlledDispatcher:
         timeout_seconds: Optional[float],
         cancellation_token: Optional[threading.Event],
     ) -> Any:
-        """Executes a target function with timeout and cancellation checks."""
+        """
+        Executes a target function enforcing bounded caller waiting via ThreadPool and checking cancellation.
+        Initiates cancellation when timeout expires or cancellation token fires.
+        """
         if cancellation_token and cancellation_token.is_set():
             raise ExecutionCancelledError("Execution was cancelled prior to invocation", reason_code="EXECUTION_CANCELLED")
 

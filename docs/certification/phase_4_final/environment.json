@@ -1,13 +1,15 @@
 {
   "certification_phase": "Phase 4 Final Production-Readiness Certification",
   "closure_date": "2026-09-18",
-  "git_revision": "225ebfae926ba51147cc0553a20af1c450f92721",
+  "engineering_implementation_status": "ENGINEERING_CERTIFIED_AND_CLOSED",
+  "production_authorization": "CONDITIONALLY_AUTHORIZED_FOR_PRODUCTION_DEPLOYMENT",
+  "authorization_conditions": "Subject to environment-specific operational acceptance, production infrastructure validation, and deployment authority sign-off",
+  "git_revision": "c3c8f3f82029759ba0e53a2510b64be16bb0243e",
   "python_version": "3.13.6",
   "pytest_version": "9.0.2",
   "cryptography_version": "46.0.3",
   "os_platform": "Windows 11 / win32",
-  "production_authorization": "AUTHORIZED_FOR_PRODUCTION_DEPLOYMENT",
-  "blockers_closed": [
+  "blockers_software_closed": [
     "PROD-1",
     "PROD-2",
     "PROD-3",
