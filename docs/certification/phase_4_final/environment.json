@@ -13,8 +13,8 @@
     "stage_1_engineering_implementation": "COMPLETE",
     "stage_2_security_approval": "SECURITY_APPROVED",
     "stage_3_production_environment_validation": "PRODUCTION_ENVIRONMENT_CONTRACT_VALIDATED",
-    "stage_4_operational_acceptance": "OPERATIONALLY_ACCEPTED",
-    "stage_5_final_production_deployment_authorization": "READY_FOR_STAGE_5_AUTHORIZATION"
+    "stage_4_operational_acceptance": "OPERATIONAL_CONTRACT_ACCEPTED",
+    "stage_5_final_production_deployment_authorization": "PENDING_FINAL_AUTHORIZATION"
   },
   "current_release_posture": "CONDITIONALLY_APPROVED_FOR_PRE_PRODUCTION_VALIDATION_AND_GO_LIVE_READINESS",
   "live_production_traffic_authorized": false,
@@ -23,7 +23,8 @@
     "local_certification_evidence_commit": "225ebfae926ba51147cc0553a20af1c450f92721",
     "local_final_posture_commit": "5294b41a61c3185e8028abc78716f90d9821d021",
     "local_stage_2_security_approval_commit": "9c4a87eaa6cf635bd045f304c3b0541d46bebc00",
-    "local_stage_3_environment_commit": "78c64e55afa19bf534b856d434ac8a4577dcc481"
+    "local_stage_3_environment_commit": "78c64e55afa19bf534b856d434ac8a4577dcc481",
+    "local_stage_4_operational_commit": "6250f0316168a4f585625c12e142c2b3ccef9026"
   },
   "remote_repository_activity": "NONE",
   "python_version": "3.13.6",

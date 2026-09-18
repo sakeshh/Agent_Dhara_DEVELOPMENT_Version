@@ -2,7 +2,7 @@
 
 **Project**: Agent Dhara  
 **Assessment Target**: Production Operations, Telemetry, Incident Response, and Monitored Recovery Drills  
-**Status**: `OPERATIONALLY_ACCEPTED`  
+**Status**: `OPERATIONAL_CONTRACT_ACCEPTED`  
 **Date**: September 18, 2026  
 **Auditor / Operational Governance**: Production Operations & Site Reliability Engineering (SRE)  
 
@@ -10,27 +10,28 @@
 
 ## 1. Executive Operational Verdict
 
-Agent Dhara has completed operational acceptance validation based on measured service levels, full-lifecycle alert rules, certified on-call escalation matrices, explicit incident runbooks, and 10 observable operational drills with quantified recovery outcomes.
+Stage 4 operational controls, SLO framework, alert catalogue, ownership model, runbooks, and recovery procedures are approved. Operational drills have passed against the tested contract and adapter environment. Final operational acceptance for live production traffic remains contingent on successful target-environment drills against designated cloud infrastructure.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ Stage 4 Operational Sign-off: OPERATIONALLY_ACCEPTED                       │
+│ Stage 4 Sign-off: OPERATIONAL_CONTRACT_ACCEPTED                            │
 │                                                                            │
 │ 1. SLO, SLI & SLA Framework             [DEFINED & RATIFIED]               │
 │ 2. Lifecycle Dashboards & Alerts        [16 RULES CONFIGURED & VERIFIED]   │
 │ 3. Accountable On-Call Tiers            [TIER 1/2/3 MATRIX ACTIVE]         │
 │ 4. Incident & Rollback Runbooks         [6 CORE RUNBOOKS APPROVED]         │
-│ 5. Monitored Operational Drills         [10 OF 10 DRILLS MEASURED & PASSED]│
+│ 5. Monitored Operational Drills         [10 OF 10 CONTRACT DRILLS PASSED]  │
 │ 6. Recovery Time / Point Objectives     [RTO <= 30m, RPO = 0 DATA LOSS]    │
+│ 7. Live Target Operational Validation   [PENDING LIVE CLOUD RUN]           │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Stage Transition**:
-* **Stage 1 (Engineering Implementation)**: `CERTIFIED_AND_CLOSED`
+* **Stage 1 (Engineering Implementation)**: `ENGINEERING_CERTIFIED_AND_CLOSED`
 * **Stage 2 (Security Approval)**: `SECURITY_APPROVED`
 * **Stage 3 (Environment Validation)**: `PRODUCTION_ENVIRONMENT_CONTRACT_VALIDATED`
-* **Stage 4 (Operational Acceptance)**: `OPERATIONALLY_ACCEPTED`
-* **Stage 5 (Production Deployment Authorization)**: **UNBLOCKED & ELIGIBLE FOR FORMAL AUTHORIZATION**
+* **Stage 4 (Operational Acceptance)**: `OPERATIONAL_CONTRACT_ACCEPTED` (Live Validation: `PENDING`)
+* **Stage 5 (Production Deployment Authorization)**: `PENDING_FINAL_AUTHORIZATION` (Live production traffic remains strictly **PROHIBITED**).
 
 ---
 
@@ -241,13 +242,14 @@ Ten operational drills were executed in the test harness with recorded timestamp
 
 ## 7. Stage Gate Transition & Operational Sign-off
 
-All operational acceptance criteria have been verified and demonstrated through observable drills:
+Operational acceptance criteria across service levels, alert catalogues, on-call governance, runbooks, and recovery protocols have been demonstrated through contract and adapter drills:
 * **Service Level Objectives**: Ratified by SRE and Data Governance.
-* **Dashboards & Alerts**: 16 alert rules configured and tested.
+* **Dashboards & Alerts**: 16 alert rules configured and validated.
 * **On-Call Matrix**: 3-tier escalation structure staffed.
 * **Incident Runbooks**: 6 operational runbooks certified.
-* **Drill Outcomes**: All 10 drills demonstrated RTO $\le$ 30m and RPO = 0 data loss.
-* **Stage 4 Verdict**: **`OPERATIONALLY_ACCEPTED`**
+* **Drill Outcomes**: All 10 drills demonstrated RTO $\le$ 30m and RPO = 0 data loss against the tested adapter environment.
+* **Stage 4 Verdict**: **`OPERATIONAL_CONTRACT_ACCEPTED`**
+* **Live Operational Validation**: **`PENDING`** (Contingent on target-environment execution against live cloud resources).
 
-**Next Milestone**: **Stage 5: Final Production Deployment Authorization** is now **UNBLOCKED**.
-Live production deployment authorization may now be bound and issued under formal change-authority governance.
+**Next Milestone**: **Stage 5: Final Production Deployment Authorization** is **`PENDING_FINAL_AUTHORIZATION`**.
+Status is currently **`READY_FOR_STAGE_5_AUTHORIZATION_PREPARATION`**. Final production deployment authorization is strictly blocked until direct target-cloud validation and immutable remote preservation are completed.
