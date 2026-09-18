@@ -1259,17 +1259,28 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 proc_lines.append(f"-- Create Staging Table with raw column types to preserve raw strings")
                 proc_lines.append(f"IF OBJECT_ID('tempdb..{tbl_staging}') IS NOT NULL DROP TABLE {tbl_staging};")
                 staging_cols_ddl = []
+                seen_staging_cols = set()
                 for col_name in cols:
-                    staging_cols_ddl.append(f"[{col_name}] NVARCHAR(MAX) NULL")
-                staging_cols_ddl.append("etl_batch_id INT NULL")
+                    c_clean = str(col_name).strip("[]")
+                    if c_clean.lower() not in seen_staging_cols:
+                        seen_staging_cols.add(c_clean.lower())
+                        staging_cols_ddl.append(f"[{c_clean}] NVARCHAR(MAX) NULL")
+                if "etl_batch_id" not in seen_staging_cols:
+                    seen_staging_cols.add("etl_batch_id")
+                    staging_cols_ddl.append("etl_batch_id INT NULL")
                 for st in steps:
                     if st.get("action") in ("flag_outliers", "clip_or_flag") and st.get("column") and st.get("column") not in excluded_columns:
-                        staging_cols_ddl.append(f"[{st.get('column')}_outlier_flagged] INT NULL")
+                        c_name = f"{st.get('column')}_outlier_flagged"
+                        if c_name.lower() not in seen_staging_cols:
+                            seen_staging_cols.add(c_name.lower())
+                            staging_cols_ddl.append(f"[{c_name}] INT NULL")
                     if st.get("action") == "cast_type" and st.get("column") and st.get("column") not in excluded_columns:
-                        staging_cols_ddl.append(f"[{st.get('column')}_int] BIGINT NULL")
+                        c_name = f"{st.get('column')}_int"
+                        if c_name.lower() not in seen_staging_cols:
+                            seen_staging_cols.add(c_name.lower())
+                            staging_cols_ddl.append(f"[{c_name}] BIGINT NULL")
 
                 # Add companion columns to staging table so UPDATE statements succeed without schema errors
-                seen_staging_companions = set()
                 for st in steps:
                     st_col = st.get("column")
                     if st_col and st_col not in excluded_columns and st_col not in ("*", "[Row-level]", "[row-level]"):
@@ -1278,8 +1289,8 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                         col_type = col_meta.get("dtype") or col_meta.get("target_dtype") or ""
                         target_type = get_sql_cast_type(col_type, st_col)
                         for comp in [f"{clean_c}_raw", f"{clean_c}_clean", f"{clean_c}_validation_status", f"{clean_c}_validation_reason"]:
-                            if comp not in seen_staging_companions:
-                                seen_staging_companions.add(comp)
+                            if comp.lower() not in seen_staging_cols:
+                                seen_staging_cols.add(comp.lower())
                                 if "status" in comp:
                                     comp_type = "VARCHAR(50)"
                                 elif "reason" in comp:
@@ -1289,9 +1300,15 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                                 else:
                                     comp_type = "NVARCHAR(MAX)"
                                 staging_cols_ddl.append(f"[{comp}] {comp_type} NULL")
-                staging_cols_ddl.append("[row_validation_status] VARCHAR(50) NULL")
-                staging_cols_ddl.append("[row_validation_reason] VARCHAR(500) NULL")
-                staging_cols_ddl.append("[is_duplicate_row] BIT NOT NULL DEFAULT 0")
+                if "row_validation_status" not in seen_staging_cols:
+                    seen_staging_cols.add("row_validation_status")
+                    staging_cols_ddl.append("[row_validation_status] VARCHAR(50) NULL")
+                if "row_validation_reason" not in seen_staging_cols:
+                    seen_staging_cols.add("row_validation_reason")
+                    staging_cols_ddl.append("[row_validation_reason] VARCHAR(500) NULL")
+                if "is_duplicate_row" not in seen_staging_cols:
+                    seen_staging_cols.add("is_duplicate_row")
+                    staging_cols_ddl.append("[is_duplicate_row] BIT NOT NULL DEFAULT 0")
 
                 ddl_joined = ", ".join(staging_cols_ddl)
                 proc_lines.append(f"CREATE TABLE {tbl_staging} ({ddl_joined});")

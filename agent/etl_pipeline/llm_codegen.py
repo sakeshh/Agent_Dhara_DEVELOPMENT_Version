@@ -1171,21 +1171,22 @@ def _postprocess_tsql_code(code: str) -> str:
             create_st = re.search(rf"SELECT\s+[^;]+INTO\s+{re.escape(st_full)}[^;]*;", code, re.IGNORECASE)
             if create_st:
                 create_stmt = create_st.group(0)
-                missing_cols = [c for c in cols_needed if f"[{c}]" not in create_stmt]
+                missing_cols = [c for c in cols_needed if not re.search(rf"\[?{re.escape(c)}\]?", create_stmt, re.IGNORECASE) and not re.search(rf"ALTER\s+TABLE\s+{re.escape(st_full)}\s+ADD\s+.*?\[?{re.escape(c)}\]?", code, re.IGNORECASE)]
                 if missing_cols:
                     alter_clauses = []
                     for mc in sorted(missing_cols):
                         if mc == "is_duplicate_row":
-                            alter_clauses.append(f"[{mc}] BIT DEFAULT 0")
+                            ctype = "BIT DEFAULT 0"
                         elif mc == "row_validation_status":
-                            alter_clauses.append(f"[{mc}] VARCHAR(50) DEFAULT 'valid'")
+                            ctype = "VARCHAR(50) DEFAULT 'valid'"
                         elif mc.endswith("_validation_reason") or mc == "row_validation_reason":
-                            alter_clauses.append(f"[{mc}] VARCHAR(500) NULL")
+                            ctype = "VARCHAR(500) NULL"
                         elif mc.endswith("_validation_status"):
-                            alter_clauses.append(f"[{mc}] VARCHAR(50) NULL")
+                            ctype = "VARCHAR(50) NULL"
                         else:
-                            alter_clauses.append(f"[{mc}] NVARCHAR(MAX) NULL")
-                    alter_sql = f"\n    ALTER TABLE {st_full} ADD " + ", ".join(alter_clauses) + ";\n"
+                            ctype = "NVARCHAR(MAX) NULL"
+                        alter_clauses.append(f"    IF NOT EXISTS (SELECT 1 FROM tempdb.sys.columns WHERE object_id = OBJECT_ID('tempdb..{st_full}') AND name = '{mc}')\n        ALTER TABLE {st_full} ADD [{mc}] {ctype};")
+                    alter_sql = "\n" + "\n".join(alter_clauses) + "\n"
                     ins_pt = create_st.end()
                     code = code[:ins_pt] + alter_sql + code[ins_pt:]
 
