@@ -2,9 +2,11 @@
 
 **Certification Date**: September 18, 2026  
 **Engineering Implementation Verdict**: **CERTIFIED & CLOSED**  
-**Production Readiness Verdict**: **CONDITIONALLY AUTHORIZED FOR PRODUCTION DEPLOYMENT**  
-*(Subject to environment-specific operational acceptance, production infrastructure validation, and deployment authority sign-off)*  
-**Git Revision Bound**: `c3c8f3f82029759ba0e53a2510b64be16bb0243e`  
+**Software-Contract Blockers**: **PROD-1, PROD-2, PROD-3, PROD-4, PROD-5 ALL CLOSED**  
+**Final Production Deployment Authorization**: **NOT YET GRANTED**  
+**Current Release Posture**: **CONDITIONALLY APPROVED FOR PRE-PRODUCTION VALIDATION AND GO-LIVE READINESS ACTIVITIES**  
+*(Eligible for pre-production environment rollout and live infrastructure validation; live production traffic remains prohibited until Stages 2 through 4 pass)*  
+**Git Revision Bound**: `e43255d5adc385767a7a096cec36230b18f0a9ef`  
 
 ---
 
@@ -22,7 +24,7 @@ With the certification and permanent freezing of Phase 3 cross-engine compilatio
 
 All five declared production blockers (**PROD-1**, **PROD-2**, **PROD-3**, **PROD-4**, and **PROD-5**) are formally **CLOSED AT THE SOFTWARE-CONTRACT LEVEL**.
 
-Production deployment is **CONDITIONALLY AUTHORIZED**, pending environment-specific validation against designated production identities, key-management infrastructure, cloud storage adapters, and operational acceptance.
+Final live production traffic authorization is **NOT YET GRANTED**. The platform is **CONDITIONALLY APPROVED FOR PRE-PRODUCTION VALIDATION AND GO-LIVE READINESS ACTIVITIES**, pending formal completion of Security Approval (Stage 2), Production Environment Validation (Stage 3), and Operational Acceptance (Stage 4).
 
 ---
 
@@ -33,12 +35,12 @@ Production deployment is **CONDITIONALLY AUTHORIZED**, pending environment-speci
 | **PROD-1** | Execution-boundary secret resolution & scoped custody | Phase 4B | `agent/etl_pipeline/secret_manager.py` | `test_phase4b_execution_gate_and_secrets.py` | **CLOSED** | The secret manager uses provider-backed or mutable scoped handles where available, overwrites managed buffers on exit, releases provider handles, eliminates application references, and minimizes secret lifetime. It does not claim absolute physical erasure of all process-memory copies. Live deployment requires Key Vault / HSM provider backing. |
 | **PROD-2** | Execution-time authorization revalidation | Phase 4B | `agent/etl_pipeline/execution_gate.py` | `test_phase4b_execution_gate_and_secrets.py` | **CLOSED** | Execution gate validates authorization freshness, expiry, tenant matching, exact step semantic-hash identity, policy decision ID, approver ID, and revocation state. Replay-resistant and artifact-bound. |
 | **PROD-3** | Durable publication commit protocol & manifest fencing | Phase 4D | `agent/etl_pipeline/durable_publisher.py` | `test_phase4d_durable_publication.py` | **CLOSED** | The durable publication protocol, two-phase staging, generation fencing tokens (OCC), concurrent-writer rejection, idempotent retries, and orphan recovery are certified at the protocol and state-machine level. Production storage certification requires live cloud object storage / lakehouse catalog validation. |
-| **PROD-4** | Cross-engine semantic compilation parity | Phase 3 | `agent/etl_pipeline/*_ir_compiler.py` | `tests/cross_engine/` (142 tests) | **CLOSED** | Certified for the frozen Phase 3 matrix (Pandas 2.2+, PySpark 3.5.1, Azure SQL Database compat 160, ADF v2 orchestration). Default-denial enforced for all unregistered engine versions or profiles. |
+| **PROD-4** | Multi-engine semantic parity | Phase 3 | `agent/etl_pipeline/*_ir_compiler.py` | `tests/cross_engine/` (142 tests) | **CLOSED** | Certified for the frozen Phase 3 matrix (Pandas 2.2+, PySpark 3.5.1, Azure SQL Database compat 160, ADF v2 orchestration). Default-denial enforced for all unregistered engine versions or profiles. |
 | **PROD-5** | Controlled engine dispatch & runtime limits | Phase 4C | `agent/etl_pipeline/controlled_dispatcher.py` | `test_phase4c_controlled_dispatch.py` | **CLOSED** | Enforces bounded caller waiting via ThreadPool, cooperative cancellation, input/output row limits, join row-expansion ratio guard, aggregation cardinality caps, and guaranteed cleanup in `finally:`. Does not claim uncooperative hard kernel termination solely from ThreadPool. |
 
 ---
 
-## 3. Production Authorization Model & State Progression
+## 3. Production Authorization Model & 5-Stage Progression
 
 Production readiness adheres to a strict 5-stage progression:
 
@@ -46,23 +48,27 @@ $$\text{ENGINEERING\_CERTIFIED} \longrightarrow \text{SECURITY\_APPROVED} \longr
 
 ### Status Accounting
 
-- **Stage 1: Engineering Implementation**: **CERTIFIED & CLOSED** (`c3c8f3f`)
+- **Stage 1: Engineering Implementation**: **COMPLETE** (Certified & Closed on `e43255d5adc385767a7a096cec36230b18f0a9ef`)
   - Implementation complete across all 5 Phase 4 packages.
   - 451 passing tests, 0 failures, 0 skipped.
   - Working tree clean; checksums recorded.
-- **Stage 2: Security Approval**: **PENDING LIVE REVIEW**
-  - Key Vault / HSM integration verification, threat model validation, canary-secret leakage scan.
-- **Stage 3: Production Environment Validation**: **PENDING TARGET INFRASTRUCTURE**
-  - Cloud tenant binding, private endpoints, Lakehouse/SQL target connectivity.
-- **Stage 4: Operational Acceptance**: **PENDING OPERATIONAL RUNBOOKS**
-  - SLO dashboards, alerting, rollback validation, recovery exercises.
-- **Stage 5: Final Production Authorization**: **CONDITIONALLY AUTHORIZED**
+- **Stage 2: Security Approval**: **PENDING**
+  - Threat-model approval, production Key Vault/HSM validation, non-exportable signing keys, key rotation/revocation exercise, canary-secret leakage scan.
+  - *Exit statement*: `SECURITY_APPROVED`
+- **Stage 3: Production Environment Validation**: **PENDING**
+  - Cloud tenant and subscription binding, managed identities, private endpoints, target Lakehouse/SQL connectivity, live ADLS Gen2 publication adapter testing.
+  - *Exit statement*: `PRODUCTION_ENVIRONMENT_VALIDATED`
+- **Stage 4: Operational Acceptance**: **PENDING**
+  - SLO/SLA definitions, monitoring dashboards and alerting, on-call ownership, rollback runbook, disaster recovery exercises, change management sign-off.
+  - *Exit statement*: `OPERATIONALLY_ACCEPTED`
+- **Stage 5: Final Production Deployment Authorization**: **NOT YET GRANTED**
+  - Becomes `AUTHORIZED_FOR_PRODUCTION_DEPLOYMENT` only after Stages 2 through 4 pass.
 
 ---
 
 ## 4. Minimum Production Go-Live Gate Checklist
 
-Before the first live execution in production infrastructure, the following gates must be confirmed by the designated deployment authority:
+Before live execution in production infrastructure, the following gates must be confirmed by the designated deployment authority:
 
 1. **Cryptographic Trust**:
    - Production signing private key held in non-exportable Key Vault / HSM.
@@ -113,5 +119,6 @@ All test suites executed with **zero failures, zero errors, zero skipped tests**
 
 ## 6. Formal Certification Sign-Off
 
-Phase 4 is hereby formally **CLOSED AND CERTIFIED** at the engineering implementation level on revision `c3c8f3f82029759ba0e53a2510b64be16bb0243e`.  
-Production deployment is **CONDITIONALLY AUTHORIZED**, pending environment, security, and operational acceptance.
+Phase 4 is hereby formally **CLOSED AND CERTIFIED** at the engineering implementation level on revision `e43255d5adc385767a7a096cec36230b18f0a9ef`.  
+The platform is **CONDITIONALLY APPROVED FOR PRE-PRODUCTION VALIDATION AND GO-LIVE READINESS ACTIVITIES**.  
+Final live production traffic authorization is **NOT YET GRANTED**, pending successful completion of Stages 2 through 4.
