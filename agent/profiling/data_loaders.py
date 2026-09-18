@@ -96,14 +96,23 @@ def load_sql_datasets(
         connector = AzureSQLPythonNetConnector(connection_cfg)
         tables = connector.discover_tables()
 
-        if only_tables is not None:
-            allowed_set = {t.lower() for t in only_tables}
+        if only_tables is not None and len(only_tables) > 0:
+            allowed_set = {str(t).lower().strip("[] ") for t in only_tables if str(t).strip()}
             filtered_tables = []
             for t in tables:
-                key = f"{p}{t}" if p else t
-                if key.lower() in allowed_set:
+                t_lower = t.lower().strip("[] ")
+                t_base = t_lower.split(".")[-1]
+                key = (f"{p}{t}" if p else t).lower().strip("[] ")
+                if t_lower in allowed_set or t_base in allowed_set or key in allowed_set or f"dbo.{t_base}" in allowed_set:
                     filtered_tables.append(t)
             tables = filtered_tables
+        else:
+            # By default exclude internal ETL system tables (e.g. etl_log, etl_rejects)
+            excluded_system_tables = {
+                "etl_log", "etl_rejects", "etl_watermark",
+                "etl_default_values", "etl_invalid_values"
+            }
+            tables = [t for t in tables if t.split(".")[-1].lower() not in excluded_system_tables]
 
         for table in tables:
             key = f"{p}{table}" if p else table

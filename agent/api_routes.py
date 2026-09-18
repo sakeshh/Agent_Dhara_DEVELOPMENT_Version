@@ -70,6 +70,9 @@ class AssessPayload(BaseModel):
     do_transform: Optional[bool] = None
     approved_semantics: Optional[Dict[str, Dict[str, str]]] = None
     session_id: Optional[str] = "default"
+    selected_tables: Optional[List[str]] = None
+    tables: Optional[List[str]] = None
+    selected_table: Optional[str] = None
 
 
 class SemanticInferencePayload(BaseModel):
@@ -392,16 +395,30 @@ def api_assess(payload: AssessPayload, request: Request, _auth: None = Depends(r
     if not user_request:
         return {"error": "Provide user_request or requirements"}
 
+    sel_tables = (
+        payload.selected_tables
+        or payload.tables
+        or ([payload.selected_table] if payload.selected_table else None)
+        or (payload.requirements.get("selected_tables") if payload.requirements else None)
+        or (payload.requirements.get("tables") if payload.requirements else None)
+    )
+    session_id = payload.session_id or "default"
+    if sel_tables:
+        from agent.session_store import load_session, save_session
+        sess = load_session(session_id)
+        sess.setdefault("context", {})["selected_tables"] = sel_tables
+        save_session(sess)
+
     result = run_orchestrator(
         user_request=user_request,
         sources_path=sources_path,
         selected_sources=selected_sources,
         request_id=getattr(getattr(request, "state", None), "request_id", "") or "",
         approved_semantics=payload.approved_semantics,
-        session_id=payload.session_id or "default",
+        session_id=session_id,
+        selected_tables=sel_tables,
     )
     
-    session_id = payload.session_id or "default"
     from agent.session_store import load_session, save_session
     sess = load_session(session_id)
     sess["session_state"] = "assessed"

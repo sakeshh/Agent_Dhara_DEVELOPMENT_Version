@@ -768,6 +768,7 @@ def load_and_profile(
     business_rules: Optional[Dict[str, Any]] = None,
     db_connectors: Optional[Dict[str, Any]] = None,
     approved_semantics: Optional[Dict[str, Dict[str, str]]] = None,
+    selected_tables: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Orchestrator:
@@ -812,8 +813,20 @@ def load_and_profile(
             conn = loc.get("connection", {}) or {}
             prefix = _sql_location_key_prefix(loc, conn, db_seen, multi_db)
             label = (prefix.rstrip("_") if prefix else "") or "__default__"
+            only_t = (
+                selected_tables
+                or loc.get("tables")
+                or loc.get("selected_tables")
+                or conn.get("tables")
+                or conn.get("selected_tables")
+                or source_cfg.get("tables")
+                or source_cfg.get("selected_tables")
+            )
+            if isinstance(only_t, str):
+                only_t = [only_t]
             for table_key, df in load_sql_datasets(
-                conn, dataset_key_prefix=prefix, max_rows=max_rows, db_connectors_by_dataset=db_connectors_by_dataset
+                conn, dataset_key_prefix=prefix, max_rows=max_rows, db_connectors_by_dataset=db_connectors_by_dataset,
+                only_tables=only_t
             ).items():
                 datasets[table_key] = df
                 source_root_by_dataset[table_key] = (

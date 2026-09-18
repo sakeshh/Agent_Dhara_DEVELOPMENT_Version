@@ -10,6 +10,8 @@ source:
     - type: database
       id: SQL data
       connector: azure_sql_pythonnet
+      tables:
+        - dbo.EmployeeMaster
       connection:
         server: agentdharadb.database.windows.net
         database: AgentDharatables
