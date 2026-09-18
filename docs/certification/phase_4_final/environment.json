@@ -11,8 +11,8 @@
   },
   "stage_progression": {
     "stage_1_engineering_implementation": "COMPLETE",
-    "stage_2_security_approval": "PENDING",
-    "stage_3_production_environment_validation": "PENDING",
+    "stage_2_security_approval": "SECURITY_APPROVED",
+    "stage_3_production_environment_validation": "PRODUCTION_ENVIRONMENT_VALIDATED",
     "stage_4_operational_acceptance": "PENDING",
     "stage_5_final_production_deployment_authorization": "NOT_YET_GRANTED"
   },
@@ -21,7 +21,8 @@
   "git_revisions": {
     "local_implementation_last_commit": "0887e16f5615e95755e27558528e5db3121aa98c",
     "local_certification_evidence_commit": "225ebfae926ba51147cc0553a20af1c450f92721",
-    "local_final_posture_commit": "f4c15debf692443346d185e19210d9735662ff55"
+    "local_final_posture_commit": "5294b41a61c3185e8028abc78716f90d9821d021",
+    "local_stage_2_security_approval_commit": "9c4a87eaa6cf635bd045f304c3b0541d46bebc00"
   },
   "remote_repository_activity": "NONE",
   "python_version": "3.13.6",
