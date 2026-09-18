@@ -10,8 +10,8 @@
     "PROD-5_runtime_governance": "CLOSED"
   },
   "stage_progression": {
-    "stage_1_engineering_implementation": "COMPLETE",
-    "stage_2_security_approval": "SECURITY_APPROVED",
+    "stage_1_engineering_implementation": "ENGINEERING_CERTIFIED_AND_CLOSED",
+    "stage_2_security_approval": "SECURITY_CONTRACT_APPROVED",
     "stage_3_production_environment_validation": "PRODUCTION_ENVIRONMENT_CONTRACT_VALIDATED",
     "stage_4_operational_acceptance": "OPERATIONAL_CONTRACT_ACCEPTED",
     "stage_5_final_production_deployment_authorization": "PENDING_FINAL_AUTHORIZATION"

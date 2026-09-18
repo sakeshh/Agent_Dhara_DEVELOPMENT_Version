@@ -2,7 +2,7 @@
 
 **Project**: Agent Dhara  
 **Assessment Target**: Production Security & Cryptographic Boundary  
-**Status**: `SECURITY_APPROVED`  
+**Status**: `SECURITY_CONTRACT_APPROVED`  
 **Date**: September 18, 2026  
 **Auditor / Security Function**: Security Architecture & Cryptographic Governance  
 **Verification Suite**: [`test_stage2_security_validation.py`](file:///c:/Users/ssakesh/OneDrive%20-%20Capgemini/Documents/Agent-Dhara---Backend-App/tests/cross_engine/test_stage2_security_validation.py) (5 passed)
@@ -11,11 +11,11 @@
 
 ## 1. Executive Security Verdict
 
-The security, cryptographic, and custodial boundaries of Agent Dhara have been comprehensively audited, exercised under active failure modes, and verified against production standards.
+The security architecture, threat model mitigations, cryptographic signing protocols, and secret custody boundaries of Agent Dhara have been comprehensively audited, exercised under active failure modes, and verified against production standards. Live Azure Key Vault / Managed HSM key-custody validation is staged for execution under Gate A direct cloud validation prior to final Stage 5 authorization.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ Stage 2 Security Sign-off: SECURITY_APPROVED                               │
+│ Stage 2 Security Sign-off: SECURITY_CONTRACT_APPROVED                      │
 │                                                                            │
 │ 1. Threat Model (STRIDE)                [AUDITED & MITIGATED]             │
 │ 2. Production Key Vault / HSM Model     [VERIFIED & INTEGRATED]           │
@@ -24,15 +24,16 @@ The security, cryptographic, and custodial boundaries of Agent Dhara have been c
 │ 5. Key Revocation Drills                [PROVEN: INSTANT PREFLIGHT BLOCK] │
 │ 6. Canary-Secret Leakage Scans          [AUDITED: ZERO LEAKAGE CONFIRMED] │
 │ 7. Authorization Replay Rejection       [PROVEN: 100% BLOCKED]            │
+│ 8. Live Key Vault / HSM Evidence        [STAGED FOR GATE A CLOUD RUN]     │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Stage Transition**:
-* **Stage 1 (Engineering Implementation)**: `CERTIFIED_AND_CLOSED`
-* **Stage 2 (Security Approval)**: `SECURITY_APPROVED`
-* **Stage 3 (Production Environment Validation)**: **UNBLOCKED & NEXT ACTIVE GATE**
-* **Stage 4 (Operational Acceptance)**: `PENDING`
-* **Stage 5 (Production Deployment Authorization)**: `NOT YET GRANTED` (Live production traffic remains strictly **PROHIBITED**).
+* **Stage 1 (Engineering Implementation)**: `ENGINEERING_CERTIFIED_AND_CLOSED`
+* **Stage 2 (Security Contract Review)**: `SECURITY_CONTRACT_APPROVED` (Live Key Custody: `STAGED_FOR_GATE_A`)
+* **Stage 3 (Environment Validation)**: `PRODUCTION_ENVIRONMENT_CONTRACT_VALIDATED`
+* **Stage 4 (Operational Acceptance)**: `OPERATIONAL_CONTRACT_ACCEPTED`
+* **Stage 5 (Production Deployment Authorization)**: `PENDING_FINAL_AUTHORIZATION` (Live production traffic remains strictly **PROHIBITED**).
 
 ---
 
