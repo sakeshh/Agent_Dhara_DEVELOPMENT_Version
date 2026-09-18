@@ -1,26 +1,31 @@
 {
   "certification_phase": "Phase 4 Final Production-Readiness Certification",
   "closure_date": "2026-09-18",
-  "engineering_certification": "CERTIFIED_AND_CLOSED",
+  "engineering_implementation_status": "ENGINEERING_CERTIFIED_AND_CLOSED",
+  "software_contract_blockers": {
+    "PROD-1_secret_custody": "CLOSED",
+    "PROD-2_authorization_revalidation": "CLOSED",
+    "PROD-3_durable_publication": "CLOSED",
+    "PROD-4_cross_engine_parity": "CLOSED",
+    "PROD-5_runtime_governance": "CLOSED"
+  },
   "stage_progression": {
     "stage_1_engineering_implementation": "COMPLETE",
     "stage_2_security_approval": "PENDING",
     "stage_3_production_environment_validation": "PENDING",
     "stage_4_operational_acceptance": "PENDING",
-    "stage_5_final_production_authorization": "NOT_YET_GRANTED"
+    "stage_5_final_production_deployment_authorization": "NOT_YET_GRANTED"
   },
   "current_release_posture": "CONDITIONALLY_APPROVED_FOR_PRE_PRODUCTION_VALIDATION_AND_GO_LIVE_READINESS",
   "live_production_traffic_authorized": false,
-  "git_revision": "e43255d5adc385767a7a096cec36230b18f0a9ef",
+  "git_revisions": {
+    "local_implementation_last_commit": "0887e16f5615e95755e27558528e5db3121aa98c",
+    "local_certification_evidence_commit": "225ebfae926ba51147cc0553a20af1c450f92721",
+    "local_final_posture_commit": "f4c15debf692443346d185e19210d9735662ff55"
+  },
+  "remote_repository_activity": "NONE",
   "python_version": "3.13.6",
   "pytest_version": "9.0.2",
   "cryptography_version": "46.0.3",
-  "os_platform": "Windows 11 / win32",
-  "software_contract_blockers_closed": [
-    "PROD-1",
-    "PROD-2",
-    "PROD-3",
-    "PROD-4",
-    "PROD-5"
-  ]
+  "os_platform": "Windows 11 / win32"
 }

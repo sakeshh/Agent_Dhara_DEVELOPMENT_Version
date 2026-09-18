@@ -1,9 +1,13 @@
 {
   "matrix_version": "v4.0.0",
-  "status": "ENGINEERING_CERTIFIED_CONDITIONALLY_APPROVED_FOR_PRE_PRODUCTION",
-  "production_deployment_authorization": "NOT_YET_GRANTED",
-  "certified_date": "2026-09-18",
-  "certification_commit": "e43255d5adc385767a7a096cec36230b18f0a9ef",
+  "engineering_status": "ENGINEERING_CERTIFIED_AND_CLOSED",
+  "software_contract_blockers": {
+    "PROD-1": "CLOSED",
+    "PROD-2": "CLOSED",
+    "PROD-3": "CLOSED",
+    "PROD-4": "CLOSED",
+    "PROD-5": "CLOSED"
+  },
   "stage_progression": {
     "stage_1_engineering": "COMPLETE",
     "stage_2_security": "PENDING",
@@ -11,6 +15,15 @@
     "stage_4_operational": "PENDING",
     "stage_5_final_production_authorization": "NOT_YET_GRANTED"
   },
+  "release_posture": "CONDITIONALLY_APPROVED_FOR_PRE_PRODUCTION_VALIDATION",
+  "live_production_traffic": "PROHIBITED",
+  "certified_date": "2026-09-18",
+  "git_revisions": {
+    "implementation_commit": "0887e16f5615e95755e27558528e5db3121aa98c",
+    "certification_evidence_commit": "225ebfae926ba51147cc0553a20af1c450f92721",
+    "final_local_head": "f4c15debf692443346d185e19210d9735662ff55"
+  },
+  "remote_push_activity": "NONE",
   "production_gate": {
     "manifest_signing": "ED25519_VERIFIED",
     "preflight_gate": "CENTRALIZED_10_CHECK_ENFORCED",
