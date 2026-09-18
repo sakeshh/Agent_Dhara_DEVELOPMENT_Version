@@ -1890,7 +1890,7 @@ def etl_execute_sql(
 
                         if df_clean is not None:
                             logger.info(f"Mirroring {len(df_clean)} rows from '{chosen_table}' to Fabric Lakehouse...")
-                            res = write_to_lakehouse(df_clean, chosen_table)
+                            res = write_to_lakehouse(df_clean, chosen_table, mode=os.getenv("DHARA_FABRIC_WRITE_MODE", "overwrite"), schema_mode="merge")
                             res["source_table"] = chosen_table
                             mirror_results.append(res)
                         else:
@@ -1964,7 +1964,10 @@ def etl_execute_sql(
                         
                         if df_clean is not None:
                             csv_data = df_clean.to_csv(index=False).encode('utf-8')
-                            clean_blob_name = f"cleaned/{chosen_table}_cleaned.csv"
+                            raw_base = chosen_table.split(".")[-1].strip("[]")
+                            tbl_pure = re.sub(r'(_clean|_staging|_raw)$', '', raw_base, flags=re.IGNORECASE)
+                            time_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                            clean_blob_name = f"cleaned/{tbl_pure}_clean_{time_str}.csv"
                             logger.info(f"Uploading cleaned table data to blob: {clean_blob_name}...")
                             success = blob_connector.upload_blob(clean_blob_name, csv_data)
                             if success:

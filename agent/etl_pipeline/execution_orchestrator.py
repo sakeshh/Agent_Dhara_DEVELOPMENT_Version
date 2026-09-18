@@ -220,6 +220,10 @@ def ensure_idempotent_sql(sql: str) -> str:
         sql,
         flags=re.IGNORECASE
     )
+
+    # 5. Sanitize accidental double staging temporary table references (#..._Staging_Staging)
+    sql = re.sub(r"#([a-zA-Z0-9_]+?)_Staging_Staging\b", r"#\1_Staging", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"#([a-zA-Z0-9_]+?)_staging_staging\b", r"#\1_Staging", sql, flags=re.IGNORECASE)
     return sql
 
 

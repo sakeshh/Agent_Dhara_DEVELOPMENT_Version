@@ -132,6 +132,8 @@ def _get_clean_table_name(ds_name: str) -> str:
     if tbl_lower.endswith("_clean"):
         # Already a clean table — return as-is to avoid double-suffix (_Clean_Clean)
         clean_tbl = tbl_name
+    elif tbl_lower.endswith("_staging"):
+        clean_tbl = tbl_name[:-8] + "_Clean"
     elif tbl_lower.endswith("_raw"):
         clean_tbl = tbl_name[:-4] + "_Clean"
     else:
@@ -154,6 +156,8 @@ def _get_transformed_table_name(ds_name: str) -> str:
     
     if tbl_name.lower().endswith("_raw"):
         trans_tbl = tbl_name[:-4] + "_Transformed"
+    elif tbl_name.lower().endswith("_staging"):
+        trans_tbl = tbl_name[:-8] + "_Transformed"
     elif tbl_name.lower().endswith("_clean"):
         trans_tbl = tbl_name[:-6] + "_Transformed"
     else:
@@ -924,8 +928,15 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             raw_tbl = src_tbl_expr
             clean_tbl = tgt_tbl_expr
             tbl_clean = target_tbl_str
-            tbl_staging = f"#{tbl_base}_Staging" if is_clean else f"#{tbl_base}_Transform_Staging"
             tbl_base = ds_name.split(".")[-1].strip("[]")
+            tbl_pure = tbl_base
+            if tbl_pure.lower().endswith("_staging"):
+                tbl_pure = tbl_pure[:-8]
+            elif tbl_pure.lower().endswith("_clean"):
+                tbl_pure = tbl_pure[:-6]
+            elif tbl_pure.lower().endswith("_raw"):
+                tbl_pure = tbl_pure[:-4]
+            tbl_staging = f"#{tbl_pure}_Staging" if is_clean else f"#{tbl_pure}_Transform_Staging"
             tbl_clean = _get_clean_table_name(ds_name)
         
         
@@ -2442,4 +2453,6 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     ])
     
     full_sql = "\n".join(badge_lines) + full_sql
+    full_sql = re.sub(r"#([a-zA-Z0-9_]+?)_Staging_Staging\b", r"#\1_Staging", full_sql, flags=re.IGNORECASE)
+    full_sql = re.sub(r"#([a-zA-Z0-9_]+?)_staging_staging\b", r"#\1_Staging", full_sql, flags=re.IGNORECASE)
     return full_sql.strip() + "\n"

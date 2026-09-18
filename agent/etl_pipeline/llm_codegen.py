@@ -1065,6 +1065,8 @@ def _postprocess_tsql_code(code: str) -> str:
         low = clean_tbl.lower()
         if low.startswith("#") or low.endswith("_clean") or low in ("etl_log", "etl_rejects", "etl_watermark") or low in declared_ctes_lower or "cte" in low:
             return match.group(0)
+        if low.endswith("_staging"):
+            clean_tbl = clean_tbl[:-8]
         return f"{prefix}#{clean_tbl}_Staging{suffix}"
 
     code = re.sub(
@@ -1073,6 +1075,9 @@ def _postprocess_tsql_code(code: str) -> str:
         code,
         flags=re.IGNORECASE
     )
+    # Sanitize any double staging temporary table references
+    code = re.sub(r"#([a-zA-Z0-9_]+?)_Staging_Staging\b", r"#\1_Staging", code, flags=re.IGNORECASE)
+    code = re.sub(r"#([a-zA-Z0-9_]+?)_staging_staging\b", r"#\1_Staging", code, flags=re.IGNORECASE)
 
     # 2d. Fix pseudo-column [Row-level] / [row-level] in SET clauses
     code = re.sub(
@@ -1143,6 +1148,8 @@ def _postprocess_tsql_code(code: str) -> str:
     # 6. Ensure companion columns exist on staging tables
     staging_tables = re.findall(r"#([a-zA-Z0-9_]+)_Staging\b", code, re.IGNORECASE)
     for st_name in set(staging_tables):
+        if st_name.lower().endswith("_staging"):
+            st_name = st_name[:-8]
         st_full = f"#{st_name}_Staging"
         updates = re.findall(rf"UPDATE\s+{re.escape(st_full)}\s+SET\s+([^;]+?)(?:WHERE\b|;)", code, re.IGNORECASE)
         cols_needed = set()
@@ -1185,6 +1192,8 @@ def _postprocess_tsql_code(code: str) -> str:
     # 7. Clean Data Integrity Guard (Table-Specific):
     # Only nullify columns that ACTUALLY exist in the specific staging table
     for st_name in set(staging_tables):
+        if st_name.lower().endswith("_staging"):
+            st_name = st_name[:-8]
         st_full = f"#{st_name}_Staging"
         st_updates = re.findall(rf"UPDATE\s+{re.escape(st_full)}\s+SET\s+([^;]+?)(?:WHERE\b|;)", code, re.IGNORECASE)
         status_cols_for_table = set()

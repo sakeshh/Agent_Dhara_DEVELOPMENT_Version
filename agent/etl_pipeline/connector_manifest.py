@@ -110,14 +110,19 @@ def build_connector_manifest(
         fmt = infer_format_from_ext(ext if ext else _ext(loc), source_type)
         out_ext = output_extension_for_format(fmt, ext or ".parquet")
         
+        from datetime import datetime, timezone
+        time_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        loc_base = os.path.splitext(ds_name)[0]
+        ds_pure = re.sub(r'(_clean|_staging|_raw|_cleaned)$', '', _safe_var(loc_base), flags=re.IGNORECASE)
+
         if shortcut:
-            clean_tbl = shortcut["shortcut_name"] + "_clean"
+            clean_tbl = f"{shortcut['shortcut_name']}_clean_{time_str}"
             out_path = f"Tables/{clean_tbl}"
         elif overwrite_in_place or output_base == "__overwrite__":
             out_path = loc
         else:
             base = output_base.rstrip("/") or "cleaned"
-            out_path = f"{base}/{_safe_var(ds_name)}_cleaned{out_ext}"
+            out_path = f"{base}/{ds_pure}_clean_{time_str}{out_ext}"
 
         entry = {
             "dataset": ds_name,
@@ -136,7 +141,8 @@ def build_connector_manifest(
         if shortcut or ds_meta.get("source_type") == "fabric_files_zone":
             from agent.blob_fabric_registry import make_safe_shortcut_name
             sh_name = (shortcut or {}).get("shortcut_name") or make_safe_shortcut_name(ds_name)
-            entry["clean_table_name"] = sh_name + "_clean"
+            sh_pure = re.sub(r'(_clean|_staging|_raw|_cleaned)$', '', sh_name, flags=re.IGNORECASE)
+            entry["clean_table_name"] = f"{sh_pure}_clean_{time_str}"
             entry["fabric_uri"] = (shortcut or {}).get("lakehouse_uri") or ds_meta.get("fabric_uri")
             
         entry["read_snippet_python"] = python_read_snippet(entry)
