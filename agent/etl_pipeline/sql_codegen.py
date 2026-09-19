@@ -117,7 +117,7 @@ def translate_assertion_to_sql(assertion: str, cols: List[str] = None) -> str:
     return expr
 
 
-def _get_clean_table_name(ds_name: str) -> str:
+def _get_clean_table_name(ds_name: str, target_schema: str = None, timestamp_suffix: str = "") -> str:
     """Resolve raw table name to its clean table equivalent."""
     parts = ds_name.split(".", 1)
     if len(parts) == 2:
@@ -127,6 +127,9 @@ def _get_clean_table_name(ds_name: str) -> str:
     
     schema = schema.strip("[]")
     tbl_name = tbl_name.strip("[]")
+    
+    if target_schema:
+        schema = target_schema.strip("[]")
     
     tbl_lower = tbl_name.lower()
     if tbl_lower.endswith("_clean"):
@@ -138,6 +141,9 @@ def _get_clean_table_name(ds_name: str) -> str:
         clean_tbl = tbl_name[:-4] + "_Clean"
     else:
         clean_tbl = tbl_name + "_Clean"
+        
+    if timestamp_suffix:
+        clean_tbl = f"{clean_tbl}_{timestamp_suffix}"
         
     return f"{schema}.{clean_tbl}"
 
@@ -531,6 +537,8 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     invalid_values_to_seed = {}
     plan_id = str(plan.get("plan_id") or "unknown")
     business_rules: Dict[str, Any] = plan.get("business_rules") or {}
+    clean_schema: Optional[str] = business_rules.get("clean_schema") or plan.get("clean_schema") or None
+    timestamp_suffix: str = str(plan.get("timestamp_suffix") or business_rules.get("timestamp_suffix") or "")
     excluded_columns: List[str] = business_rules.get("exclude_columns") or []
     valid_values = business_rules.get("valid_values") or {}
 
@@ -682,6 +690,14 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         lines.append("-- __DEFAULT_VALUES_SEED_PLACEHOLDER__")
         lines.append("")
 
+        if clean_schema and clean_schema.lower() != "dbo" and dialect == "tsql":
+            lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = '{clean_schema}')")
+            lines.append(f"BEGIN")
+            lines.append(f"    EXEC('CREATE SCHEMA [{clean_schema}]');")
+            lines.append(f"END;")
+            lines.append(f"GO")
+            lines.append("")
+
         # Initialize target clean tables at script level to ensure dependent views compile
         lines.append("-- ============================================================")
         lines.append("-- Initialize Clean Tables if not exists")
@@ -690,7 +706,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         is_clean_script = (generation_mode != "transform_only")
         phase_suffix_script = "Clean" if is_clean_script else "Transformed"
         for ds_name, block in ds_plan.items():
-            tbl_clean = _get_clean_table_name(ds_name) if is_clean_script else _get_transformed_table_name(ds_name)
+            tbl_clean = _get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix) if is_clean_script else _get_transformed_table_name(ds_name)
             tbl_base = ds_name.split(".")[-1].strip("[]")
             clean_tbl = tsql_qualified_name(tbl_clean)
             
@@ -892,7 +908,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
 
     for ds_name, block in ds_plan.items():
         tbl_base = ds_name.split(".")[-1].strip("[]")
-        tbl_clean = _get_clean_table_name(ds_name)
+        tbl_clean = _get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix)
         tbl_transformed = _get_transformed_table_name(ds_name)
         
         phases_to_gen = []
@@ -937,7 +953,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             elif tbl_pure.lower().endswith("_raw"):
                 tbl_pure = tbl_pure[:-4]
             tbl_staging = f"#{tbl_pure}_Staging" if is_clean else f"#{tbl_pure}_Transform_Staging"
-            tbl_clean = _get_clean_table_name(ds_name)
+            tbl_clean = _get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix)
         
         
             # Filter steps for current phase
@@ -1655,7 +1671,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     rel_ds = p.get("related_dataset") or "?"
                     rel_col = p.get("related_column") or "?"
                     fk_action = p.get("fk_action") or "flag"
-                    parent_tbl = _get_clean_table_name(rel_ds)
+                    parent_tbl = _get_clean_table_name(rel_ds, target_schema=clean_schema, timestamp_suffix=timestamp_suffix)
                 
                     if dialect == "tsql":
                         step_lines.append(f"-- Referential integrity check: {col} -> {rel_ds}.{rel_col} (action={fk_action})")
@@ -2377,11 +2393,11 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 new_line = line
                 for ds_name in ds_plan.keys():
                     tbl_raw = tsql_qualified_name(ds_name)
-                    tbl_cl = tsql_qualified_name(_get_clean_table_name(ds_name))
+                    tbl_cl = tsql_qualified_name(_get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix))
                     new_line = new_line.replace(tbl_raw, tbl_cl)
                     
                     raw_base = ds_name.split(".")[-1].strip("[]")
-                    cl_base = _get_clean_table_name(ds_name).split(".")[-1].strip("[]")
+                    cl_base = _get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix).split(".")[-1].strip("[]")
                     new_line = new_line.replace(f"[{raw_base}]", f"[{cl_base}]")
                     # Prevent double-replacements by only matching raw_base as a full word boundary
                     new_line = re.sub(rf"\b{re.escape(raw_base)}\b", cl_base, new_line)

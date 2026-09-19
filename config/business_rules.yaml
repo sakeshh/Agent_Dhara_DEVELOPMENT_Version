@@ -14,6 +14,7 @@ tenants:
     defaults:
       never_drop_rows: false
       outlier_strategy: flag
+      clean_schema: cleanedTables
     datasets: {}
 
   # Example tenant — uncomment and customize:
@@ -34,5 +35,6 @@ tenants:
 defaults:
   never_drop_rows: false
   outlier_strategy: flag
+  clean_schema: cleanedTables
 
 datasets: {}

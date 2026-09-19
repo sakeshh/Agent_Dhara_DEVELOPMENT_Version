@@ -1937,9 +1937,9 @@ T-SQL REQUIREMENTS:
 - SCRIPT STRUCTURE & IDEMPOTENT DDL (CRITICAL FOR RUNTIME COMPILATION):
   1. ALL table DDL statements MUST be executed FIRST at the top, BEFORE execution or stored procedure bodies:
      - Infrastructure tables: `dbo.etl_log`, `dbo.etl_rejects`, `dbo.etl_watermark`.
-     - Target clean tables: `dbo.<Table>_Clean` for every dataset.
-     - Tables: `IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TableName' AND schema_id = SCHEMA_ID('dbo')) CREATE TABLE dbo.TableName (...);`
-     - Indexes: `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IndexName' AND object_id = OBJECT_ID('dbo.TableName')) CREATE NONCLUSTERED INDEX IndexName ON dbo.TableName (...);`
+     - Target clean tables: `cleanedTables.<Table>_Clean` (or timestamped `cleanedTables.<Table>_Clean_<timestamp>`) in the `cleanedTables` schema. Ensure `IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'cleanedTables') EXEC('CREATE SCHEMA cleanedTables');` is executed before clean table DDL.
+     - Tables: `IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TableName' AND schema_id = SCHEMA_ID('cleanedTables')) CREATE TABLE cleanedTables.TableName (...);`
+     - Indexes: `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IndexName' AND object_id = OBJECT_ID('cleanedTables.TableName')) CREATE NONCLUSTERED INDEX IndexName ON cleanedTables.TableName (...);`
      - Stored Procedures: `CREATE OR ALTER PROCEDURE dbo.ProcName AS BEGIN ... END; GO`.
      - Each outer script DDL statement MUST be followed by a `GO` batch separator on its own line.
   2. ABSOLUTE FORBIDDEN: NEVER output `GO` inside `BEGIN TRY ... END TRY`, inside `BEGIN CATCH ... END CATCH`, or anywhere in the execution section:
