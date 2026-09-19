@@ -751,5 +751,87 @@ def test_azure_sql_executor_remediates_syntax_near_or():
     assert rem[0].endswith(";")
 
 
+def test_azure_sql_executor_remediates_syntax_error_102_and_111():
+    from agent.azure_sql_executor import _remediate_batch_syntax_error
+
+    err_102 = "('42000', \"[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Incorrect syntax near ';'. (102) (SQLExecDirectW)\")"
+    proc_missing_end = """CREATE OR ALTER PROCEDURE dbo.transform_dbo_EmployeeMaster AS 
+BEGIN
+    BEGIN TRY
+        SELECT 1;
+    END TRY
+    BEGIN CATCH
+        THROW;
+    END CATCH;"""
+    rem = _remediate_batch_syntax_error(proc_missing_end, err_102)
+    assert len(rem) == 1
+    assert "END;" in rem[0]
+    assert rem[0].strip().endswith("END;")
+
+    err_111 = "('42000', \"[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]'CREATE/ALTER PROCEDURE' must be the first statement in a query batch. (111) (SQLExecDirectW)\")"
+    proc_and_exec = "CREATE OR ALTER PROCEDURE dbo.my_sp AS BEGIN SELECT 1; END;\nEXEC dbo.my_sp;"
+    rem_111 = _remediate_batch_syntax_error(proc_and_exec, err_111)
+    assert len(rem_111) == 2
+    assert "CREATE OR ALTER PROCEDURE dbo.my_sp" in rem_111[0]
+    assert "EXEC dbo.my_sp;" in rem_111[1]
+
+
+def test_postprocess_tsql_stored_procedure_balancing_and_autoexec():
+    from agent.etl_pipeline.llm_codegen import _postprocess_tsql_code
+
+    raw_sql = """-- plan_id: plan_1789797850
+IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'cleanedTables') 
+    EXEC('CREATE SCHEMA cleanedTables');
+GO
+
+CREATE OR ALTER PROCEDURE dbo.transform_dbo_EmployeeMaster AS 
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @run_id INT;
+    INSERT INTO dbo.etl_log (process_name, start_time, status) VALUES ('ETL_Pipeline', GETDATE(), 'RUNNING');
+    SET @run_id = SCOPE_IDENTITY();
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        SELECT [BusinessUnit], [Country], [EmployeeID], [Salary]
+        INTO #EmployeeMaster_Staging
+        FROM dbo.EmployeeMaster;
+
+        -- Phantom Phone update (EmployeeMaster has no phone)
+        UPDATE #EmployeeMaster_Staging
+        SET [Phone_validation_status] = 'invalid_phone_format',
+            [Phone] = NULL
+        WHERE [Phone] LIKE '%[^0-9]%';
+
+        -- Phantom Row-level update
+        UPDATE #EmployeeMaster_Staging
+        SET [Row-level_validation_status] = 'exact_duplicate_rows'
+        WHERE [Row-level] IN (SELECT [Row-level] FROM #EmployeeMaster_Staging GROUP BY [Row-level] HAVING COUNT(*) > 1);
+
+        COMMIT TRANSACTION;
+        UPDATE dbo.etl_log SET end_time = GETDATE(), status = 'SUCCESS' WHERE id = @run_id;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 OR XACT_STATE() <> 0 ROLLBACK TRANSACTION;
+        UPDATE dbo.etl_log SET end_time = GETDATE(), status = 'FAILED' WHERE id = @run_id;
+        THROW;
+    END CATCH;
+"""
+    processed = _postprocess_tsql_code(raw_sql)
+
+    # 1. Stored procedure must have closing END;
+    assert "END;" in processed
+    # 2. Must auto-execute procedure so table gets populated
+    assert "EXEC [dbo].[transform_dbo_EmployeeMaster];" in processed
+    # 3. Phantom Phone update must be stripped
+    assert "[Phone_validation_status]" not in processed
+    # 4. Phantom Row-level update must be stripped
+    assert "[Row-level_validation_status]" not in processed
+
+
+
 
 

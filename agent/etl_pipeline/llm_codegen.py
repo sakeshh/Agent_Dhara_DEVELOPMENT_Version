@@ -1017,8 +1017,53 @@ def _postprocess_tsql_code(code: str) -> str:
                 after_try = cleaned_pre + post_try[run_match.start():]
                 code = f"{before_try}\n\n-- =============================================\n-- Database Infrastructure DDL (Executed before batch)\n-- =============================================\n{hoisted_str}\n\nBEGIN TRY{after_try}"
 
-    # 2. Strip ALL GO statements after the start of execution (SET NOCOUNT / DECLARE @run_id / BEGIN TRY)
-    # In T-SQL, variables like @run_id do NOT survive across GO boundaries.
+    # 1b. Fix uncreated temporary staging tables (INSERT INTO #..._Staging SELECT ... -> SELECT ... INTO #..._Staging FROM ...)
+    def _convert_insert_to_into_staging(m):
+        st_name = m.group(1)
+        select_body = m.group(2)
+        from_table = m.group(3)
+        return f"IF OBJECT_ID('tempdb..#{st_name}_Staging') IS NOT NULL DROP TABLE #{st_name}_Staging;\n\n        SELECT {select_body} INTO #{st_name}_Staging FROM dbo.[{from_table}]"
+
+    code = re.sub(
+        r"\bINSERT\s+INTO\s+#([a-zA-Z0-9_]+?)_Staging\s+SELECT\s+([\s\S]+?)\bFROM\s+dbo\.\[?([a-zA-Z0-9_]+)\]?",
+        _convert_insert_to_into_staging,
+        code,
+        flags=re.IGNORECASE
+    )
+
+    # 1c. Balance Stored Procedures and ensure auto-execution
+    has_sp = re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?", code, re.IGNORECASE)
+    if has_sp:
+        sp_schema = has_sp.group(1) or "dbo"
+        sp_name = has_sp.group(2)
+        full_sp_call = f"[{sp_schema}].[{sp_name}]"
+
+        # Check if procedure AS BEGIN is missing outer END; before GO or EOF
+        # In T-SQL: BEGIN TRY/CATCH blocks end with END CATCH. If there is no matching END; after END CATCH, inject it.
+        if re.search(r"\bAS\s+BEGIN\b", code, re.IGNORECASE):
+            # Check if outer END; is missing after END CATCH;
+            m_catch = re.search(r"\bEND\s+CATCH\s*;?", code, re.IGNORECASE)
+            if m_catch:
+                post_catch = code[m_catch.end():]
+                # If there is no 'END' closing the procedure before any subsequent GO or EOF:
+                first_go_or_eof = re.search(r"\b(?:--\s*)?GO\b|\Z", post_catch, re.IGNORECASE)
+                between = post_catch[:first_go_or_eof.start()] if first_go_or_eof else post_catch
+                if not re.search(r"\bEND\b", between, re.IGNORECASE):
+                    insert_pos = m_catch.end()
+                    code = code[:insert_pos] + "\nEND;" + code[insert_pos:]
+
+        # Ensure procedure has a real GO delimiter at the end of its definition
+        code = re.sub(r"(\bEND\s*;\s*)\n\s*--\s*GO[^\n]*", r"\1\nGO", code, flags=re.IGNORECASE)
+        m_proc_end = re.search(r"(\bEND\s*;\s*)(?:\n\s*GO\s*)?(\n\s*(?:--.*)?\n*(?:EXEC\b|\Z))", code, re.IGNORECASE)
+        if m_proc_end and not re.search(r"END\s*;\s*\n\s*GO\b", m_proc_end.group(0), re.IGNORECASE):
+            code = code[:m_proc_end.start(2)] + "\nGO\n" + code[m_proc_end.start(2):]
+
+        # Check if EXEC dbo.sp_name is present in the script
+        if not re.search(rf"\bEXEC\s+(?:\[?{re.escape(sp_schema)}\]?\.)?\[?{re.escape(sp_name)}\]?", code, re.IGNORECASE):
+            code = code.rstrip() + f"\nGO\n\n-- ============================================================\n-- Auto-Execute: Run procedure to populate Clean tables\n-- ============================================================\nEXEC {full_sp_call};\nGO\n"
+
+    # 2. Strip ALL GO statements after execution starts (SET NOCOUNT / DECLARE @run_id / BEGIN TRY)
+    # except those immediately following a procedure's closing END; or an EXEC statement.
     lines = code.splitlines()
     exec_start_idx = -1
     for i, line in enumerate(lines):
@@ -1030,9 +1075,16 @@ def _postprocess_tsql_code(code: str) -> str:
     if exec_start_idx != -1:
         for i in range(exec_start_idx, len(lines)):
             if re.match(r"^\s*GO\s*(?:--.*)?$", lines[i], re.IGNORECASE):
+                # Check previous non-empty line
+                prev_line = ""
+                for k in range(i - 1, -1, -1):
+                    if lines[k].strip():
+                        prev_line = lines[k].strip().upper()
+                        break
+                if prev_line in ("END;", "END") or prev_line.startswith("EXEC ") or prev_line.startswith("EXEC("):
+                    continue
                 lines[i] = "-- GO (omitted for variable scope across execution batch)"
     else:
-        # Fallback: comment out any GO between first BEGIN TRY and EOF
         try_seen = False
         for i, line in enumerate(lines):
             line_clean = line.strip().upper()
@@ -1051,8 +1103,6 @@ def _postprocess_tsql_code(code: str) -> str:
             code = code[:pos] + "DECLARE @run_id INT;\n\n" + code[pos:]
 
     # 2c. Redirect updates targeting source tables to their staging tables
-    # 2c. Redirect updates targeting source tables to their staging tables
-    # Exclude declared CTE names, temporary tables, clean target tables, and infrastructure tables
     declared_ctes = set(re.findall(r"\bWITH\s+([a-zA-Z0-9_]+)\s+AS\s*\(", code, re.IGNORECASE))
     declared_ctes.update(re.findall(r",\s*([a-zA-Z0-9_]+)\s+AS\s*\(", code, re.IGNORECASE))
     declared_ctes_lower = {c.lower() for c in declared_ctes}
@@ -1079,13 +1129,20 @@ def _postprocess_tsql_code(code: str) -> str:
     code = re.sub(r"#([a-zA-Z0-9_]+?)_Staging_Staging\b", r"#\1_Staging", code, flags=re.IGNORECASE)
     code = re.sub(r"#([a-zA-Z0-9_]+?)_staging_staging\b", r"#\1_Staging", code, flags=re.IGNORECASE)
 
-    # 2d. Fix pseudo-column [Row-level] / [row-level] in SET clauses
+    # 2d. Fix pseudo-column [Row-level] / [row-level] anywhere in the script
+    code = re.sub(
+        r"UPDATE\s+(#\w+_Staging)\s+SET\s+\[?Row-level_validation_status\]?[^;]+?WHERE\s+\[?Row-level\]?[^;]+;",
+        "",
+        code,
+        flags=re.IGNORECASE
+    )
     code = re.sub(
         r"\[?row-level\]?\s*=\s*(?:'[^']*'|[^,;\n]+)",
         r"[is_duplicate_row] = 1, [row_validation_status] = 'duplicate_candidate', [row_validation_reason] = 'Duplicate candidate row detected'",
         code,
         flags=re.IGNORECASE
     )
+    code = re.sub(r"\[?Row-level_validation_\w+\]?\s*=\s*'[^']*'[,;]?", "", code, flags=re.IGNORECASE)
 
     # 2e. Phone Validation Length Fix:
     # If phone validation checks NOT LIKE '%[^0-9]%' without length check, enforce LEN BETWEEN 7 AND 15
@@ -1098,6 +1155,49 @@ def _postprocess_tsql_code(code: str) -> str:
     code = re.sub(
         r"\[?Phone\]?\s+NOT\s+LIKE\s+'%\[\^0-9\]%'",
         _fix_phone_check,
+        code,
+        flags=re.IGNORECASE
+    )
+
+    # Strip Phone update ONLY if staging table was explicitly declared without Phone
+    st_matches = re.findall(r"SELECT\s+([\s\S]+?)\s+INTO\s+(#\w+_Staging)", code, re.IGNORECASE)
+    for st_cols, st_tbl in st_matches:
+        if not re.search(r"\[?Phone\]?", st_cols, re.IGNORECASE):
+            code = re.sub(
+                rf"(?:--[^\n]*\n\s*)?UPDATE\s+{re.escape(st_tbl)}\s+SET\s+\[?Phone[^;]+?WHERE\s+[^;]+?;",
+                "",
+                code,
+                flags=re.IGNORECASE
+            )
+
+    # 2f. Sanitize destructive numeric casts on textual columns (e.g. Country, Department, EmployeeName)
+    text_cols = {"country", "department", "name", "employeename", "businessunit", "location", "status", "workmode", "email"}
+    def _strip_invalid_numeric_cast(m):
+        full = m.group(0)
+        col = m.group(1).strip("[]").lower()
+        if col in text_cols:
+            return ""
+        return full
+
+    code = re.sub(
+        r"(?:--\s*COVERS:\s*ISSUE-[a-f0-9]+\s*\n\s*)?UPDATE\s+#\w+_Staging\s+SET\s+\[?(\w+)\]?_validation_status\s*=\s*'invalid_value'[^;]+?WHERE\s+TRY_CAST\(\[?\1\]?\s+AS\s+INT\)\s+IS\s+NULL\s*;",
+        _strip_invalid_numeric_cast,
+        code,
+        flags=re.IGNORECASE
+    )
+
+    # 2f. Sanitize destructive numeric casts on textual columns (e.g. Country, Department, EmployeeName)
+    text_cols = {"country", "department", "name", "employeename", "businessunit", "location", "status", "workmode", "email"}
+    def _strip_invalid_numeric_cast(m):
+        full = m.group(0)
+        col = m.group(1).strip("[]").lower()
+        if col in text_cols:
+            return ""  # strip destructive numeric check on textual column
+        return full
+
+    code = re.sub(
+        r"(?:--\s*COVERS:\s*ISSUE-[a-f0-9]+\s*\n\s*)?UPDATE\s+#\w+_Staging\s+SET\s+\[?(\w+)\]?_validation_status\s*=\s*'invalid_value'[^;]+?WHERE\s+TRY_CAST\(\[?\1\]?\s+AS\s+INT\)\s+IS\s+NULL\s*;",
+        _strip_invalid_numeric_cast,
         code,
         flags=re.IGNORECASE
     )
@@ -1940,15 +2040,18 @@ T-SQL REQUIREMENTS:
      - Target clean tables: `cleanedTables.<Table>_Clean` (or timestamped `cleanedTables.<Table>_Clean_<timestamp>`) in the `cleanedTables` schema. Ensure `IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'cleanedTables') EXEC('CREATE SCHEMA cleanedTables');` is executed before clean table DDL.
      - Tables: `IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TableName' AND schema_id = SCHEMA_ID('cleanedTables')) CREATE TABLE cleanedTables.TableName (...);`
      - Indexes: `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IndexName' AND object_id = OBJECT_ID('cleanedTables.TableName')) CREATE NONCLUSTERED INDEX IndexName ON cleanedTables.TableName (...);`
-     - Stored Procedures: `CREATE OR ALTER PROCEDURE dbo.ProcName AS BEGIN ... END; GO`.
+     - If writing a Stored Procedure: `CREATE OR ALTER PROCEDURE dbo.ProcName AS BEGIN ... END; GO`.
+       CRITICAL: The procedure MUST close with `END;` on its own line, followed by `GO`, and MUST immediately be followed by an auto-execution call:
+       `EXEC dbo.ProcName; GO`
+       so that executing the script in Azure SQL actually runs the pipeline and populates the clean tables (preventing empty 0-row tables).
+       Alternatively, write a direct single-batch transactional script without a stored procedure wrapper.
      - Each outer script DDL statement MUST be followed by a `GO` batch separator on its own line.
-  2. ABSOLUTE FORBIDDEN: NEVER output `GO` inside `BEGIN TRY ... END TRY`, inside `BEGIN CATCH ... END CATCH`, or anywhere in the execution section:
-     Once the execution section begins (`SET NOCOUNT ON; SET XACT_ABORT ON; DECLARE @run_id INT; BEGIN TRY...`), NEVER emit `GO` ANYWHERE in the remainder of the script!
+  2. ABSOLUTE FORBIDDEN: NEVER output `GO` inside `BEGIN TRY ... END TRY`, inside `BEGIN CATCH ... END CATCH`, or inside procedure execution bodies:
+     Once an execution block begins (`SET NOCOUNT ON; SET XACT_ABORT ON; DECLARE @run_id INT; BEGIN TRY...`), NEVER emit `GO` inside the TRY or CATCH blocks!
      In T-SQL, `GO` ends the batch and destroys local variables like `@run_id`, causing fatal compilation errors (`Must declare the scalar variable "@run_id"`).
-     The entire data pipeline must execute in a SINGLE contiguous batch from `SET NOCOUNT ON;` through `END CATCH`.
 - STRICTLY IMMUTABLE SOURCE TABLES (CRITICAL):
-  - Raw source tables (e.g. `dbo.Courses`, `dbo.Customers`, `dbo.Customers_Raw`) are READ-ONLY and IMMUTABLE.
-  - NEVER write `UPDATE dbo.Courses`, `UPDATE dbo.Customers`, or `UPDATE dbo.Customers_Raw`!
+  - Raw source tables (e.g. `dbo.Courses`, `dbo.Customers`, `dbo.Customers_Raw`, `dbo.EmployeeMaster`) are READ-ONLY and IMMUTABLE.
+  - NEVER write `UPDATE dbo.<Table>`!
   - Source tables do NOT contain `_clean`, `_validation_status`, or `_validation_reason` columns. Any UPDATE on a source table will immediately fail with `Msg 207 (Invalid column name)`.
   - ALL data cleaning, transformation, and validation updates MUST target the temporary staging table: `UPDATE #<Table>_Staging SET ...`.
 - Transaction Safety & Execution Logging:
@@ -1967,7 +2070,10 @@ T-SQL REQUIREMENTS:
     Update `dbo.etl_log` to `'FAILED'` with `end_time = GETDATE()`, and ALWAYS execute `THROW;` to propagate errors.
 - FORBIDDEN Syntax: NEVER output `CREATE TABLE IF NOT EXISTS`, `CREATE OR REPLACE`, `CREATE OR ALTER TABLE`, `ON CONFLICT`, `RETURNING`, `ILIKE`, `SERIAL`, or `AUTO_INCREMENT`. Never use `OR` inside filtered index `WHERE` clauses (T-SQL filtered indexes forbid `OR`). Never assign raw boolean expressions (e.g. `SET col = a > 0 OR b > 0`), use `CASE WHEN a > 0 OR b > 0 THEN 1 ELSE 0 END`. Use T-SQL equivalents at all times.
 - Raw -> Staging -> Transform -> Clean Architecture:
-  1. Staging Schema: NEVER use `SELECT * INTO #Staging WHERE 1=0` followed by `INSERT INTO #Staging SELECT *, companion_columns...` (fails with Msg 213).
+  1. Staging Schema: ALWAYS create the staging table using:
+     `IF OBJECT_ID('tempdb..#<Table>_Staging') IS NOT NULL DROP TABLE #<Table>_Staging;`
+     `SELECT ... INTO #<Table>_Staging FROM dbo.[<Table>];`
+     NEVER run `INSERT INTO #<Table>_Staging SELECT ...` without creating `#<Table>_Staging` first (fails with Msg 208).
   2. Staging Companion Columns Completeness (CRITICAL):
      When creating `#<Table>_Staging`, you MUST declare ALL companion columns for EVERY column in the dataset:
      `src.[<col>], src.[<col>] AS [<col>_raw], CAST(NULL AS NVARCHAR(MAX)) AS [<col>_clean], CAST(NULL AS VARCHAR(50)) AS [<col>_validation_status], CAST(NULL AS VARCHAR(500)) AS [<col>_validation_reason]`.
@@ -1975,9 +2081,9 @@ T-SQL REQUIREMENTS:
   3. Single Composite CASE Expression per Field: For each column with multiple rules (sentinels, nulls, formats, ranges), compile into ONE unified `CASE` statement following the canonical validation hierarchy:
      `source_null -> empty_value -> registered_placeholder -> punctuation_only -> unparseable_value -> format_violation -> domain_violation -> valid`.
   4. Validation Status Integrity: When a value is out of range, negative, unparseable, or sentinel, `<col>_validation_status` MUST be marked with the defect status code, and NEVER marked `'valid'`.
-  5. Target Clean Table DDL and Inserts: Include companion columns in clean table DDL ([col_raw], [col_clean], [col_validation_status], [col_validation_reason], [row_validation_status], [row_validation_reason], [is_duplicate_row]). ALWAYS specify explicit column lists in `INSERT INTO dbo.<Table>_Clean ([Col1], [Col2], ..., etl_batch_id, etl_created_at, etl_updated_at) SELECT COALESCE(s.[Col1_clean], s.[Col1]), ..., @run_id, GETDATE(), GETDATE() FROM #<Table>_Staging s;`.
+  5. Target Clean Table DDL and Inserts: Include companion columns in clean table DDL ([col_raw], [col_clean], [col_validation_status], [col_validation_reason], [row_validation_status], [row_validation_reason], [is_duplicate_row]). ALWAYS specify explicit column lists in `INSERT INTO cleanedTables.<Table>_Clean ([Col1], [Col2], ..., etl_batch_id, etl_created_at, etl_updated_at) SELECT COALESCE(s.[Col1_clean], s.[Col1]), ..., @run_id, GETDATE(), GETDATE() FROM #<Table>_Staging s;`.
   6. Bracket Quoting: Quote all identifiers safely: `[dbo].[Orders]`, `[column_name]`.
-- MANDATORY DATA QUALITY RULES (Must cover ALL findings from assessment report):
+- MANDATORY DATA QUALITY RULES (Must cover findings relevant to existing columns):
   1. Negative Values & Measures (P1):
      For any currency/price/fee/amount/budget/measure column:
      Prices and catalog values CANNOT be negative.
@@ -2002,18 +2108,19 @@ T-SQL REQUIREMENTS:
      Check against configured placeholder tokens:
      `LOWER(LTRIM(RTRIM([col]))) IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified')`
      Set `[col_clean] = NULL`, `[col_validation_status] = 'placeholder_normalized_to_null'`, reason `'Placeholder text token normalized to NULL'`.
-  4. Phone Normalization & Length Validation (P4 - CRITICAL LENGTH CHECK):
-     Strip punctuation (`'-'`, `' '`, `'('`, `')'`, `'+'`, `'.'`).
+  4. Phone Normalization & Length Validation (P4 - CRITICAL):
+     ONLY apply if the table schema actually contains a Phone column (e.g. `Phone`, `PhoneNumber`, `Mobile`). NEVER invent or reference `[Phone]` if not in the dataset!
+     When present: strip punctuation (`'-'`, `' '`, `'('`, `')'`, `'+'`, `'.'`).
      MUST test BOTH length and numeric characters:
      `LEN(clean_phone) BETWEEN 7 AND 15 AND clean_phone NOT LIKE '%[^0-9]%'`
-     NEVER check only `NOT LIKE '%[^0-9]%'` without length checking! Invalid strings like '123', '99999', '88888' MUST fail validation!
      If length NOT BETWEEN 7 AND 15 or contains non-numeric characters:
      Set `[Phone_clean] = NULL`, `[Phone_validation_status] = 'invalid_phone_format'`, reason `'Phone length must be between 7 and 15 digits'`, and insert into `dbo.etl_rejects`.
   5. Email Syntax Validation (P5 & P13):
      Check `[Email] NOT LIKE '%_@_%._%'` or contains spaces or matches placeholders:
      Set `[Email_clean] = NULL`, `[Email_validation_status] = 'invalid_email_format'`, reason `'Invalid email syntax or domain'`, and insert into `dbo.etl_rejects`.
-  6. Numeric Out of Range Limits:
-     For age/percentage/bounded columns: check boundaries (e.g. `TRY_CAST([Age] AS INT) < 0 OR TRY_CAST([Age] AS INT) > 120`).
+  6. Numeric Out of Range & Type Integrity:
+     NEVER check `TRY_CAST([col] AS INT) IS NULL` on genuine text columns (such as Country, Department, EmployeeName, Location, BusinessUnit, Status, WorkMode) where text values are expected!
+     For true numeric bounded columns (e.g. Age, Percentage): check boundaries (`TRY_CAST([Age] AS INT) < 0 OR TRY_CAST([Age] AS INT) > 120`).
      Set `[col_clean] = NULL`, `[col_validation_status] = 'invalid_out_of_range'` (or `'implausible_age'`), reason `'Age must be between 0 and 120'`.
   7. Row-Level Duplicate Candidates (NO PSEUDO-COLUMNS):
      NEVER write `SET [Row-level] = ...`. `[Row-level]` is a DQ metadata label, NOT a database column!
