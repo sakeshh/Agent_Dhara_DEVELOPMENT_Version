@@ -44,11 +44,32 @@ def get_connection(connection_string: str | None = None) -> pyodbc.Connection:
     conn_str = connection_string or os.getenv("DHARA_AZURE_SQL_CONN_STR")
     if not conn_str:
         server = os.getenv("AZURE_SQL_SERVER")
-        if server and not server.endswith(".database.windows.net") and "localhost" not in server and "127.0.0.1" not in server and ":" not in server:
-            server = server + ".database.windows.net"
         database = os.getenv("AZURE_SQL_DATABASE")
         user = os.getenv("AZURE_SQL_USERNAME") or os.getenv("AZURE_SQL_USER")
         password = os.getenv("AZURE_SQL_PASSWORD")
+
+        # Fallback to config/sources.yaml if server or database is not set in env
+        if not (server and database):
+            try:
+                import yaml
+                from agent.bootstrap import resolve_sources_path
+                sp = resolve_sources_path(os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml")
+                if os.path.exists(sp):
+                    with open(sp, "r", encoding="utf-8") as f:
+                        cfg = yaml.safe_load(f) or {}
+                    locs = (cfg.get("source") or {}).get("locations", [])
+                    db_loc = next((l for l in locs if isinstance(l, dict) and l.get("type") == "database"), None)
+                    if db_loc and isinstance(db_loc.get("connection"), dict):
+                        conn_info = db_loc["connection"]
+                        server = server or conn_info.get("server") or conn_info.get("Server")
+                        database = database or conn_info.get("database") or conn_info.get("Database")
+                        user = user or conn_info.get("username") or conn_info.get("user") or conn_info.get("Uid")
+                        password = password or conn_info.get("password") or conn_info.get("Pwd")
+            except Exception as ex:
+                logger.warning("Failed reading database config from sources.yaml fallback: %s", ex)
+
+        if server and not server.endswith(".database.windows.net") and "localhost" not in server and "127.0.0.1" not in server and ":" not in server:
+            server = server + ".database.windows.net"
 
         if server and database:
             driver = "ODBC Driver 17 for SQL Server"
@@ -83,7 +104,7 @@ def get_connection(connection_string: str | None = None) -> pyodbc.Connection:
         else:
             raise ConnectionError(
                 "Database connection string is missing. Please set DHARA_AZURE_SQL_CONN_STR or "
-                "configure AZURE_SQL_SERVER and AZURE_SQL_DATABASE in environment."
+                "configure AZURE_SQL_SERVER and AZURE_SQL_DATABASE in environment or config/sources.yaml."
             )
 
     timeout_str = os.getenv("DHARA_SQL_CONNECT_TIMEOUT_S", "30")
@@ -619,6 +640,11 @@ def check_requires_approval(sql: str, ops: list[str] | None = None) -> dict:
     for op in ops:
         pattern = rf"\b{re.escape(op.lower())}\b"
         if re.search(pattern, cleaned_lower):
+            # Exclude dropping temporary tables (e.g. DROP TABLE #..._Staging)
+            if op.upper() == "DROP":
+                no_temp_drops = re.sub(r"\bdrop\s+table\s+(?:if\s+exists\s+)?#\w+", "", cleaned_lower)
+                if not re.search(r"\bdrop\b", no_temp_drops):
+                    continue
             ops_found.append(op)
 
     return {"requires_approval": len(ops_found) > 0, "ops_found": ops_found}

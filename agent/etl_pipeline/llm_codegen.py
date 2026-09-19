@@ -1095,8 +1095,12 @@ def _postprocess_tsql_code(code: str) -> str:
 
     code = "\n".join(lines)
 
-    # 2b. Ensure @run_id declaration is not separated or missing
-    if "@run_id" in code and not re.search(r"\bDECLARE\s+@run_id\b", code, re.IGNORECASE):
+    # 2b. Ensure @run_id declaration is not separated or missing (and handle procedure parameter clash Msg 134)
+    has_sp_runid_param = bool(re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)[\s\S]+?@run_id\b", code, re.IGNORECASE))
+    if has_sp_runid_param:
+        code = re.sub(r"\bDECLARE\s+@run_id\s+INT\s*=\s*SCOPE_IDENTITY\(\)\s*;", "SET @run_id = SCOPE_IDENTITY();", code, flags=re.IGNORECASE)
+        code = re.sub(r"\bDECLARE\s+@run_id\s+INT\s*;", "-- @run_id declared as parameter", code, flags=re.IGNORECASE)
+    elif "@run_id" in code and not re.search(r"\bDECLARE\s+@run_id\b", code, re.IGNORECASE):
         m_try = re.search(r"\bBEGIN\s+TRY\b", code, re.IGNORECASE)
         if m_try:
             pos = m_try.start()

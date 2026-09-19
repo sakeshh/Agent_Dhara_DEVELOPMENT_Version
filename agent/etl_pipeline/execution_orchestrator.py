@@ -268,6 +268,13 @@ def ensure_idempotent_sql(sql: str) -> str:
                 flags=re.IGNORECASE
             )
 
+    # 9. Apply comprehensive postprocessing (uncreated staging tables, DDL hoisting, etc.)
+    try:
+        from agent.etl_pipeline.llm_codegen import _postprocess_tsql_code
+        sql = _postprocess_tsql_code(sql)
+    except Exception as e:
+        logger.warning(f"Failed to postprocess T-SQL code in ensure_idempotent_sql: {e}")
+
     return sql
 
 

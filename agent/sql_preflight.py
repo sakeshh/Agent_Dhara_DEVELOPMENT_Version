@@ -37,28 +37,35 @@ def lint_generated_sql(sql: str, dialect: str = "tsql") -> Dict[str, Any]:
         # sqlfluff.lint returns a list of violations (dicts)
         violations = sqlfluff.lint(sql, dialect=dialect)
         if not violations:
-            return {"ok": True, "errors": [], "message": "SQL linting passed."}
+            return {"ok": True, "errors": [], "warnings": [], "message": "SQL linting passed."}
 
         errors = []
+        warnings = []
         for v in violations:
-            # Normalize violation keys
-            errors.append({
+            entry = {
                 "line": v.get("line_no"),
                 "column": v.get("line_pos"),
                 "code": v.get("code"),
                 "description": v.get("description")
-            })
+            }
+            code_str = str(v.get("code") or "").upper()
+            if code_str.startswith("PRS"):
+                errors.append(entry)
+            else:
+                warnings.append(entry)
 
         return {
             "ok": len(errors) == 0,
             "errors": errors,
-            "message": f"SQL linting failed with {len(errors)} violations."
+            "warnings": warnings,
+            "message": f"SQL linting completed with {len(errors)} parse errors and {len(warnings)} style warnings."
         }
     except Exception as e:
         logger.warning("Error running sqlfluff lint: %s", e)
         return {
             "ok": True,
             "errors": [],
+            "warnings": [],
             "message": f"sqlfluff failed internally: {e}. SQL skipped."
         }
 
@@ -107,12 +114,14 @@ def run_sql_preflight(sql: str) -> Dict[str, Any]:
     # Run sqlfluff if available
     lint_res = lint_generated_sql(sql)
     if not lint_res.get("ok", True):
-        # Translate lint errors
+        # Translate fatal parse errors
         for err in lint_res.get("errors") or []:
-            desc = err.get("description") or "SQL lint violation"
+            desc = err.get("description") or "SQL parse error"
             line = err.get("line")
             col = err.get("column")
-            errors.append(f"Lint violation (line {line}, col {col}): {desc}")
+            errors.append(f"Parse error (line {line}, col {col}): {desc}")
+    for w in lint_res.get("warnings") or []:
+        warnings.append(f"Lint warning: {w.get('description')}")
 
     return {
         "passed": len(errors) == 0,
