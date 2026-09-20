@@ -3,10 +3,13 @@ Dimension-Based Quality Scoring and Readiness Gating Engine.
 Calculates weighted DQ scores across 8 core quality dimensions and applies gating overrides.
 """
 
+import logging
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, ConfigDict
 
 from agent.profiling.rule_status import RuleStatus, RuleEvaluationResult
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_DIMENSION_WEIGHTS: Dict[str, float] = {
@@ -127,17 +130,26 @@ def calculate_dimension_quality_scores(
 
         # Telemetry: warn when raw score was outside valid [0, 100] bounds
         if raw_score < 0.0 or raw_score > 100.0:
+            warning_units = sum(1 for r in results if str(getattr(r, "status", "")).upper() in ("WARNING", "WARN"))
+            skipped_units = sum(getattr(r, "evaluated_count", 0) for r in results if getattr(r, "status", None) in (RuleStatus.NOT_APPLICABLE, RuleStatus.NOT_EVALUATED, RuleStatus.INSUFFICIENT_EVIDENCE) or str(getattr(r, "status", "")).upper() in ("SKIPPED", "NOT_APPLICABLE", "NOT_EVALUATED"))
             warn = {
                 "dimension": dim,
                 "raw_score": round(raw_score, 2),
                 "clamped_score": dim_score,
                 "reason": "failed_units_exceeded_evaluated_units" if raw_score < 0.0 else "passed_units_exceeded_evaluated_units",
+                "evaluated_units": total_eval_units,
+                "failed_units": total_failed_units_raw,
+                "warning_units": warning_units,
+                "skipped_units": skipped_units,
+                "dimension_weight": weight,
+                "raw_numerator": max(0, total_eval_units - total_failed_units_raw),
+                "raw_denominator": total_eval_units,
                 "total_failed_units": total_failed_units_raw,
                 "total_eval_units": total_eval_units,
             }
             score_warnings.append(warn)
-            logger.warning("[DQ-Score-Warning] dim=%s raw_score=%.2f clamped=%.2f: %s",
-                           dim, raw_score, dim_score, warn["reason"])
+            logger.warning("[DQ-Score-Warning] dim=%s raw_score=%.2f clamped=%.2f: %s (eval=%d, failed=%d, weight=%.2f)",
+                           dim, raw_score, dim_score, warn["reason"], total_eval_units, total_failed_units_raw, weight)
 
         dim_breakdowns[dim] = DimensionScoreBreakdown(
             dimension=dim,

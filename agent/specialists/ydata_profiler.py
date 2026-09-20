@@ -40,7 +40,11 @@ def _is_ydata_available() -> bool:
         import ydata_profiling  # type: ignore  # noqa: F401
         return True
     except ImportError:
-        return False
+        try:
+            import data_profiling  # type: ignore  # noqa: F401
+            return True
+        except ImportError:
+            return False
 
 
 def profile_dataframe(df, minimal: bool = False) -> Optional[Dict[str, Any]]:
@@ -64,7 +68,10 @@ def profile_dataframe(df, minimal: bool = False) -> Optional[Dict[str, Any]]:
 
     try:
         import pandas as pd  # type: ignore
-        from ydata_profiling import ProfileReport  # type: ignore
+        try:
+            from ydata_profiling import ProfileReport  # type: ignore
+        except ImportError:
+            from data_profiling import ProfileReport  # type: ignore
 
         # Sample large DataFrames to avoid memory issues
         if len(df) > PROFILE_ROW_LIMIT:
@@ -216,7 +223,10 @@ def generate_profile_html(df, output_path: str, minimal: bool = False) -> bool:
         return False
 
     try:
-        from ydata_profiling import ProfileReport  # type: ignore
+        try:
+            from ydata_profiling import ProfileReport  # type: ignore
+        except ImportError:
+            from data_profiling import ProfileReport  # type: ignore
 
         if len(df) > PROFILE_ROW_LIMIT:
             df = df.sample(n=PROFILE_ROW_LIMIT, random_state=42)

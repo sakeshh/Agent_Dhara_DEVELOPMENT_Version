@@ -221,6 +221,15 @@ def _apply_three_pass_overrides(
     is_phone = (sem_type == "phone") or "phone" in col_l or "phone" in it
     is_email = (sem_type == "email") or "email" in col_l or "email" in it
 
+    is_approved = bool(
+        sug.get("approved")
+        or str(sug.get("approval_status", "")).lower() == "approved"
+        or str(sug.get("status", "")).lower() == "approved"
+        or sug.get("authority_source") == "HUMAN_APPROVED"
+        or sug.get("selected_action")
+        or sug.get("approved_remediation")
+    )
+
     if is_currency_or_price and (it in ("negative_values", "impossible_values") or action in ("flag_range_violation", "clip_or_flag", "clip_outliers", "review_manually", "noop")):
         action = "range_clip"
         params["lower_bound"] = 0.0
@@ -233,11 +242,19 @@ def _apply_three_pass_overrides(
         params["min_value"] = 0
         params["max_value"] = 120
         note = "Semantic refinement: range_clip (0-120) for age column"
-    elif is_date and (it in ("invalid_date_format", "dummy_dates", "future_dates", "date_range_violation", "impossible_date", "sentinel_date") or action in ("cast_type", "parse_dates_safe", "nullify_future_dates", "nullify_dummy_dates", "noop", "review_manually")):
+    elif is_date and (it in ("impossible_date", "sentinel_date")):
+        if is_approved:
+            action = action or ("nullify_date" if it == "impossible_date" else "map_to_null")
+            note = f"Approved remediation: {action} for {it}"
+        else:
+            action = "flag_only"
+            auto_fixable = False
+            note = f"Governance guard: {it} requires human review; automated mutation prohibited"
+    elif is_date and (it in ("invalid_date_format", "dummy_dates", "future_dates", "date_range_violation") or action in ("cast_type", "parse_dates_safe", "nullify_future_dates", "nullify_dummy_dates", "noop", "review_manually")):
         action = "parse_dates"
-        params["filter_impossible"] = True
+        params["filter_impossible"] = False
         params["sentinel_values"] = ["9999-12-31", "1900-01-01", "0001-01-01", "N/A", "NA", "???", "NULL"]
-        note = "Semantic refinement: parse_dates with sentinel/impossible date handling for date column"
+        note = "Semantic refinement: parse_dates for date column"
     elif is_email and action in ("trim", "lowercase", "noop", "review_manually", "flag_domain_violation"):
         action = "sanitize_email"
         params["regex"] = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
@@ -259,9 +276,12 @@ def _apply_three_pass_overrides(
         action = "standardize_boolean"
         note = "Semantic refinement: standardize_boolean for boolean_int sub_type"
     # Pass 4: Governance guards
-    if action == "lowercase" and (_is_name_field(col) or _is_business_key(col)) and it not in ("duplicate_insensitive_values", "inconsistent_case", "mixed_case"):
+    from agent.profiling.type_inference import normalize_column_name, _CATEGORICAL_MASTER_COLUMNS
+    col_norm = normalize_column_name(col)
+    is_master_data = col_norm.canonical in _CATEGORICAL_MASTER_COLUMNS or col_norm.compact in _CATEGORICAL_MASTER_COLUMNS
+    if action == "lowercase" and (_is_name_field(col) or _is_business_key(col) or is_master_data) and it not in ("duplicate_insensitive_values", "inconsistent_case", "mixed_case"):
         action = "trim_preserve_case"
-        note = f"Governance override: replaced lowercase with trim_preserve_case for name/key column {col}"
+        note = f"Governance override: replaced lowercase with trim_preserve_case for master data/name/key column {col}"
         
     if it == "declared_key_null_violation":
         action = "flag_missing_declared_key"

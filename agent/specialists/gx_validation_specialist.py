@@ -6,6 +6,14 @@ import re
 import numpy as np
 from datetime import date, datetime, timedelta
 
+from agent.profiling.type_inference import (
+    normalize_column_name,
+    _is_actual_numeric_column,
+    is_actual_numeric_column,
+    _TECHNICAL_SURROGATE_NAMES,
+    _SURROGATE_SEMANTIC_ROLES,
+)
+
 logger = logging.getLogger(__name__)
 
 class _GxDefaultValueFilter(logging.Filter):
@@ -69,19 +77,48 @@ def _is_text_dtype(dtype) -> bool:
     ds = str(dtype).lower()
     return "object" in ds or "string" in ds or "str" in ds or "category" in ds
 
-def _is_actual_numeric_column(col_name: str, approved_semantic_tag: Optional[str] = None) -> bool:
-    if approved_semantic_tag is not None:
-        tag_lower = approved_semantic_tag.lower()
-        if tag_lower == "metric":
-            return True
-        if tag_lower in ("id", "categorical", "date", "text"):
-            return False
-    c_lower = str(col_name).lower()
-    if any(x in c_lower for x in ("phone", "email", "ssn", "zip", "postal", "date", "time", "dob", "stamp")) or c_lower.endswith("_at"):
-        return False
-    if c_lower.endswith("id") or c_lower.endswith("key") or c_lower.endswith("code"):
-        return False
-    return True
+_PII_SEMANTIC_ROLES = {
+    "EMAIL", "PHONE", "PERSON_NAME", "DATE_OF_BIRTH", "MONETARY_AMOUNT",
+    "GOVERNMENT_IDENTIFIER", "ADDRESS", "AUDIT_ACTOR", "PII", "SALARY", "NAME"
+}
+
+_PII_COLUMN_NAMES = {
+    "email", "emailaddress", "phone", "phonenumber", "mobile", "salary",
+    "dateofbirth", "dob", "birthdate", "employeename", "name", "address",
+    "compensation", "nationalid", "ssn", "changedby", "first_name", "last_name"
+}
+
+def redact_sample_value(val: Any, col_name: str, semantic_role: Optional[str] = None) -> Any:
+    if val is None or pd.isna(val):
+        return val
+    norm = normalize_column_name(col_name)
+    role_upper = str(semantic_role or "").upper()
+    if role_upper in _PII_SEMANTIC_ROLES or any(r in role_upper for r in ("EMAIL", "PHONE", "NAME", "SALARY", "PII", "DOB")):
+        return f"[REDACTED_{role_upper if role_upper else 'PII'}]"
+    if norm.compact in _PII_COLUMN_NAMES or norm.canonical in _PII_COLUMN_NAMES:
+        return f"[REDACTED_{norm.compact.upper()}]"
+    if any(tok in ("email", "phone", "mobile", "ssn", "salary", "compensation", "dob") for tok in norm.tokens):
+        return f"[REDACTED_{norm.canonical.upper()}]"
+    return val
+
+def sanitize_unexpected_samples(vals: Any, col_name: str, semantic_role: Optional[str] = None, max_samples: int = 25) -> List[Any]:
+    if not vals:
+        return []
+    if isinstance(vals, (set, tuple)):
+        vals = list(vals)
+    elif not isinstance(vals, list):
+        vals = [vals]
+    sanitized = []
+    for v in vals[:max_samples]:
+        if isinstance(v, dict):
+            clean_rec = {}
+            for k, val_in_rec in v.items():
+                clean_rec[k] = redact_sample_value(val_in_rec, k)
+            sanitized.append(clean_rec)
+        else:
+            sanitized.append(redact_sample_value(v, col_name, semantic_role))
+    return sanitized
+
 
 def _classify_bad_date(val_str: Any) -> str:
     """Classifies an unparseable date value into impossible_date, sentinel_date, placeholder_date, or invalid_date_format."""
@@ -462,13 +499,13 @@ def run_gx_validation(
                         validator.expect_column_values_to_not_be_in_set(
                             column=col_name, value_set=[0, 0.0, "0", "0.0"])
 
-                # 5. Run GX Validation (using COMPLETE format for index tracking)
+                # 5. Run GX Validation without deprecated result_format parameter
                 import warnings
                 validation_result = None
                 with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", message=".*result_format.*", category=UserWarning)
+                    warnings.filterwarnings("ignore", category=UserWarning)
                     try:
-                        validation_result = validator.validate(result_format="COMPLETE")
+                        validation_result = validator.validate()
                     except Exception as e_val:
                         logger.warning(f"GX validator.validate() failed on {name}: {e_val}. Proceeding with custom checks.")
                         validation_result = {"results": []}
@@ -565,8 +602,8 @@ def run_gx_validation(
                         "details": details,
                         "unexpected_count": unexp_cnt,
                         "element_count": len(validation_df),
-                        "unexpected_index_list": unexp_indices,
-                        "unexpected_values": unexp_vals
+                        "unexpected_index_list": unexp_indices[:25] if isinstance(unexp_indices, list) else [],
+                        "unexpected_values": sanitize_unexpected_samples(unexp_vals, col, cols_meta.get(col, {}).get("semantic_role"), max_samples=25)
                     })
 
                 # --- Evaluate Custom/Conditional/Formula rules and append to results ---
@@ -714,11 +751,7 @@ def run_gx_validation(
                         })
 
                 # 0.25 Candidate Numeric Validation: Non-Negative & Coerced Parse Failure Check
-                _NUMERIC_NAME_PATTERNS = (
-                    "amount", "price", "budget", "cost", "total", "qty", "quantity", 
-                    "count", "num_", "production_qty", "extent", "fee", "rate", 
-                    "score", "balance", "discount", "margin", "salary", "wage"
-                )
+                from agent.profiling.type_inference import classify_numeric_column
                 for col in validation_df.columns:
                     col_meta = cols_meta.get(col) or {}
                     col_lower = str(col).lower()
@@ -726,8 +759,17 @@ def run_gx_validation(
                     col_series = validation_df[col]
                     dtype = str(col_series.dtype).lower()
 
-                    # Semantic guard: phone numbers, postal codes, and contact identifiers are not numeric measures
-                    if semantic_type in ("phone", "email", "date", "datetime", "timestamp", "name", "address", "url", "ip_address", "postal_code", "zip") or any(p in col_lower for p in ("phone", "mobile", "tel", "fax", "email", "zip", "postal")):
+                    raw_non_empty = col_series.dropna()
+                    if raw_non_empty.empty:
+                        continue
+
+                    num_cls = classify_numeric_column(
+                        col_name=col,
+                        source_declared_type=dtype,
+                        approved_semantic_role=semantic_type,
+                        sample_values=raw_non_empty,
+                    )
+                    if not num_cls.eligible_for_numeric_quality_checks:
                         continue
 
                     is_id_like = (
@@ -735,12 +777,7 @@ def run_gx_validation(
                         col_lower.endswith("key") or col_lower.endswith("code") or
                         semantic_type in ("identifier", "primary_key", "foreign_key", "id", "numeric_id")
                     )
-                    is_numeric_named = any(p in col_lower for p in _NUMERIC_NAME_PATTERNS) or semantic_type in ("numeric", "metric", "currency", "amount")
-                    is_numeric_dtype = any(t in dtype for t in ("int", "float", "double", "decimal"))
 
-                    raw_non_empty = col_series.dropna()
-                    if raw_non_empty.empty:
-                        continue
                     clean_str = raw_non_empty.astype(str).str.strip()
                     non_placeholder_mask = clean_str.ne("") & ~clean_str.str.lower().isin(local_placeholders)
                     if not non_placeholder_mask.any():
@@ -749,13 +786,6 @@ def run_gx_validation(
                     eval_clean = clean_str[non_placeholder_mask]
                     coerced = pd.to_numeric(eval_clean, errors="coerce")
                     valid_coerced = coerced.dropna()
-
-                    if not is_numeric_dtype and not is_numeric_named:
-                        if len(eval_clean) >= 5 and (len(valid_coerced) / len(eval_clean)) >= 0.70 and not is_id_like:
-                            is_numeric_named = True
-
-                    if not is_numeric_dtype and not is_numeric_named:
-                        continue
 
                     # 1. Numeric parse failures (non-empty source failing numeric conversion)
                     parse_fail_mask = coerced.isna()
@@ -767,8 +797,10 @@ def run_gx_validation(
                             "success": False,
                             "details": f"{parse_fail_cnt} non-numeric value(s) in numeric candidate column '{col}'",
                             "unexpected_count": parse_fail_cnt,
-                            "unexpected_index_list": eval_clean.index[parse_fail_mask].tolist(),
-                            "unexpected_values": col_series.loc[eval_clean.index[parse_fail_mask]].head(5).tolist()
+                            "unexpected_index_list": eval_clean.index[parse_fail_mask].tolist()[:25],
+                            "unexpected_values": sanitize_unexpected_samples(
+                                col, col_series.loc[eval_clean.index[parse_fail_mask]].head(25).tolist(), semantic_type
+                            )
                         })
 
                     # 2. Non-negative validation on coerced numeric series (excluding ID columns)
@@ -1203,33 +1235,106 @@ def run_gx_validation(
                                 pass
 
                 # 7. Self-referencing hierarchical FK hierarchy check
+                # Candidate resolution order:
+                # 1. Explicit relationship declaration / metadata
+                # 2. Declared target business key
+                # 3. High-confidence inference (excluding technical surrogates)
+                # 4. Ambiguous manual review (never guess authoritatively among multiple targets)
                 id_cols = [c for c in validation_df.columns if c.lower().endswith("id")]
                 if len(id_cols) >= 2:
-                    for col_pk in id_cols:
-                        if validation_df[col_pk].dropna().is_unique and validation_df[col_pk].notna().any():
-                            pk_lower = col_pk.lower()
-                            pk_base = pk_lower[:-2].strip("_")
-                            for col_fk in id_cols:
-                                if col_fk == col_pk:
-                                    continue
-                                fk_lower = col_fk.lower()
-                                is_hierarchical = any(w in fk_lower for w in ["parent", "manager", "prev", "next", "reports", "sub", "master", "hierarchy", "ancestor", "descendant"])
-                                if pk_base and pk_base not in fk_lower and not is_hierarchical:
-                                    continue
-                                fk_vals = validation_df[col_fk].dropna()
-                                if len(fk_vals) > 0:
-                                    pk_vals = set(validation_df[col_pk].dropna())
-                                    orphans = [v for v in fk_vals if v not in pk_vals]
-                                    if len(orphans) > 0:
-                                        results_processed.append({
-                                            "expectation": "intra_dataset_orphan_fk",
-                                            "column": col_fk,
-                                            "success": False,
-                                            "details": f"{len(orphans)} self-referencing orphan value(s) in '{col_fk}' (referring to '{col_pk}')",
-                                            "unexpected_count": len(orphans),
-                                            "unexpected_index_list": validation_df.index[validation_df[col_fk].isin(orphans)].tolist(),
-                                            "unexpected_values": list(set(orphans))[:5]
-                                        })
+                    declared_self_rels = []
+                    for rel in ((thresholds.get("relationships") or {}).get("declared") or []):
+                        if not isinstance(rel, dict):
+                            continue
+                        p_meta = rel.get("parent") or {}
+                        c_meta = rel.get("child") or {}
+                        p_ds = p_meta.get("dataset")
+                        c_ds = c_meta.get("dataset")
+                        if (p_ds == name or not p_ds) and (c_ds == name or not c_ds):
+                            p_cols = p_meta.get("columns") or []
+                            c_cols = c_meta.get("columns") or []
+                            if p_cols and c_cols:
+                                declared_self_rels.append({
+                                    "child_col": c_cols[0],
+                                    "parent_col": p_cols[0],
+                                    "null_policy": rel.get("null_policy", "ALLOW_FOR_TOP_LEVEL")
+                                })
+
+                    declared_fk_map = {r["child_col"]: r for r in declared_self_rels}
+
+                    # Filter candidate PKs excluding technical surrogates (by role and name)
+                    candidate_pks = []
+                    for c in id_cols:
+                        c_meta = cols_meta.get(c) or {}
+                        c_role = str(c_meta.get("semantic_role") or "").upper()
+                        c_norm = normalize_column_name(c)
+                        if c_role in _SURROGATE_SEMANTIC_ROLES:
+                            continue
+                        if c_norm.compact in _TECHNICAL_SURROGATE_NAMES or c_norm.canonical in _TECHNICAL_SURROGATE_NAMES:
+                            continue
+                        if validation_df[c].dropna().is_unique and validation_df[c].notna().any():
+                            candidate_pks.append(c)
+
+                    for col_fk in id_cols:
+                        fk_norm = normalize_column_name(col_fk)
+                        is_hierarchical = any(w in fk_norm.tokens or w in fk_norm.canonical for w in ["parent", "manager", "prev", "next", "reports", "sub", "master", "hierarchy", "ancestor", "descendant"])
+                        if not is_hierarchical and col_fk not in declared_fk_map:
+                            continue
+
+                        col_pk = None
+                        null_policy = "ALLOW_FOR_TOP_LEVEL"
+                        if col_fk in declared_fk_map:
+                            col_pk = declared_fk_map[col_fk]["parent_col"]
+                            null_policy = declared_fk_map[col_fk]["null_policy"]
+                        elif len(candidate_pks) == 1:
+                            if candidate_pks[0] != col_fk:
+                                col_pk = candidate_pks[0]
+                        elif len(candidate_pks) > 1:
+                            exact_matches = [p for p in candidate_pks if p != col_fk and (p.lower().endswith("employeeid") or p.lower() == "employee_id")]
+                            if len(exact_matches) == 1:
+                                col_pk = exact_matches[0]
+                            else:
+                                results_processed.append({
+                                    "expectation": "intra_dataset_orphan_fk",
+                                    "column": col_fk,
+                                    "success": True,
+                                    "details": f"Relationship for '{col_fk}' is AMBIGUOUS with candidate parent keys {candidate_pks}; requires manual review.",
+                                    "unexpected_count": 0,
+                                    "unexpected_index_list": [],
+                                    "unexpected_values": [],
+                                    "relationship_status": "AMBIGUOUS",
+                                    "planning_disposition": "MANUAL_REVIEW_REQUIRED"
+                                })
+                                continue
+
+                        if not col_pk or col_pk not in validation_df.columns:
+                            continue
+
+                        fk_series = validation_df[col_fk]
+                        pk_vals = set(validation_df[col_pk].dropna())
+
+                        non_null_fk = fk_series.dropna()
+                        orphans = []
+                        orphan_indices = []
+                        for idx, v in non_null_fk.items():
+                            row_pk = validation_df.loc[idx, col_pk] if col_pk in validation_df.columns else None
+                            if str(v) == str(row_pk):
+                                continue
+                            if v not in pk_vals and str(v) not in {str(x) for x in pk_vals}:
+                                orphans.append(v)
+                                orphan_indices.append(idx)
+
+                        if len(orphans) > 0:
+                            sanitized_orphans = sanitize_unexpected_samples(list(set(orphans)), col_fk, cols_meta.get(col_fk, {}).get("semantic_role"), max_samples=25)
+                            results_processed.append({
+                                "expectation": "intra_dataset_orphan_fk",
+                                "column": col_fk,
+                                "success": False,
+                                "details": f"{len(orphans)} self-referencing orphan value(s) in '{col_fk}' (referring to '{col_pk}')",
+                                "unexpected_count": len(orphans),
+                                "unexpected_index_list": orphan_indices[:25],
+                                "unexpected_values": sanitized_orphans
+                            })
 
                 # 8. Functional Dependencies
                 _DEFAULT_FUNCTIONAL_DEPENDENCIES = [

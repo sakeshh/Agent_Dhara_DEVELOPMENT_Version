@@ -425,14 +425,14 @@ _CATALOG: Dict[str, List[ResolutionOption]] = {
         _opt("keep_as_is", "Keep as-is", "noop", description="Retain float data type."),
     ],
     "impossible_date": [
-        _opt("nullify_date", "Nullify impossible dates", "nullify_date", recommended=True, description="Replace calendar impossible dates with NULL and record validation reason."),
-        _opt("quarantine_row", "Quarantine rows with impossible dates", "quarantine_row", description="Route rows with impossible dates to quarantine table."),
-        _opt("flag_only", "Flag impossible dates for review", "flag_only", description="Add validation flag without nullifying."),
+        _opt("flag_only", "Preserve and flag impossible dates for review", "flag_only", recommended=True, description="Add validation flag without mutating date values. Safe non-destructive default."),
+        _opt("nullify_date", "Nullify impossible dates (requires approval)", "nullify_date", recommended=False, description="Replace calendar impossible dates with NULL after human review and approval."),
+        _opt("quarantine_row", "Quarantine rows with impossible dates", "quarantine_row", recommended=False, description="Route rows with impossible dates to quarantine table."),
         _opt("keep_as_is", "Keep as-is", "noop", description="Do not modify date values."),
     ],
     "sentinel_date": [
-        _opt("map_to_null", "Map sentinel dates to NULL", "map_to_null", recommended=True, description="Map sentinel/placeholder dates (e.g. 9999-12-31, 1900-01-01) to NULL."),
-        _opt("flag_only", "Flag sentinel dates", "flag_only", description="Flag sentinel dates without modifying values."),
+        _opt("flag_only", "Preserve and flag sentinel dates", "flag_only", recommended=True, description="Flag sentinel dates without mutating date values. Safe non-destructive default."),
+        _opt("map_to_null", "Map sentinel dates to NULL (requires approval)", "map_to_null", recommended=False, description="Map sentinel/placeholder dates (e.g. 9999-12-31, 1900-01-01) to NULL after human review and approval."),
         _opt("keep_as_is", "Keep as-is", "noop", description="Retain sentinel dates."),
     ],
     "metadata_manifest_mismatch": [

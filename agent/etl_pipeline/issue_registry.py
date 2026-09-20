@@ -173,12 +173,18 @@ ISSUE_REGISTRY: Dict[str, Dict[str, str]] = {
     "impossible_date": {
         "canonical_type": "impossible_date",
         "policy_group": "POLICY_DATE_PARSING",
-        "phase1_action": "nullify_date",
+        "default_disposition": "MANUAL_REVIEW_REQUIRED",
+        "approval_required": True,
+        "execution_eligible": False,
+        "phase1_action": None,
     },
     "sentinel_date": {
         "canonical_type": "sentinel_date",
         "policy_group": "POLICY_DATE_PARSING",
-        "phase1_action": "map_to_null",
+        "default_disposition": "MANUAL_REVIEW_REQUIRED",
+        "approval_required": True,
+        "execution_eligible": False,
+        "phase1_action": None,
     },
     "metadata_manifest_mismatch": {
         "canonical_type": "metadata_manifest_mismatch",

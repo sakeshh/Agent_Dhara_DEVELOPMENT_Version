@@ -9,7 +9,7 @@ logger = logging.getLogger("agent.profiling.dq_checks")
 
 from agent.profiling.constants import *
 from agent.profiling.contracts import FIXABILITY_BY_ISSUE_TYPE, DQ_ISSUE_RECOMMENDATIONS, _DEFAULT_REC
-from agent.profiling.type_inference import detect_semantic_type, _is_actual_numeric_column
+from agent.profiling.type_inference import detect_semantic_type, _is_actual_numeric_column, is_temporal_end_column
 from agent.profiling.format_validators import _detect_phone_formats, _detect_date_formats
 from agent.profiling.statistical_profiling import safe_nunique
 
@@ -23,6 +23,23 @@ try:
 except ImportError as _e:
     _ENGINE3_AVAILABLE = False
     logger.warning("Engine3 pipeline not available: %s", _e)
+
+def build_engine3_failure_result(reason_code: str = "ENGINE3_RUNTIME_FAILURE") -> Dict[str, Any]:
+    return {
+        "dq_score_v3": None,
+        "gating_adjusted_score": None,
+        "readiness": "UNKNOWN",
+        "dimension_breakdown_v3": {},
+        "gating_failures": [],
+        "fallback_used": True,
+        "fallback_reason_code": reason_code,
+        "score_methodology": "legacy_flat_penalty",
+        "planning_eligible": False,
+        "assessment_execution_status": "DEGRADED",
+        "primary_scoring_engine": "dimension_scorer_v3",
+        "primary_scoring_succeeded": False,
+        "fallback_engine": "legacy_flat_penalty",
+    }
 
 def match_column_key(col_key: str, dataset_name: str, column_name: str) -> bool:
     col_key_parts = [p.strip().lower() for p in col_key.split(".")]
@@ -499,6 +516,26 @@ def analyze_dataset_quality(
                 issue_type = "nulls"
                 gating = True
                 msg = f"{unexp_cnt} null value(s) in database-defined NOT NULL column '{col}'"
+            elif is_temporal_end_column(col) or profile.get("columns", {}).get(col, {}).get("semantic_type") == "temporal_end":
+                # Context-aware temporal null policy
+                # IsCurrent = 1 / IsActive = 1 -> NULL is expected (open-ended interval)
+                # IsCurrent = 0 / IsActive = 0 -> NULL is violation only if explicit rule requires closure
+                is_curr_col = next((c for c in df.columns if c.lower() in ("iscurrent", "is_current", "isactive", "is_active")), None)
+                if is_curr_col is not None:
+                    closed_mask = df[is_curr_col].isin([0, False, "0", "false", "N", "NO"])
+                    closed_nulls = df[closed_mask & df[col].isna()]
+                    if len(closed_nulls) > 0 and len(closed_nulls) / max(1, closed_mask.sum()) > 0.10:
+                        severity = "medium"
+                        issue_type = "missing_closed_temporal_end"
+                        msg = f"{len(closed_nulls)} closed/inactive record(s) missing '{col}' date."
+                    else:
+                        severity = "low"
+                        issue_type = "nulls"
+                        msg = f"{unexp_cnt} null value(s) in temporal-end column '{col}' (open-ended records permitted)."
+                else:
+                    severity = "low"
+                    issue_type = "nulls"
+                    msg = f"{unexp_cnt} null value(s) in temporal-end column '{col}' (informational open-ended intervals)."
             elif profile.get("columns", {}).get(col, {}).get("semantic_type") in {"identifier", "primary_key", "foreign_key"}:
                 if null_pct >= 0.50:
                     severity = "high"
@@ -1349,6 +1386,7 @@ def analyze_dataset_quality(
         })
         validate_issue(orig)
 
+
     # ── Engine 3.0 Post-Processing Pipeline ──────────────────────────────────
     # This is the integration point that makes Engine 3.0 run in production.
     # Handles: PII separation, finding deduplication, dimension scoring, manifest.
@@ -1373,9 +1411,9 @@ def analyze_dataset_quality(
                 dq_score = engine3_result["dq_score_v3"]
             logger.info("[DQ3] Engine3 pipeline complete: score=%.1f readiness=%s",
                         dq_score or 0.0, engine3_result.get("readiness"))
-        except Exception as _e3:
-            logger.error("[DQ3] Engine3 pipeline failed, falling back to legacy: %s", _e3)
-            engine3_result = {}
+        except Exception:
+            logger.exception("[DQ3] Engine3 pipeline failed; legacy fallback invoked")
+            engine3_result = build_engine3_failure_result("ENGINE3_RUNTIME_FAILURE")
 
     # Build final return dict — keep backward-compatible shape, add v3 enrichments
     base_result = {
@@ -1400,6 +1438,13 @@ def analyze_dataset_quality(
             "gating_blockers":       engine3_result.get("gating_blockers", []),
             "assessment_confidence": engine3_result.get("assessment_confidence", 100.0),
             "rule_coverage":         engine3_result.get("rule_coverage", {}),
+            "fallback_used":         engine3_result.get("fallback_used", False),
+            "fallback_reason_code":   engine3_result.get("fallback_reason_code"),
+            "planning_eligible":     engine3_result.get("planning_eligible", True if not engine3_result.get("fallback_used") else False),
+            "assessment_execution_status": engine3_result.get("assessment_execution_status", "NORMAL"),
+            "primary_scoring_engine": engine3_result.get("primary_scoring_engine", "dimension_scorer_v3"),
+            "primary_scoring_succeeded": engine3_result.get("primary_scoring_succeeded", True if not engine3_result.get("fallback_used") else False),
+            "fallback_engine":       engine3_result.get("fallback_engine"),
         },
         # ── Engine 3.0 separate output buckets ───────────────────────────────
         "privacy_findings":          engine3_result.get("privacy_findings", _pii_raw_findings),

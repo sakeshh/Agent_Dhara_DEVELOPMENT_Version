@@ -172,6 +172,9 @@ def validate_etl_plan(
         
         plan["validation_certificate"] = {
             "status": "PASSED",
+            "structural_status": "VALID",
+            "readiness": "BLOCKED_PENDING_MANUAL_REVIEW" if manual_pending else "READY_FOR_EXECUTION",
+            "codegen_eligible": (len(manual_pending) == 0),
             "validated_plan_hash": plan_hash,
             "validator_version": "1.0.0",
             "action_registry_version": "1.0.0",
@@ -222,6 +225,68 @@ def validate_issue_registration(raw_issue_type: str) -> Dict[str, Any]:
         "generator_required": generator_required,
         "requires_manual_review": requires_manual_review,
     }
+
+
+def normalize_manual_review_registration(manual_review_item: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalizes a manual review record before structural validation.
+    Preserves original issue type and routes unregistered issues to universal manual review
+    without failing structural plan validation.
+    """
+    item = dict(manual_review_item)
+    issue_type = (
+        item.get("issue_type")
+        or item.get("detector_issue_type")
+        or item.get("rule_type")
+        or item.get("finding_name")
+        or item.get("type")
+        or "unspecified_issue"
+    )
+    issue_type_str = str(issue_type).strip() if issue_type else "unspecified_issue"
+    if not issue_type_str or issue_type_str.lower() == "unknown":
+        for alt_key in ("detector_issue_type", "rule_type", "finding_name", "type"):
+            alt_val = item.get(alt_key)
+            if alt_val and str(alt_val).lower() not in ("unknown", "none", ""):
+                issue_type_str = str(alt_val).strip()
+                break
+        else:
+            issue_type_str = "unspecified_issue"
+
+    registration = validate_issue_registration(issue_type_str)
+
+    item["issue_type"] = issue_type_str
+    item["original_issue_type"] = issue_type_str
+
+    if registration["registration_status"] == "unknown":
+        item["planning_disposition"] = "MANUAL_REVIEW_REQUIRED"
+        item["reason_code"] = "NO_APPROVED_REMEDIATION_MAPPING"
+        item["execution_eligible"] = False
+        item["readiness"] = "REQUIRES_HUMAN_APPROVAL"
+        item["status"] = item.get("status") or "pending"
+        item["catalogue_registration_status"] = "UNREGISTERED"
+    else:
+        item["catalogue_registration_status"] = "REGISTERED"
+        item.setdefault("planning_disposition", "MANUAL_REVIEW_REQUIRED")
+        item.setdefault("execution_eligible", False)
+        item.setdefault("readiness", "REQUIRES_HUMAN_APPROVAL")
+        item.setdefault("status", item.get("status") or "pending")
+
+    return item
+
+
+def normalize_manual_review_items(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Returns a new normalized plan without mutating the input plan."""
+    import copy
+    new_plan = copy.deepcopy(plan)
+    mr_list = new_plan.get("manual_review") or []
+    normalized_mr = []
+    for m in mr_list:
+        if isinstance(m, dict):
+            normalized_mr.append(normalize_manual_review_registration(m))
+        else:
+            normalized_mr.append(m)
+    new_plan["manual_review"] = normalized_mr
+    return new_plan
 
 
 def validate_phase1_plan(
@@ -287,7 +352,12 @@ def validate_phase1_plan(
         it = mr.get("issue_type")
         reg = validate_issue_registration(str(it or ""))
         if reg["registration_status"] == "unknown":
-            errs.append(f"Validation error: Manual review item has unknown/unmapped issue_type: '{it}'")
+            # Unregistered issue types are structurally VALID when routed to manual review.
+            # Structural failure ONLY occurs if an unregistered issue is marked execution-eligible.
+            if mr.get("execution_eligible", False):
+                errs.append(f"Structural error: Unregistered issue '{it}' is marked execution_eligible=True.")
+            if mr.get("planning_disposition") and mr.get("planning_disposition") != "MANUAL_REVIEW_REQUIRED":
+                errs.append(f"Structural error: Unregistered issue '{it}' has disposition '{mr.get('planning_disposition')}'; must be MANUAL_REVIEW_REQUIRED.")
 
     return errs
 
