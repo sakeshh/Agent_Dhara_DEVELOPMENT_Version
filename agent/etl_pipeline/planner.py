@@ -735,6 +735,8 @@ class PlanBuilder:
                         continue
                     ds = rec.get("dataset")
                     col = rec.get("column")
+                    if not col or str(col).strip().lower() in ("unknown", "none", "null", "all", "table", "dataset", "-", "[table-level]", "[row-level]"):
+                        col = "*"
                     it = rec.get("issue_type") or rec.get("type")
 
                     mapped_action = map_llm_recommendation_to_action(rec)

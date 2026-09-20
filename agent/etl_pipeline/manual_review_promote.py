@@ -267,6 +267,8 @@ def apply_manual_resolutions(
 
         ds = str(item.get("dataset") or "").strip()
         col = item.get("column")
+        if not col or str(col).strip().lower() in ("unknown", "none", "null", "all", "table", "dataset", "-", "[table-level]", "[row-level]"):
+            col = "*"
 
         # P0: Route configuration actions separately from dataset column transformations
         if action in ("update_manifest", "ignore_mismatch", "acknowledge_mismatch", "reconcile_schema") or "manifest" in issue_type:

@@ -420,6 +420,8 @@ def compile_issues_to_steps(
     for sug in suggestions:
         ds = sug.get("dataset") or "global"
         col = sug.get("column") or "*"
+        if str(col).strip().lower() in ("unknown", "none", "null", "all", "table", "dataset", "-", "[table-level]", "[row-level]"):
+            col = "*"
         it = sug.get("issue_type") or "unknown"
         
         action, auto_fixable, note, params = _apply_three_pass_overrides(

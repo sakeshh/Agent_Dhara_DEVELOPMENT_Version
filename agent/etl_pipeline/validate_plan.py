@@ -75,7 +75,11 @@ def validate_etl_plan(
                 params.setdefault("reason_column", f"{col}_validation_reason")
             if action == "drop_rows" and never_drop:
                 errs.append(f"never_drop_rows: drop_rows on {ds_name}.{col} is not allowed")
-            if col and str(col) not in cols and str(col) not in ("*", "[Row-level]"):
+            table_level_exemptions = {"*", "[row-level]", "[table-level]", "[dataset-level]", "dataset", "table", "unknown", "none", "null", "all"}
+            if col and str(col).strip().lower() in table_level_exemptions:
+                st["column"] = "*"
+                col = "*"
+            elif col and str(col) not in cols:
                 cols_lower = {str(c).lower() for c in cols}
                 sub_cols = [c.strip() for c in str(col).split(",") if c.strip()]
                 if not (sub_cols and all(str(sc).lower() in cols_lower for sc in sub_cols)):

@@ -157,3 +157,23 @@ def test_to_tagged_rules_case_mapping_and_filtering():
     assert dept_rule.issue_type == "invalid_lookup_value"
 
 
+def test_validate_table_level_placeholder_column_normalized():
+    plan = {
+        "datasets": {
+            "customers": {
+                "steps": [
+                    {"order": 1, "column": "unknown", "action": "deduplicate"},
+                    {"order": 2, "column": "DATASET", "action": "noop"},
+                ]
+            }
+        },
+        "blocked": [],
+    }
+    ok, errs = validate_etl_plan(plan, _assess(), {})
+    assert ok, f"Expected plan with placeholder column to normalize and validate cleanly, got: {errs}"
+    steps = plan["datasets"]["customers"]["steps"]
+    assert steps[0]["column"] == "*"
+    assert steps[1]["column"] == "*"
+
+
+
