@@ -17,8 +17,11 @@ The workflow is designed to be callable from:
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any, Dict, List, Optional, Sequence, TypedDict
+
+logger = logging.getLogger(__name__)
 
 try:
     from langgraph.graph import END, StateGraph
@@ -138,82 +141,41 @@ async def _node_extract_async(state: OrchestratorState) -> OrchestratorState:
     errors = []
     location_count = 0
 
-    # Check for explicitly selected tables across state, session context, or sources.yaml
+    # Check for explicitly selected items across state and session context
+    raw_sel_blob = (
+        state.get("selected_blob_files")
+        or context.get("selected_blob_files")
+        or (context.get("last_blob_list") if is_blob else None)
+        or []
+    )
+    if isinstance(raw_sel_blob, str):
+        raw_sel_blob = [raw_sel_blob]
+    selected_blob_files = [str(f).strip() for f in raw_sel_blob if str(f).strip()]
+
+    raw_sel_local = (
+        state.get("selected_local_files")
+        or context.get("selected_local_files")
+        or (context.get("last_local_file_list") if is_local else None)
+        or []
+    )
+    if isinstance(raw_sel_local, str):
+        raw_sel_local = [raw_sel_local]
+    selected_local_files = [str(f).strip() for f in raw_sel_local if str(f).strip()]
+
     raw_sel_tables = (
         state.get("selected_tables")
         or state.get("tables")
         or state.get("selected_table")
         or context.get("selected_tables")
         or context.get("selected_table")
-        or context.get("last_table_list")
+        or (context.get("last_table_list") if is_sql else None)
         or []
     )
     if isinstance(raw_sel_tables, str):
         raw_sel_tables = [raw_sel_tables]
     selected_tables = [str(t).strip() for t in raw_sel_tables if str(t).strip()]
 
-    # Also check if locations in sources.yaml specified tables
-    if not selected_tables:
-        for loc in (source_root.get("locations") or []):
-            loc_tables = loc.get("tables") or loc.get("selected_tables") or (loc.get("connection") or {}).get("tables")
-            if loc_tables:
-                if isinstance(loc_tables, str):
-                    loc_tables = [loc_tables]
-                selected_tables = [str(t).strip() for t in loc_tables if str(t).strip()]
-                break
-
-    if selected_tables:
-        db_locs = [loc for loc in (source_root.get("locations") or []) if (loc.get("type") or "").lower() == "database"]
-        if db_locs:
-            db_idx = int(context.get("selected_db_location_index") or 0)
-            db_idx = max(0, min(db_idx, len(db_locs) - 1))
-            loc = db_locs[db_idx]
-            conn_cfg = loc.get("connection") or {}
-            
-            from connectors.azure_sql_pythonnet import AzureSQLPythonNetConnector
-            from agent.intelligent_data_assessment import load_and_profile
-            from agent.chat_graph import _override_source_root_for_datasets
-            
-            try:
-                conn = AzureSQLPythonNetConnector(conn_cfg)
-                dfs = {}
-                for t in selected_tables:
-                    dfs[t] = conn.load_table(t, max_rows=None)
-                    
-                approved_sem = context.get("approved_semantics") or state.get("approved_semantics")
-                result = load_and_profile(
-                    {"name": source_root.get("name") or "source", "locations": []},
-                    additional_data=dfs,
-                    job_id=job_id,
-                    max_rows=None,
-                    db_connectors={t: conn for t in selected_tables},
-                    approved_semantics=approved_sem,
-                    business_rules=business_rules,
-                )
-                
-                label = (
-                    (loc.get("id") or loc.get("label") or loc.get("name") or "").strip()
-                    or (conn_cfg.get("database") or "").strip()
-                    or "__default__"
-                )
-                _override_source_root_for_datasets(result, list(dfs.keys()), f"__database__:{label}")
-                
-                from agent.extraction_agent import ExtractionResult
-                results.append(
-                    ExtractionResult(
-                        source_name=label,
-                        location_type="database",
-                        result=result,
-                    )
-                )
-                location_count = 1
-            except Exception as e:
-                errors.append({"source": "database", "type": "database", "error": str(e)})
-
-    elif is_blob and (context.get("selected_blob_files") or context.get("last_blob_list")):
-        selected_blob_files = context.get("selected_blob_files") or context.get("last_blob_list") or []
-        if isinstance(selected_blob_files, str):
-            selected_blob_files = [selected_blob_files]
+    if selected_blob_files or (is_blob and not is_sql and not is_local):
         blob_locs = [loc for loc in (source_root.get("locations") or []) if (loc.get("type") or "").lower() == "azure_blob"]
         if selected_blob_files and blob_locs:
             blob_idx = int(context.get("selected_blob_location_index") or 0)
@@ -261,12 +223,10 @@ async def _node_extract_async(state: OrchestratorState) -> OrchestratorState:
                 )
                 location_count = 1
             except Exception as e:
+                logger.error(f"[Extract] Azure Blob extraction failed: {e}", exc_info=True)
                 errors.append({"source": "azure_blob", "type": "azure_blob", "error": str(e)})
 
-    elif is_local and (context.get("selected_local_files") or context.get("last_local_file_list")):
-        selected_local_files = context.get("selected_local_files") or context.get("last_local_file_list") or []
-        if isinstance(selected_local_files, str):
-            selected_local_files = [selected_local_files]
+    elif selected_local_files or (is_local and not is_sql and not is_blob):
         fs_locs = [loc for loc in (source_root.get("locations") or []) if (loc.get("type") or "").lower() in ("filesystem", "local_fs")]
         if selected_local_files:
             fs_idx = int(context.get("selected_fs_location_index") or 0)
@@ -338,7 +298,68 @@ async def _node_extract_async(state: OrchestratorState) -> OrchestratorState:
                 )
                 location_count = 1
             except Exception as e:
+                logger.error(f"[Extract] Local file extraction failed: {e}", exc_info=True)
                 errors.append({"source": "local_files", "type": "filesystem", "error": str(e)})
+
+    elif selected_tables or is_sql:
+        # Fallback to locations in sources.yaml only if explicit tables were not given
+        if not selected_tables:
+            for loc in (source_root.get("locations") or []):
+                loc_tables = loc.get("tables") or loc.get("selected_tables") or (loc.get("connection") or {}).get("tables")
+                if loc_tables:
+                    if isinstance(loc_tables, str):
+                        loc_tables = [loc_tables]
+                    selected_tables = [str(t).strip() for t in loc_tables if str(t).strip()]
+                    break
+
+        if selected_tables:
+            db_locs = [loc for loc in (source_root.get("locations") or []) if (loc.get("type") or "").lower() == "database"]
+            if db_locs:
+                db_idx = int(context.get("selected_db_location_index") or 0)
+                db_idx = max(0, min(db_idx, len(db_locs) - 1))
+                loc = db_locs[db_idx]
+                conn_cfg = loc.get("connection") or {}
+                
+                from connectors.azure_sql_pythonnet import AzureSQLPythonNetConnector
+                from agent.intelligent_data_assessment import load_and_profile
+                from agent.chat_graph import _override_source_root_for_datasets
+                
+                try:
+                    conn = AzureSQLPythonNetConnector(conn_cfg)
+                    dfs = {}
+                    for t in selected_tables:
+                        dfs[t] = conn.load_table(t, max_rows=None)
+                        
+                    approved_sem = context.get("approved_semantics") or state.get("approved_semantics")
+                    result = load_and_profile(
+                        {"name": source_root.get("name") or "source", "locations": []},
+                        additional_data=dfs,
+                        job_id=job_id,
+                        max_rows=None,
+                        db_connectors={t: conn for t in selected_tables},
+                        approved_semantics=approved_sem,
+                        business_rules=business_rules,
+                    )
+                    
+                    label = (
+                        (loc.get("id") or loc.get("label") or loc.get("name") or "").strip()
+                        or (conn_cfg.get("database") or "").strip()
+                        or "__default__"
+                    )
+                    _override_source_root_for_datasets(result, list(dfs.keys()), f"__database__:{label}")
+                    
+                    from agent.extraction_agent import ExtractionResult
+                    results.append(
+                        ExtractionResult(
+                            source_name=label,
+                            location_type="database",
+                            result=result,
+                        )
+                    )
+                    location_count = 1
+                except Exception as e:
+                    logger.error(f"[Extract] Azure SQL extraction failed: {e}", exc_info=True)
+                    errors.append({"source": "database", "type": "database", "error": str(e)})
 
     # Default fallback
     if not results and not errors:

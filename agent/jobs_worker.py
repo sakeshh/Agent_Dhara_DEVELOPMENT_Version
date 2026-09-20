@@ -66,6 +66,7 @@ def _run_job(job: Dict[str, Any]) -> Dict[str, Any]:
             update_job_status(job_id, status="running", progress=75)
 
         extractions = state.get("extractions") or []
+        extraction_errors = state.get("extraction_errors") or []
         merged_result = {
             "datasets": {},
             "relationships": [],
@@ -82,6 +83,12 @@ def _run_job(job: Dict[str, Any]) -> Dict[str, Any]:
                 dq = res.get("data_quality_issues") or {}
                 merged_result["data_quality_issues"]["datasets"].update(dq.get("datasets") or {})
                 merged_result["data_quality_issues"]["global_issues"].update(dq.get("global_issues") or {})
+
+        if not merged_result["datasets"] and extraction_errors:
+            err_details = "; ".join([f"{e.get('source')}: {e.get('error')}" for e in extraction_errors])
+            logger.error(f"Job {job_id} assessment data extraction failed completely: {err_details}")
+            add_event(job_id=job_id, level="error", message=f"Data extraction failed: {err_details}", data={"errors": extraction_errors})
+            raise RuntimeError(f"Data extraction failed: {err_details}")
 
         try:
             from agent.session_store import load_session, save_session, get_session_lock

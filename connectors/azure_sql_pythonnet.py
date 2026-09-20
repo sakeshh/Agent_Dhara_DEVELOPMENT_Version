@@ -6,7 +6,7 @@ import os
 import sys
 import re
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import csv
 
@@ -66,11 +66,44 @@ else:
     logger.debug("Linux / non-Windows host detected (%s); defaulting to pyodbc for Azure SQL connection.", sys.platform)
 
 
+DUMMY_CREDENTIALS = {"user", "username", "pass@123", "password", "<username>", "<password>"}
+
+
 def _first_present(d: Dict[str, str], keys: List[str], default=None):
+    if not d or not isinstance(d, dict):
+        return default
     for k in keys:
-        if k in d and d[k] is not None:
+        if k in d and d[k] is not None and str(d[k]).strip() != "":
             return d[k]
     return default
+
+
+def _resolve_connection_params(cfg: Dict[str, str]) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    # Environment variables take precedence over config file defaults (standard in Azure App Service / container deployments)
+    server = os.environ.get("AZURE_SQL_SERVER") or _first_present(cfg, ["server", "Server", "host", "hostname"])
+    if server and not server.endswith(".database.windows.net") and "localhost" not in server and "127.0.0.1" not in server and ":" not in server:
+        server = server + ".database.windows.net"
+
+    database = os.environ.get("AZURE_SQL_DATABASE") or _first_present(cfg, ["database", "Database", "db"])
+
+    user = (
+        os.environ.get("AZURE_SQL_USERNAME")
+        or os.environ.get("AZURE_SQL_USER")
+        or _first_present(cfg, ["user", "username", "User Id", "UserID", "uid"])
+    )
+    password = (
+        os.environ.get("AZURE_SQL_PASSWORD")
+        or os.environ.get("AZURE_SQL_PWD")
+        or _first_present(cfg, ["password", "Password", "pwd"])
+    )
+
+    # Discard known placeholder credentials if they weren't explicitly supplied via environment variables
+    if user and str(user).strip().lower() in DUMMY_CREDENTIALS and not (os.environ.get("AZURE_SQL_USERNAME") or os.environ.get("AZURE_SQL_USER")):
+        user = None
+    if password and str(password).strip().lower() in DUMMY_CREDENTIALS and not (os.environ.get("AZURE_SQL_PASSWORD") or os.environ.get("AZURE_SQL_PWD")):
+        password = None
+
+    return server, database, user, password
 
 
 class AzureSQLPythonNetConnector:
@@ -93,16 +126,7 @@ class AzureSQLPythonNetConnector:
         except ImportError:
             return None
         import pyodbc
-        server = _first_present(self.cfg, ["server", "Server", "host", "hostname"]) or os.environ.get("AZURE_SQL_SERVER")
-        if server and not server.endswith(".database.windows.net") and "localhost" not in server and "127.0.0.1" not in server and ":" not in server:
-            server = server + ".database.windows.net"
-        database = _first_present(self.cfg, ["database", "Database", "db"]) or os.environ.get("AZURE_SQL_DATABASE")
-        user = (
-            _first_present(self.cfg, ["user", "username", "User Id", "UserID", "uid"])
-            or os.environ.get("AZURE_SQL_USERNAME")
-            or os.environ.get("AZURE_SQL_USER")
-        )
-        password = _first_present(self.cfg, ["password", "Password", "pwd"]) or os.environ.get("AZURE_SQL_PASSWORD")
+        server, database, user, password = _resolve_connection_params(self.cfg)
         if not server or not database:
             return None
         driver = "ODBC Driver 18 for SQL Server"
@@ -152,16 +176,7 @@ class AzureSQLPythonNetConnector:
 
     def _pyodbc_connect(self):
         import pyodbc
-        server = _first_present(self.cfg, ["server", "Server", "host", "hostname"]) or os.environ.get("AZURE_SQL_SERVER")
-        if server and not server.endswith(".database.windows.net") and "localhost" not in server and "127.0.0.1" not in server and ":" not in server:
-            server = server + ".database.windows.net"
-        database = _first_present(self.cfg, ["database", "Database", "db"]) or os.environ.get("AZURE_SQL_DATABASE")
-        user = (
-            _first_present(self.cfg, ["user", "username", "User Id", "UserID", "uid"])
-            or os.environ.get("AZURE_SQL_USERNAME")
-            or os.environ.get("AZURE_SQL_USER")
-        )
-        password = _first_present(self.cfg, ["password", "Password", "pwd"]) or os.environ.get("AZURE_SQL_PASSWORD")
+        server, database, user, password = _resolve_connection_params(self.cfg)
 
         if not server or not database:
             raise ValueError("Missing required connection keys: 'server' and 'database'.")
@@ -190,6 +205,8 @@ class AzureSQLPythonNetConnector:
         if user and password:
             parts.append(f"Uid={user}")
             parts.append(f"Pwd={password}")
+        else:
+            parts.append("Authentication=ActiveDirectoryDefault")
         parts.extend([
             "Encrypt=yes",
             "TrustServerCertificate=yes",
@@ -199,16 +216,7 @@ class AzureSQLPythonNetConnector:
         return pyodbc.connect(conn_str, autocommit=True)
 
     def _connect(self):
-        server = _first_present(self.cfg, ["server", "Server", "host", "hostname"]) or os.environ.get("AZURE_SQL_SERVER")
-        if server and not server.endswith(".database.windows.net") and "localhost" not in server and "127.0.0.1" not in server and ":" not in server:
-            server = server + ".database.windows.net"
-        database = _first_present(self.cfg, ["database", "Database", "db"]) or os.environ.get("AZURE_SQL_DATABASE")
-        user = (
-            _first_present(self.cfg, ["user", "username", "User Id", "UserID", "uid"])
-            or os.environ.get("AZURE_SQL_USERNAME")
-            or os.environ.get("AZURE_SQL_USER")
-        )
-        password = _first_present(self.cfg, ["password", "Password", "pwd"]) or os.environ.get("AZURE_SQL_PASSWORD")
+        server, database, user, password = _resolve_connection_params(self.cfg)
 
         if not server or not database:
             raise ValueError("Missing required connection keys: 'server' and 'database'.")
@@ -220,6 +228,8 @@ class AzureSQLPythonNetConnector:
         if user and password:
             parts.append(f"User Id={user};")
             parts.append(f"Password={password};")
+        else:
+            parts.append("Authentication=Active Directory Default;")
         parts.extend([
             "Encrypt=True;",
             "TrustServerCertificate=True;",
@@ -262,8 +272,10 @@ class AzureSQLPythonNetConnector:
     def _quote_two_part_name(self, two_part: str) -> str:
         parts = two_part.split(".", 1)
         if len(parts) == 2:
-            return f"[{parts[0]}].[{parts[1]}]"
-        return f"[{two_part}]"
+            s = parts[0].strip().strip("[]").strip()
+            t = parts[1].strip().strip("[]").strip()
+            return f"[{s}].[{t}]"
+        return f"[{two_part.strip().strip('[]').strip()}]"
 
     @staticmethod
     def _convert_clr_value(val: Any) -> Any:
