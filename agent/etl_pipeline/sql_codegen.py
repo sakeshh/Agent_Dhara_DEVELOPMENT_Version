@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from agent.etl_pipeline.codegen_shared import (
     UnsupportedCodegenActionError,
@@ -1083,12 +1083,12 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 if col and known_cols:
                     if action in MULTI_COLUMN_ACTIONS:
                         col_parts = [p.strip().strip("[]").lower() for p in str(col).split(",") if p.strip()]
-                        valid_parts = [p for p in col_parts if p in known_cols or p in ("*", "row-level")]
-                        if not valid_parts:
+                        invalid_parts = [p for p in col_parts if p not in known_cols and p not in ("*", "row-level")]
+                        if invalid_parts:
                             iss_id = st.get("issue_id") or st.get("id") or action
                             if isinstance(plan, dict):
                                 plan.setdefault("generation_report", {}).setdefault("skipped_rules", []).append({
-                                    "issue_id": iss_id, "dataset": ds_name, "columns": col, "reason": "Columns not in dataset schema"
+                                    "issue_id": iss_id, "dataset": ds_name, "columns": col, "reason": f"Columns {invalid_parts} not in dataset schema"
                                 })
                             continue
                     else:
@@ -2348,7 +2348,12 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                                 ) and not c.lower().startswith("etl_")
                             ]
                             if not partition_cols:
-                                partition_cols = [pk_col] if pk_col else ["column1", "column2"]
+                                if pk_col:
+                                    partition_cols = [pk_col]
+                                elif cols:
+                                    partition_cols = [c for c in cols if not c.lower().startswith("etl_")]
+                                else:
+                                    continue
                     else:
                         raw_cols = [c.strip().strip("[]") for c in col_val.split(",") if c.strip()]
                         if "*" in raw_cols:
@@ -2363,7 +2368,12 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                                 ) and not c.lower().startswith("etl_")
                             ]
                             if not partition_cols:
-                                partition_cols = [pk_col] if pk_col else ["column1", "column2"]
+                                if pk_col:
+                                    partition_cols = [pk_col]
+                                elif cols:
+                                    partition_cols = [c for c in cols if not c.lower().startswith("etl_")]
+                                else:
+                                    continue
                         else:
                             partition_cols = raw_cols
                             
@@ -2688,7 +2698,8 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         for iss in all_reported:
             badge_lines.append(f"--   - {iss}")
     else:
-        badge_lines.append("-- No issues detected. Fully production ready!")
+        badge_lines.append("-- No static code-generation issues detected.")
+        badge_lines.append("-- Generated SQL still requires compilation and integration validation.")
     badge_lines.extend([
         "-- ============================================================",
         ""
