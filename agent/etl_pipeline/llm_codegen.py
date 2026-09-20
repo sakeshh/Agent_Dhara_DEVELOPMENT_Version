@@ -3366,6 +3366,7 @@ def _call_llm(
     *,
     fix_errors: Optional[List[str]] = None,
     previous_output: Optional[str] = None,
+    timeout: Optional[float] = None,
 ) -> Tuple[str, str]:
     client, model = _get_llm_client()
     if not client or not model:
@@ -3390,7 +3391,8 @@ def _call_llm(
         max_tokens = _safe_max_tokens(user_message, engine_key)
 
     # 1.3 OpenAI/Azure retry & timeout handling loop
-    max_attempts = 3
+    call_timeout = timeout if timeout is not None else float(os.getenv("LLM_REQUEST_TIMEOUT", "60"))
+    max_attempts = 2
     response = None
     last_err = None
     for attempt in range(max_attempts):
@@ -3403,14 +3405,14 @@ def _call_llm(
                 ],
                 temperature=0,
                 max_tokens=max_tokens,
-                timeout=float(os.getenv("LLM_REQUEST_TIMEOUT", "180")),
+                timeout=call_timeout,
             )
             break
         except (RateLimitError, APITimeoutError) as e:
             last_err = e
             if attempt == max_attempts - 1:
                 raise LLMInfraError(f"LLM request failed after retries: {e}") from e
-            sleep_time = 3.0 if attempt > 0 else 1.0
+            sleep_time = 2.0
             logger.warning(f"LLM rate limit or timeout on attempt {attempt + 1}, retrying in {sleep_time}s... Error: {e}")
             time.sleep(sleep_time)
         except Exception as e:
@@ -3500,11 +3502,11 @@ def _build_retry_context(code: str, errors: List[str]) -> str:
 
 
 _RETRY_BUDGET: Dict[str, int] = {
-    "python": 2,
-    "sql-tsql": 3,
-    "sql-ansi": 2,
-    "pyspark": 2,
-    "adf": 2,
+    "python": 1,
+    "sql-tsql": 1,
+    "sql-ansi": 1,
+    "pyspark": 1,
+    "adf": 1,
 }
 
 
@@ -3677,8 +3679,23 @@ def _generate_etl_with_llm_impl(
     
     max_retries = _RETRY_BUDGET.get(engine_key, 2)
     
+    start_time = time.time()
+    # Enforce safety deadline (default 75s) to guarantee HTTP response completes well within Azure App Service's 230s limit
+    SAFETY_DEADLINE_SECONDS = float(os.getenv("DHARA_CODEGEN_DEADLINE_SECONDS", "75"))
+
     code = ""
     for attempt in range(max_retries + 1):
+        elapsed = time.time() - start_time
+        remaining = SAFETY_DEADLINE_SECONDS - elapsed
+        if attempt > 0 and remaining < 15.0:
+            logger.warning(
+                f"LLM codegen deadline approaching (elapsed={elapsed:.1f}s, deadline={SAFETY_DEADLINE_SECONDS}s). "
+                f"Aborting retry {attempt} to allow fast deterministic template fallback."
+            )
+            if code and not is_llm_generation_error(code):
+                return code, f"LLM generation timed out on validation retry: {fix_errors}"
+            return None, f"LLM generation exceeded safety deadline ({SAFETY_DEADLINE_SECONDS}s)"
+
         import copy
         if attempt == 0:
             trimmed_payload = trim_payload(payload, _CODEGEN_TRIM_CONFIG)
@@ -3710,24 +3727,26 @@ def _generate_etl_with_llm_impl(
         else:
             prev = None
 
+        current_call_timeout = min(float(os.getenv("LLM_REQUEST_TIMEOUT", "60")), max(15.0, remaining))
         try:
             raw_code, stripped_code = _call_llm(
                 engine_key,
                 trimmed_payload,
                 fix_errors=fix_errors or None,
                 previous_output=prev,
+                timeout=current_call_timeout,
             )
         except (LLMInfraError, ConnectorConfigError) as exc:
             last_error = str(exc)
             _write_failure_cache(cache_key, last_error)
             if isinstance(exc, ConnectorConfigError):
                 return None, f"Connector configuration error: {exc}. Check your source connection settings."
-            if "truncated" in last_error.lower() and attempt < max_retries:
+            if "truncated" in last_error.lower() and attempt < max_retries and (time.time() - start_time < SAFETY_DEADLINE_SECONDS - 15.0):
                 logger.info(f"LLM output truncated. Retrying with harder payload trim...")
                 trimmed_payload = trim_payload(trimmed_payload, _FLOOR_TRIM_CONFIG)
                 fix_errors = []
                 continue
-            if attempt < max_retries:
+            if attempt < max_retries and (time.time() - start_time < SAFETY_DEADLINE_SECONDS - 15.0):
                 continue
             return None, f"LLM infrastructure error: {last_error}"
 
@@ -3907,6 +3926,12 @@ def _generate_etl_with_llm_impl(
                 _code_cache_put(cache_key, {"code": code, "time": time.time(), "ok": True})
                 return code, None
             if attempt < max_retries:
+                if time.time() - start_time >= SAFETY_DEADLINE_SECONDS - 15.0:
+                    logger.warning(
+                        f"LLM codegen deadline approaching (elapsed={time.time() - start_time:.1f}s). "
+                        "Aborting retry to allow fast template fallback."
+                    )
+                    break
                 logger.info(f"[Retry Debug] Attempt {attempt + 1} code failed validation with errors: {errs}.")
                 fix_errors = errs
                 continue

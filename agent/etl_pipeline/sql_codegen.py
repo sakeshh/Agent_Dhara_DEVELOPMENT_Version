@@ -235,7 +235,7 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
         action = st.get("action")
         col_class = _classify_column(col_name, col_meta, sem_schema, ds_name)
         
-        if action == "trim":
+        if action in ("trim", "trim_preserve_case"):
             if col_class not in ("metric", "date"):
                 is_internal = any(
                     (s.get("action") == "trim") and 
@@ -351,11 +351,24 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
                     case_expr += f" WHEN {_wrap_string_cast(expr)} = N'{ov}' THEN N'{nv}'"
                 case_expr += f" ELSE {expr} END"
                 expr = case_expr
+        elif action in ("fill_constant", "fill_null_with_constant"):
+            params = st.get("params") or {}
+            cval = str(params.get("constant_value", params.get("fill_value", "unknown"))).replace("'", "''")
+            expr = f"COALESCE({expr}, N'{cval}')"
         elif action in (
             "noop", "keep_as_is", "fill_nulls_simple", "fill_or_drop", "cast_type",
             "deduplicate", "flag_business_key_duplicate", "flag_duplicate_candidates",
             "flag_near_duplicate_cluster", "validate_referential_integrity_or_stage",
             "at_least_one", "validate_and_partition_relationship", "drop_column", "exclude_column",
+            "preserve_null_and_flag", "preserve_and_flag", "preserve_null",
+            "preserve_missing_suspected_key", "accept_null_as_optional",
+            "fill_nulls_flag", "flag_only", "nullify_clean_value",
+            "flag_missing_key", "flag_missing_declared_key", "flag_domain_violation",
+            "flag_range_violation", "flag_cross_field_violation", "flag_high_null_key",
+            "quarantine_row", "quarantine_null_rows", "quarantine_missing_key",
+            "quarantine_orphan_fk", "quarantine_key_null", "drop_rows",
+            "impute_numeric", "impute_date", "create_normalized_match_key",
+            "skip_etl", "skip_requirement", "review_manually", "force_unlock", "join_datasets",
         ):
             pass
         else:
@@ -542,15 +555,28 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     excluded_columns: List[str] = business_rules.get("exclude_columns") or []
     valid_values = business_rules.get("valid_values") or {}
 
-    _SQL_SUPPORTED_ACTIONS = frozenset({
-        "trim", "lowercase", "uppercase", "sanitize_email", "normalize_phone",
+    from agent.etl_pipeline.action_registry import ACTION_REGISTRY
+    _SQL_SUPPORTED_ACTIONS = frozenset(
+        act for act, meta in ACTION_REGISTRY.items() if not meta.get("invalid")
+    ) | frozenset({
+        "trim", "trim_preserve_case", "lowercase", "uppercase", "sanitize_email", "normalize_phone",
         "hash_phone", "mask_phone", "standardize_boolean", "regex_replace",
         "range_clip", "clip_outliers", "cap_outliers", "flag_outliers", "clip_or_flag",
         "replace_sentinel_values", "normalize_registered_placeholder", "nullify_sentinels",
         "nullify_dummy_dates", "nullify_punctuation", "nullify_date", "nullify_future_dates",
         "coerce_numeric", "cast_type", "replace_values", "zero_to_null",
         "parse_dates", "parse_dates_safe",
-        "fill_nulls_simple", "fill_or_drop",
+        "fill_nulls_simple", "fill_or_drop", "fill_constant", "fill_null_with_constant", "fill_nulls_flag",
+        "preserve_null_and_flag", "preserve_and_flag", "preserve_null",
+        "preserve_missing_suspected_key", "accept_null_as_optional",
+        "flag_only", "nullify_clean_value",
+        "flag_missing_key", "flag_missing_declared_key", "flag_domain_violation",
+        "flag_range_violation", "flag_cross_field_violation", "flag_high_null_key",
+        "quarantine_row", "quarantine_null_rows", "quarantine_missing_key",
+        "quarantine_orphan_fk", "quarantine_key_null", "drop_rows",
+        "impute_numeric", "impute_date",
+        "create_normalized_match_key", "join_datasets",
+        "accept_null_as_optional", "skip_etl", "skip_requirement", "review_manually", "force_unlock",
         "deduplicate", "flag_business_key_duplicate", "flag_duplicate_candidates",
         "flag_near_duplicate_cluster", "validate_referential_integrity_or_stage",
         "validate_and_partition_relationship", "at_least_one",
@@ -1771,11 +1797,14 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 action = st.get("action")
                 # Only expressions
                 if action in (
-                    "trim", "lowercase", "uppercase", "sanitize_email", "normalize_phone", 
+                    "trim", "trim_preserve_case", "lowercase", "uppercase", "sanitize_email", "normalize_phone", 
                     "hash_phone", "mask_phone", "standardize_boolean", "regex_replace", 
                     "range_clip", "clip_outliers", "replace_sentinel_values", "normalize_registered_placeholder",
                     "coerce_numeric", "cast_type", "replace_values", "nullify_dummy_dates", 
-                    "nullify_punctuation", "parse_dates", "parse_dates_safe", "nullify_date", "zero_to_null"
+                    "nullify_punctuation", "parse_dates", "parse_dates_safe", "nullify_date", "zero_to_null",
+                    "preserve_null_and_flag", "preserve_and_flag", "preserve_null",
+                    "preserve_missing_suspected_key", "accept_null_as_optional",
+                    "flag_only", "fill_constant", "fill_null_with_constant",
                 ):
                     if col not in column_transforms:
                         column_transforms[col] = []
@@ -1841,6 +1870,21 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                         cln_e = f"LOWER(LTRIM(RTRIM(CAST([{col_name}] AS NVARCHAR(MAX)))))"
                         status_expr = f"CASE WHEN [{col_name}] IS NULL THEN 'missing_value' WHEN {cln_e} LIKE '%_@_%._%' AND {cln_e} NOT LIKE '%@%@%' AND {cln_e} NOT LIKE '%..%' THEN 'valid' ELSE 'invalid_email_format' END"
                         reason_expr = f"CASE WHEN [{col_name}] IS NOT NULL AND NOT ({cln_e} LIKE '%_@_%._%' AND {cln_e} NOT LIKE '%@%@%' AND {cln_e} NOT LIKE '%..%') THEN 'Invalid email syntax or domain' ELSE NULL END"
+                        update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
+                    elif any(a in ("preserve_null_and_flag", "preserve_and_flag", "preserve_null", "preserve_missing_suspected_key", "accept_null_as_optional") for a in actions):
+                        status_expr = f"CASE WHEN [{col_name}] IS NULL THEN 'missing_value' ELSE 'valid' END"
+                        reason_expr = f"CASE WHEN [{col_name}] IS NULL THEN 'Missing value preserved per policy' ELSE NULL END"
+                        update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
+                    elif any(a in ("fill_constant", "fill_null_with_constant") for a in actions):
+                        status_expr = f"CASE WHEN [{col_clean}_raw] IS NULL THEN 'filled_constant' ELSE 'valid' END"
+                        reason_expr = f"CASE WHEN [{col_clean}_raw] IS NULL THEN 'Missing value filled with constant' ELSE NULL END"
+                        update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
+                    elif any(a in ("flag_only", "flag_missing_key", "flag_missing_declared_key") for a in actions):
+                        status_expr = f"CASE WHEN [{col_name}] IS NULL THEN 'missing_value_flagged' ELSE 'valid' END"
+                        reason_expr = f"CASE WHEN [{col_name}] IS NULL THEN 'Missing value flagged for review' ELSE NULL END"
                         update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
                         update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
                     else:
