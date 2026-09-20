@@ -1032,25 +1032,55 @@ def _postprocess_tsql_code(code: str) -> str:
     )
 
     # 1c. Balance Stored Procedures and ensure auto-execution
-    has_sp = re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?", code, re.IGNORECASE)
-    if has_sp:
-        sp_schema = has_sp.group(1) or "dbo"
-        sp_name = has_sp.group(2)
-        full_sp_call = f"[{sp_schema}].[{sp_name}]"
+    # First, strip any dummy/hallucinated procedures that only call EXEC dbo.ProcName
+    code = re.sub(
+        r"CREATE\s+(?:OR\s+ALTER\s+)?PROCEDURE\s+\[?\w+\]?(?:\.\[?\w+\]?)?\s+AS\s+BEGIN\s+(?:--[^\n]*\n\s*)*EXEC\s+(?:\[?dbo\]?\.)?\[?ProcName\]?;?\s*END;\s*GO\s*(?:EXEC\s+\[?\w+\]?(?:\.\[?\w+\]?)?;?\s*GO)?",
+        "",
+        code,
+        flags=re.IGNORECASE
+    )
+    code = re.sub(r"\bEXEC\s+(?:\[?dbo\]?\.)?\[?ProcName\]?;?", "", code, flags=re.IGNORECASE)
 
-        # Check if procedure AS BEGIN is missing outer END; before GO or EOF
-        # In T-SQL: BEGIN TRY/CATCH blocks end with END CATCH. If there is no matching END; after END CATCH, inject it.
-        if re.search(r"\bAS\s+BEGIN\b", code, re.IGNORECASE):
-            # Check if outer END; is missing after END CATCH;
-            m_catch = re.search(r"\bEND\s+CATCH\s*;?", code, re.IGNORECASE)
-            if m_catch:
-                post_catch = code[m_catch.end():]
-                # If there is no 'END' closing the procedure before any subsequent GO or EOF:
-                first_go_or_eof = re.search(r"\b(?:--\s*)?GO\b|\Z", post_catch, re.IGNORECASE)
-                between = post_catch[:first_go_or_eof.start()] if first_go_or_eof else post_catch
-                if not re.search(r"\bEND\b", between, re.IGNORECASE):
-                    insert_pos = m_catch.end()
-                    code = code[:insert_pos] + "\nEND;" + code[insert_pos:]
+    # Clean any accidental orphaned END; after END CATCH in top-level execution batches that do NOT start with CREATE PROCEDURE
+    def _fix_orphaned_catch_end(m):
+        full = m.group(0)
+        prefix_code = code[:m.start()]
+        # Check if the current batch (after last GO or from start) defines a PROCEDURE
+        last_go = prefix_code.rfind("GO")
+        batch_start = prefix_code[last_go + 2:] if last_go != -1 else prefix_code
+        if not re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\b", batch_start, re.IGNORECASE):
+            return m.group(1)  # strip the orphaned END;
+        return full
+
+    code = re.sub(
+        r"(\bEND\s+CATCH\s*;?)\s*\n\s*END\s*;",
+        _fix_orphaned_catch_end,
+        code,
+        flags=re.IGNORECASE
+    )
+
+    sp_matches = list(re.finditer(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?", code, re.IGNORECASE))
+    if sp_matches:
+        for sp_match in sp_matches:
+            sp_schema = sp_match.group(1) or "dbo"
+            sp_name = sp_match.group(2)
+            full_sp_call = f"[{sp_schema}].[{sp_name}]"
+
+            # Find the body of THIS stored procedure (from sp_match.start() to next GO or EOF)
+            post_sp = code[sp_match.start():]
+            m_next_go = re.search(r"\b(?:--\s*)?GO\b|\Z", post_sp[sp_match.end() - sp_match.start():], re.IGNORECASE)
+            sp_end = sp_match.start() + (sp_match.end() - sp_match.start()) + (m_next_go.start() if m_next_go else len(post_sp))
+            sp_body = code[sp_match.start():sp_end]
+
+            if re.search(r"\bAS\s+BEGIN\b", sp_body, re.IGNORECASE):
+                # Check if this procedure body has BEGIN TRY ... END CATCH
+                m_catch = re.search(r"\bEND\s+CATCH\s*;?", sp_body, re.IGNORECASE)
+                if m_catch:
+                    after_catch = sp_body[m_catch.end():]
+                    # If no 'END' closes the procedure before the end of the procedure body
+                    if not re.search(r"\bEND\b", after_catch, re.IGNORECASE):
+                        insert_rel_pos = sp_match.start() + m_catch.end()
+                        code = code[:insert_rel_pos] + "\nEND;" + code[insert_rel_pos:]
 
         # Ensure procedure has a real GO delimiter at the end of its definition
         code = re.sub(r"(\bEND\s*;\s*)\n\s*--\s*GO[^\n]*", r"\1\nGO", code, flags=re.IGNORECASE)
@@ -1249,7 +1279,7 @@ def _postprocess_tsql_code(code: str) -> str:
         flags=re.IGNORECASE
     )
 
-    # 6. Ensure companion columns exist on staging tables
+    # 6. Ensure companion columns and referenced base columns exist on staging tables
     staging_tables = re.findall(r"#([a-zA-Z0-9_]+)_Staging\b", code, re.IGNORECASE)
     for st_name in set(staging_tables):
         if st_name.lower().endswith("_staging"):
@@ -1262,14 +1292,27 @@ def _postprocess_tsql_code(code: str) -> str:
             cols_needed.add("row_validation_status")
             cols_needed.add("row_validation_reason")
         for upd in updates:
-            set_cols = re.findall(r"\[([a-zA-Z0-9_]+)\]\s*=", upd)
+            # Match both bracketed [Col] = and unbracketed Col =
+            set_matches = re.findall(r"(?:\[([a-zA-Z0-9_]+)\]|\b([a-zA-Z0-9_]+)\b)\s*=", upd)
+            set_cols = [m[0] or m[1] for m in set_matches if (m[0] or m[1])]
             for sc in set_cols:
-                if sc.endswith("_clean") or sc.endswith("_validation_status") or sc.endswith("_validation_reason"):
+                if sc.endswith("_clean") or sc.endswith("_validation_status") or sc.endswith("_validation_reason") or sc.endswith("_raw"):
                     cols_needed.add(sc)
-                    base_c = re.sub(r"_(clean|validation_status|validation_reason)$", "", sc)
+                    base_c = re.sub(r"_(clean|validation_status|validation_reason|raw)$", "", sc)
                     cols_needed.add(f"{base_c}_clean")
                     cols_needed.add(f"{base_c}_validation_status")
                     cols_needed.add(f"{base_c}_validation_reason")
+                    cols_needed.add(base_c)
+                else:
+                    cols_needed.add(sc)
+
+        where_clauses = re.findall(rf"UPDATE\s+{re.escape(st_full)}\s+SET\s+[^;]+?WHERE\s+([^;]+?);", code, re.IGNORECASE)
+        for wh in where_clauses:
+            where_matches = re.findall(r"(?:\[([a-zA-Z0-9_]+)\]|\b([a-zA-Z0-9_]+)\b)\s*(?:IS\s+NULL|IS\s+NOT\s+NULL|IN\b|LIKE\b|>|<|=)", wh, re.IGNORECASE)
+            for wm in where_matches:
+                wc = wm[0] or wm[1]
+                if wc and wc.upper() not in ("GETDATE", "NULL", "SELECT", "COUNT", "HAVING", "GROUP", "BY", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "EXISTS"):
+                    cols_needed.add(wc)
 
         if cols_needed:
             create_st = re.search(rf"SELECT\s+[^;]+INTO\s+{re.escape(st_full)}[^;]*;", code, re.IGNORECASE)
@@ -1287,6 +1330,8 @@ def _postprocess_tsql_code(code: str) -> str:
                             ctype = "VARCHAR(500) NULL"
                         elif mc.endswith("_validation_status"):
                             ctype = "VARCHAR(50) NULL"
+                        elif mc.endswith("_clean") or mc.endswith("_raw"):
+                            ctype = "NVARCHAR(MAX) NULL"
                         else:
                             ctype = "NVARCHAR(MAX) NULL"
                         alter_clauses.append(f"    IF NOT EXISTS (SELECT 1 FROM tempdb.sys.columns WHERE object_id = OBJECT_ID('tempdb..{st_full}') AND name = '{mc}')\n        ALTER TABLE {st_full} ADD [{mc}] {ctype};")
@@ -1303,14 +1348,18 @@ def _postprocess_tsql_code(code: str) -> str:
         st_updates = re.findall(rf"UPDATE\s+{re.escape(st_full)}\s+SET\s+([^;]+?)(?:WHERE\b|;)", code, re.IGNORECASE)
         status_cols_for_table = set()
         for upd in st_updates:
-            status_cols_for_table.update(re.findall(r"\[([a-zA-Z0-9_]+)_validation_status\]", upd))
+            st_matches = re.findall(r"(?:\[([a-zA-Z0-9_]+)_validation_status\]|\b([a-zA-Z0-9_]+)_validation_status\b)", upd)
+            for sm in st_matches:
+                base_val = sm[0] or sm[1]
+                if base_val:
+                    status_cols_for_table.add(base_val)
 
         for base_col in status_cols_for_table:
             clean_col = f"{base_col}_clean"
             stat_col = f"{base_col}_validation_status"
             guard_marker = f"-- Integrity Guard ({st_name}): Nullify [{clean_col}]"
             if guard_marker not in code:
-                ins_match = re.search(rf"INSERT\s+INTO\s+dbo\.\[?{st_name}(?:_Clean)?\]?", code, re.IGNORECASE)
+                ins_match = re.search(rf"INSERT\s+INTO\s+(?:cleanedTables|dbo)\.\[?{st_name}(?:_Clean)?\]?", code, re.IGNORECASE)
                 if ins_match:
                     guard_stmt = (
                         f"\n    {guard_marker} where anomaly status is present\n"
@@ -2044,12 +2093,18 @@ T-SQL REQUIREMENTS:
      - Target clean tables: `cleanedTables.<Table>_Clean` (or timestamped `cleanedTables.<Table>_Clean_<timestamp>`) in the `cleanedTables` schema. Ensure `IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'cleanedTables') EXEC('CREATE SCHEMA cleanedTables');` is executed before clean table DDL.
      - Tables: `IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TableName' AND schema_id = SCHEMA_ID('cleanedTables')) CREATE TABLE cleanedTables.TableName (...);`
      - Indexes: `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IndexName' AND object_id = OBJECT_ID('cleanedTables.TableName')) CREATE NONCLUSTERED INDEX IndexName ON cleanedTables.TableName (...);`
-     - If writing a Stored Procedure: `CREATE OR ALTER PROCEDURE dbo.ProcName AS BEGIN ... END; GO`.
+     - If writing a Stored Procedure: `CREATE OR ALTER PROCEDURE dbo.etl_clean_<TableName> AS BEGIN ... END; GO`.
        CRITICAL: The procedure MUST close with `END;` on its own line, followed by `GO`, and MUST immediately be followed by an auto-execution call:
-       `EXEC dbo.ProcName; GO`
+       `EXEC dbo.etl_clean_<TableName>; GO`
        so that executing the script in Azure SQL actually runs the pipeline and populates the clean tables (preventing empty 0-row tables).
+       NEVER emit unresolved placeholder names like `dbo.ProcName`!
        Alternatively, write a direct single-batch transactional script without a stored procedure wrapper.
      - Each outer script DDL statement MUST be followed by a `GO` batch separator on its own line.
+- MULTI-DATASET ISOLATION (CRITICAL FOR MULTI-TABLE PLANS):
+  When a plan includes multiple tables/datasets:
+  1. Process each table/dataset in its own isolated block with its own dedicated staging table: `#<Table>_Staging`.
+  2. For each table, create `#<Table>_Staging`, run ONLY that table's column validation updates, and execute its `INSERT INTO cleanedTables.<Table>_Clean`.
+  3. NEVER execute an UPDATE or rule for Table B against `#TableA_Staging`!
   2. ABSOLUTE FORBIDDEN: NEVER output `GO` inside `BEGIN TRY ... END TRY`, inside `BEGIN CATCH ... END CATCH`, or inside procedure execution bodies:
      Once an execution block begins (`SET NOCOUNT ON; SET XACT_ABORT ON; DECLARE @run_id INT; BEGIN TRY...`), NEVER emit `GO` inside the TRY or CATCH blocks!
      In T-SQL, `GO` ends the batch and destroys local variables like `@run_id`, causing fatal compilation errors (`Must declare the scalar variable "@run_id"`).
@@ -3060,12 +3115,20 @@ def _build_user_message_parts(
         f"Generate complete ETL for this approved plan:\n{json.dumps(prompt_payload, separators=(',', ':'), default=str)}",
     ]
     
-    if payload.get("required_transform_functions"):
+    if payload.get("required_transform_functions") and engine_key in ("python", "pyspark"):
         req_fns = payload["required_transform_functions"]
         req_lines = [f"- Define function '{item['function_name']}' to transform dataset '{item['dataset_id']}'" for item in req_fns]
         user_parts.append(
             "REQUIRED TRANSFORM FUNCTION REGISTRY (you MUST define exactly these transform function names):\n"
             + "\n".join(req_lines)
+        )
+
+    if engine_key in ("sql-tsql", "sql-ansi"):
+        user_parts.append(
+            "T-SQL MULTI-DATASET ISOLATION CONTRACT:\n"
+            "If the plan contains multiple tables/datasets, generate an isolated execution pipeline for EACH table. "
+            "Every table MUST have its own temporary staging table (#<Table>_Staging) and its own INSERT INTO cleanedTables.<Table>_Clean. "
+            "NEVER cross-apply validation rules or column updates for one table to another table's staging table."
         )
     manifest = payload.get("connector_manifest") or {}
     m_ds = manifest.get("datasets") or {}

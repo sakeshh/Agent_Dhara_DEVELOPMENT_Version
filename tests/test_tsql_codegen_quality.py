@@ -832,6 +832,99 @@ BEGIN
     assert "[Row-level_validation_status]" not in processed
 
 
+def test_postprocess_tsql_unbracketed_staging_column_repair():
+    from agent.etl_pipeline.llm_codegen import _postprocess_tsql_code
+
+    raw_sql = """
+    SELECT src.EmployeeID, src.EmployeeName
+    INTO #Dhara_Employee_Staging
+    FROM dbo.Dhara_Employee src;
+
+    UPDATE #Dhara_Employee_Staging
+    SET 
+        EmploymentType_validation_status = 'null_value',
+        EmploymentType_validation_reason = '1 null value(s) in EmploymentType'
+    WHERE EmploymentType IS NULL;
+
+    UPDATE #Dhara_Employee_Staging
+    SET 
+        Status_validation_status = 'null_value'
+    WHERE Status IS NULL;
+
+    INSERT INTO cleanedTables.Dhara_Employee_Clean (EmployeeID, EmploymentType)
+    SELECT EmployeeID, EmploymentType FROM #Dhara_Employee_Staging;
+    """
+
+    processed = _postprocess_tsql_code(raw_sql)
+    # Check that ALTER TABLE was injected for unbracketed column and base column
+    assert "ALTER TABLE #Dhara_Employee_Staging ADD [EmploymentType_validation_status] VARCHAR(50) NULL;" in processed
+    assert "ALTER TABLE #Dhara_Employee_Staging ADD [EmploymentType] NVARCHAR(MAX) NULL;" in processed
+    assert "ALTER TABLE #Dhara_Employee_Staging ADD [Status_validation_status] VARCHAR(50) NULL;" in processed
+    assert "ALTER TABLE #Dhara_Employee_Staging ADD [Status] NVARCHAR(MAX) NULL;" in processed
+
+
+def test_postprocess_tsql_no_orphaned_end_in_direct_batch():
+    from agent.etl_pipeline.llm_codegen import _postprocess_tsql_code
+
+    raw_sql = """SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+DECLARE @run_id INT;
+BEGIN TRY
+    BEGIN TRANSACTION;
+    SELECT 1 AS col INTO #Test_Staging FROM dbo.Test;
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0 OR XACT_STATE() <> 0 ROLLBACK TRANSACTION;
+    THROW;
+END CATCH;
+GO
+
+-- Hallucinated wrapper procedure calling literal dbo.ProcName
+CREATE OR ALTER PROCEDURE transform_dbo_Test AS
+BEGIN
+    EXEC dbo.ProcName;
+END;
+GO
+"""
+
+    processed = _postprocess_tsql_code(raw_sql)
+    # 1. Must NOT have orphaned END; after END CATCH; in the direct batch
+    assert "END CATCH;\nEND;\nGO" not in processed
+    assert "END CATCH;\r\nEND;\r\nGO" not in processed
+    # 2. The dummy procedure calling dbo.ProcName should be stripped
+    assert "EXEC dbo.ProcName" not in processed
+
+
+def test_validate_sql_basic_catches_procname_and_undeclared_columns():
+    from agent.etl_pipeline.validate_sql import validate_sql_basic
+
+    # Test 1: EXEC dbo.ProcName must be caught
+    sql_with_procname = """
+    CREATE OR ALTER PROCEDURE dbo.test_sp AS
+    BEGIN
+        EXEC dbo.ProcName;
+    END;
+    """
+    passed, hard_errs, _ = validate_sql_basic(sql_with_procname)
+    assert not passed
+    assert any("ProcName" in err for err in hard_errs)
+
+    # Test 2: Undeclared column on staging table must be caught
+    sql_undeclared = """
+    SELECT EmployeeID INTO #Emp_Staging FROM dbo.Employee;
+
+    UPDATE #Emp_Staging
+    SET FakeCol_validation_status = 'invalid'
+    WHERE FakeCol IS NULL;
+    """
+    passed, hard_errs, _ = validate_sql_basic(sql_undeclared)
+    assert not passed
+    assert any("FakeCol_validation_status" in err for err in hard_errs)
+
+
+
 
 
 

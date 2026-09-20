@@ -249,12 +249,39 @@ def validate_sql_basic(source: str) -> Tuple[bool, List[str], List[str]]:
         (r"\bCREATE\s+OR\s+REPLACE\b", "Invalid T-SQL: CREATE OR REPLACE is not supported in T-SQL"),
         (r"\bCREATE\s+OR\s+ALTER\s+TABLE\b", "Invalid T-SQL: CREATE OR ALTER TABLE is not valid syntax in T-SQL"),
         (r"\bINDEX\s+[\w\.\[\]]+\s+ON\s+[\w\.\[\]]+\s*\([^\)]+\)\s*WHERE\s+[^;\n]*\bOR\b", "Invalid T-SQL: Filtered indexes cannot use OR in WHERE clause"),
+        (r"\bEXEC\s+(?:\[?dbo\]?\.)?\[?ProcName\]?", "Forbidden: Unresolved mock procedure placeholder 'EXEC dbo.ProcName'"),
+        (r"\bCREATE\s+(?:OR\s+ALTER\s+)?PROCEDURE\s+\[?\w+\]?\s+AS\s+BEGIN\s+(?:--[^\n]*\n\s*)*EXEC\s+dbo\.ProcName", "Forbidden: Dummy procedure calling 'EXEC dbo.ProcName'"),
     ]
     for pattern, msg in SECURITY_PATTERNS:
         if re.search(pattern, cleaned, re.IGNORECASE):
             if not any(msg in e for e in hard_errors):
                 hard_errors.append(msg)
                 hard_pass = False
+
+    # Check staging column consistency to prevent Msg 207 invalid column errors
+    staging_tables = re.findall(r"#([a-zA-Z0-9_]+)_Staging\b", cleaned, re.IGNORECASE)
+    for st_name in set(staging_tables):
+        st_full = f"#{st_name}_Staging"
+        create_st = re.search(rf"SELECT\s+([^;]+?)\bINTO\s+{re.escape(st_full)}\b", cleaned, re.IGNORECASE)
+        if create_st:
+            create_body = create_st.group(1)
+            alter_stmts = re.findall(rf"ALTER\s+TABLE\s+{re.escape(st_full)}\s+ADD\s+\[?([a-zA-Z0-9_]+)\]?", cleaned, re.IGNORECASE)
+            declared_cols = set(alter_stmts)
+            # Add columns declared in SELECT
+            for c_match in re.finditer(r"(?:AS\s+\[?([a-zA-Z0-9_]+)\]?|src\.\[?([a-zA-Z0-9_]+)\]?|\[([a-zA-Z0-9_]+)\]|\b([a-zA-Z0-9_]+)\b)", create_body, re.IGNORECASE):
+                col_name = c_match.group(1) or c_match.group(2) or c_match.group(3) or c_match.group(4)
+                if col_name and col_name.upper() not in ("SELECT", "CAST", "NULL", "AS", "NVARCHAR", "VARCHAR", "MAX", "BIT", "INT", "DATETIME2", "DECIMAL", "FROM"):
+                    declared_cols.add(col_name)
+
+            upds = re.findall(rf"UPDATE\s+{re.escape(st_full)}\s+SET\s+([^;]+?)(?:WHERE\b|;)", cleaned, re.IGNORECASE)
+            for upd in upds:
+                set_cols = [m[0] or m[1] for m in re.findall(r"(?:\[([a-zA-Z0-9_]+)\]|\b([a-zA-Z0-9_]+)\b)\s*=", upd) if (m[0] or m[1])]
+                for sc in set_cols:
+                    if sc not in declared_cols and not sc.startswith("etl_"):
+                        err_msg = f"Undeclared column '{sc}' in UPDATE on staging table '{st_full}' (Msg 207)"
+                        if err_msg not in hard_errors:
+                            hard_errors.append(err_msg)
+                            hard_pass = False
 
     # --- ADVISORY (warn, never block) ---
     ADVISORY_PATTERNS = [
