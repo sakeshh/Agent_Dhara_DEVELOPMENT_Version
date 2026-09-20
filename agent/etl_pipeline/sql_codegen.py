@@ -273,7 +273,7 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
             clean_expr = f"REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE({inner_cast}, N'-', N''), N' ', N''), N'(', N''), N')', N''), N'+', N''), N'.', N'')"
             expr = f"CASE WHEN LEN({clean_expr}) BETWEEN 7 AND 15 AND {clean_expr} NOT LIKE '%[^0-9]%' THEN {clean_expr} ELSE NULL END"
         elif action == "nullify_dummy_dates":
-            expr = f"CASE WHEN {expr} = '1900-01-01' OR FORMAT(TRY_CAST({expr} AS DATE), 'MM-dd') = '01-01' THEN NULL ELSE {expr} END"
+            expr = f"CASE WHEN {expr} = '1900-01-01' OR (YEAR(TRY_CAST({expr} AS DATE)) <= 1900 AND FORMAT(TRY_CAST({expr} AS DATE), 'MM-dd') = '01-01') THEN NULL ELSE {expr} END"
         elif action == "nullify_punctuation":
             if col_class not in ("metric", "date"):
                 expr = f"CASE WHEN {_wrap_string_cast(expr)} NOT LIKE '%[a-zA-Z0-9]%' THEN NULL ELSE {expr} END"
@@ -971,14 +971,8 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             clean_tbl = tgt_tbl_expr
             tbl_clean = target_tbl_str
             tbl_base = ds_name.split(".")[-1].strip("[]")
-            tbl_pure = tbl_base
-            if tbl_pure.lower().endswith("_staging"):
-                tbl_pure = tbl_pure[:-8]
-            elif tbl_pure.lower().endswith("_clean"):
-                tbl_pure = tbl_pure[:-6]
-            elif tbl_pure.lower().endswith("_raw"):
-                tbl_pure = tbl_pure[:-4]
-            tbl_staging = f"#{tbl_pure}_Staging" if is_clean else f"#{tbl_pure}_Transform_Staging"
+            stg_base = tbl_base[:-8] if tbl_base.lower().endswith("_staging") else tbl_base
+            tbl_staging = f"#{stg_base}_Staging" if is_clean else f"#{stg_base}_Transform_Staging"
             tbl_clean = _get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix)
         
         
@@ -1135,6 +1129,118 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             col_list = ", ".join(f"[{c}]" for c in cols) if cols else "*"
         
             lines.append(f"-- === dataset: {ds_name} === ")
+
+            # Pre-procedure One-Time DDL Setup (Executed outside procedure to avoid Sch-M locks)
+            if dialect == "tsql":
+                lines.append(f"-- Initialize Clean Table Structure")
+                lines.append(f"IF OBJECT_ID('{target_tbl_str}', 'U') IS NULL")
+                lines.append("BEGIN")
+            
+                # Explicit CREATE TABLE
+                create_cols = []
+                for c in cols:
+                    c_meta = cols_info.get(c) or {}
+                    c_type = c_meta.get("dtype") or c_meta.get("target_dtype") or ""
+                    target_type = get_sql_cast_type(c_type, c)
+                
+                    # Check nullability
+                    if c == pk_col or c in non_nullable_cols:
+                        null_str = "NOT NULL"
+                    else:
+                        null_str = "NULL"
+                    create_cols.append(f"        [{c}] {target_type} {null_str}")
+            
+                # Add metadata columns
+                create_cols.append("        etl_created_at DATETIME DEFAULT GETDATE()")
+                create_cols.append("        etl_updated_at DATETIME DEFAULT GETDATE()")
+                create_cols.append("        etl_batch_id INT NULL")
+                
+                # Add SCD Type 2 columns if applicable
+                if scd_type == "type2":
+                    create_cols.append("        start_date DATETIME DEFAULT GETDATE()")
+                    create_cols.append("        end_date DATETIME DEFAULT '9999-12-31'")
+                    create_cols.append("        is_current BIT DEFAULT 1")
+            
+                # Add primary key constraint inline if pk_col exists
+                phase_suffix = "Clean" if is_clean else "Transformed"
+                if pk_col:
+                    if scd_type == "type2":
+                        create_cols.append(f"        CONSTRAINT [PK_{tbl_base}_{phase_suffix}] PRIMARY KEY ([{pk_col}], start_date)")
+                    else:
+                        create_cols.append(f"        CONSTRAINT [PK_{tbl_base}_{phase_suffix}] PRIMARY KEY ([{pk_col}])")
+                
+                lines.append(f"    CREATE TABLE {clean_tbl} (")
+                lines.append(",\n".join(create_cols))
+                lines.append("    );")
+            
+                # Setup index keys
+                index_keys = []
+                rel = plan.get("relationships") or {}
+                for j in rel.get("joins") or []:
+                    if j.get("parent_dataset") == ds_name:
+                        index_keys.append(j.get("parent_key"))
+                    elif j.get("child_dataset") == ds_name:
+                        index_keys.append(j.get("child_key"))
+                if watermark_col:
+                    index_keys.append(watermark_col)
+                
+                for ik in sorted(list(set(index_keys))):
+                    lines.append(f"    CREATE NONCLUSTERED INDEX idx_{tbl_base}_{phase_suffix}_{ik} ON {clean_tbl}([{ik}]);")
+                lines.append("END;")
+                lines.append("")
+            
+                # DDL alterations for companion columns
+                ddl_lines = []
+                seen_clean_companions = set()
+                for st in steps:
+                    col = st.get("column")
+                    action = str(st.get("action") or "")
+                    if not col or col in excluded_columns or col in ("*", "[Row-level]", "[row-level]"):
+                        continue
+                    sub_cols = [c.strip().strip("[]") for c in str(col).split(",") if c.strip() and c.strip() not in ("*", "[Row-level]", "[row-level]")]
+                    for single_col in sub_cols:
+                        if single_col in excluded_columns:
+                            continue
+                        col_clean = str(single_col).replace("'", "''")
+                        if action in ("flag_outliers", "clip_or_flag"):
+                            ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{col_clean}_outlier_flagged')")
+                            ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{col_clean}_outlier_flagged] BIT NOT NULL DEFAULT 0;")
+                        elif action == "cast_type":
+                            ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{col_clean}_int')")
+                            ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{col_clean}_int] BIGINT;")
+
+                        # Companion columns for clean target
+                        col_meta = cols_info.get(single_col) or {}
+                        col_type = col_meta.get("dtype") or col_meta.get("target_dtype") or ""
+                        target_type = get_sql_cast_type(col_type, single_col)
+                        for comp, ctype in [
+                            (f"{col_clean}_raw", "NVARCHAR(MAX) NULL"),
+                            (f"{col_clean}_clean", f"{target_type} NULL"),
+                            (f"{col_clean}_validation_status", "VARCHAR(50) NULL"),
+                            (f"{col_clean}_validation_reason", "VARCHAR(500) NULL")
+                        ]:
+                            if comp not in seen_clean_companions:
+                                seen_clean_companions.add(comp)
+                                ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{comp}')")
+                                ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{comp}] {ctype};")
+
+                for comp, ctype in [
+                    ("row_validation_status", "VARCHAR(50) NULL"),
+                    ("row_validation_reason", "VARCHAR(500) NULL"),
+                    ("is_duplicate_row", "BIT NOT NULL DEFAULT 0"),
+                ]:
+                    if comp not in seen_clean_companions:
+                        seen_clean_companions.add(comp)
+                        ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{comp}')")
+                        ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{comp}] {ctype};")
+                
+                if ddl_lines:
+                    lines.append("-- Add generated transformation columns to Clean Table")
+                    lines.extend(ddl_lines)
+                    lines.append("")
+                
+                lines.append("GO")
+                lines.append("")
         
             # Stored Procedure boundary setup for T-SQL
             proc_lines: List[str] = []
@@ -1190,114 +1296,6 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             )
 
             if dialect == "tsql":
-                proc_lines.append(f"-- Initialize Clean Table Structure")
-                proc_lines.append(f"IF OBJECT_ID('{target_tbl_str}', 'U') IS NULL")
-                proc_lines.append("BEGIN")
-            
-                # Explicit CREATE TABLE
-                create_cols = []
-                for c in cols:
-                    c_meta = cols_info.get(c) or {}
-                    c_type = c_meta.get("dtype") or c_meta.get("target_dtype") or ""
-                    target_type = get_sql_cast_type(c_type, c)
-                
-                    # Check nullability
-                    if c == pk_col or c in non_nullable_cols:
-                        null_str = "NOT NULL"
-                    else:
-                        null_str = "NULL"
-                    create_cols.append(f"        [{c}] {target_type} {null_str}")
-            
-                # Add metadata columns
-                create_cols.append("        etl_created_at DATETIME DEFAULT GETDATE()")
-                create_cols.append("        etl_updated_at DATETIME DEFAULT GETDATE()")
-                create_cols.append("        etl_batch_id INT NULL")
-                
-                # Add SCD Type 2 columns if applicable
-                if scd_type == "type2":
-                    create_cols.append("        start_date DATETIME DEFAULT GETDATE()")
-                    create_cols.append("        end_date DATETIME DEFAULT '9999-12-31'")
-                    create_cols.append("        is_current BIT DEFAULT 1")
-            
-                # Add primary key constraint inline if pk_col exists
-                phase_suffix = "Clean" if is_clean else "Transformed"
-                if pk_col:
-                    if scd_type == "type2":
-                        create_cols.append(f"        CONSTRAINT [PK_{tbl_base}_{phase_suffix}] PRIMARY KEY ([{pk_col}], start_date)")
-                    else:
-                        create_cols.append(f"        CONSTRAINT [PK_{tbl_base}_{phase_suffix}] PRIMARY KEY ([{pk_col}])")
-                
-                proc_lines.append(f"    CREATE TABLE {clean_tbl} (")
-                proc_lines.append(",\n".join(create_cols))
-                proc_lines.append("    );")
-            
-                # Setup index keys
-                index_keys = []
-                rel = plan.get("relationships") or {}
-                for j in rel.get("joins") or []:
-                    if j.get("parent_dataset") == ds_name:
-                        index_keys.append(j.get("parent_key"))
-                    elif j.get("child_dataset") == ds_name:
-                        index_keys.append(j.get("child_key"))
-                if watermark_col:
-                    index_keys.append(watermark_col)
-                
-                for ik in sorted(list(set(index_keys))):
-                    proc_lines.append(f"    CREATE NONCLUSTERED INDEX idx_{tbl_base}_{phase_suffix}_{ik} ON {clean_tbl}([{ik}]);")
-                proc_lines.append("END")
-                proc_lines.append("")
-            
-            # DDL alterations (run before staging setup)
-            ddl_lines = []
-            seen_clean_companions = set()
-            for st in steps:
-                col = st.get("column")
-                action = str(st.get("action") or "")
-                if not col or col in excluded_columns or col in ("*", "[Row-level]", "[row-level]"):
-                    continue
-                col_clean = str(col).replace("'", "''")
-                if action in ("flag_outliers", "clip_or_flag"):
-                    ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{col_clean}_outlier_flagged')")
-                    ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{col_clean}_outlier_flagged] BIT NOT NULL DEFAULT 0;")
-                elif action == "cast_type":
-                    ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{col_clean}_int')")
-                    ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{col_clean}_int] BIGINT;")
-
-                # Companion columns for clean target
-                col_meta = cols_info.get(col) or {}
-                col_type = col_meta.get("dtype") or col_meta.get("target_dtype") or ""
-                target_type = get_sql_cast_type(col_type, col)
-                for comp, ctype in [
-                    (f"{col_clean}_raw", "NVARCHAR(MAX) NULL"),
-                    (f"{col_clean}_clean", f"{target_type} NULL"),
-                    (f"{col_clean}_validation_status", "VARCHAR(50) NULL"),
-                    (f"{col_clean}_validation_reason", "VARCHAR(500) NULL")
-                ]:
-                    if comp not in seen_clean_companions:
-                        seen_clean_companions.add(comp)
-                        ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{comp}')")
-                        ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{comp}] {ctype};")
-
-            for comp, ctype in [
-                ("row_validation_status", "VARCHAR(50) NULL"),
-                ("row_validation_reason", "VARCHAR(500) NULL"),
-                ("is_duplicate_row", "BIT NOT NULL DEFAULT 0"),
-            ]:
-                if comp not in seen_clean_companions:
-                    seen_clean_companions.add(comp)
-                    ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{comp}')")
-                    ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{comp}] {ctype};")
-                
-            if ddl_lines:
-                if dialect == "tsql":
-                    proc_lines.append("-- Add generated transformation columns to Clean Table")
-                    proc_lines.extend(ddl_lines)
-                    proc_lines.append("")
-                else:
-                    lines.extend(ddl_lines)
-                    lines.append("")
-
-            if dialect == "tsql":
                 proc_lines.append(f"-- Create Staging Table with raw column types to preserve raw strings")
                 proc_lines.append(f"IF OBJECT_ID('tempdb..{tbl_staging}') IS NOT NULL DROP TABLE {tbl_staging};")
                 staging_cols_ddl = []
@@ -1311,25 +1309,37 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     seen_staging_cols.add("etl_batch_id")
                     staging_cols_ddl.append("etl_batch_id INT NULL")
                 for st in steps:
-                    if st.get("action") in ("flag_outliers", "clip_or_flag") and st.get("column") and st.get("column") not in excluded_columns:
-                        c_name = f"{st.get('column')}_outlier_flagged"
-                        if c_name.lower() not in seen_staging_cols:
-                            seen_staging_cols.add(c_name.lower())
-                            staging_cols_ddl.append(f"[{c_name}] INT NULL")
-                    if st.get("action") == "cast_type" and st.get("column") and st.get("column") not in excluded_columns:
-                        c_name = f"{st.get('column')}_int"
-                        if c_name.lower() not in seen_staging_cols:
-                            seen_staging_cols.add(c_name.lower())
-                            staging_cols_ddl.append(f"[{c_name}] BIGINT NULL")
+                    st_col = st.get("column")
+                    if not st_col or st_col in excluded_columns or st_col in ("*", "[Row-level]", "[row-level]"):
+                        continue
+                    st_sub_cols = [c.strip().strip("[]") for c in str(st_col).split(",") if c.strip() and c.strip() not in ("*", "[Row-level]", "[row-level]")]
+                    for single_st_col in st_sub_cols:
+                        if single_st_col in excluded_columns:
+                            continue
+                        if st.get("action") in ("flag_outliers", "clip_or_flag"):
+                            c_name = f"{single_st_col}_outlier_flagged"
+                            if c_name.lower() not in seen_staging_cols:
+                                seen_staging_cols.add(c_name.lower())
+                                staging_cols_ddl.append(f"[{c_name}] INT NULL")
+                        if st.get("action") == "cast_type":
+                            c_name = f"{single_st_col}_int"
+                            if c_name.lower() not in seen_staging_cols:
+                                seen_staging_cols.add(c_name.lower())
+                                staging_cols_ddl.append(f"[{c_name}] BIGINT NULL")
 
                 # Add companion columns to staging table so UPDATE statements succeed without schema errors
                 for st in steps:
                     st_col = st.get("column")
-                    if st_col and st_col not in excluded_columns and st_col not in ("*", "[Row-level]", "[row-level]"):
-                        clean_c = str(st_col).replace("'", "''")
-                        col_meta = cols_info.get(st_col) or {}
+                    if not st_col or st_col in excluded_columns or st_col in ("*", "[Row-level]", "[row-level]"):
+                        continue
+                    st_sub_cols = [c.strip().strip("[]") for c in str(st_col).split(",") if c.strip() and c.strip() not in ("*", "[Row-level]", "[row-level]")]
+                    for single_st_col in st_sub_cols:
+                        if single_st_col in excluded_columns:
+                            continue
+                        clean_c = str(single_st_col).replace("'", "''")
+                        col_meta = cols_info.get(single_st_col) or {}
                         col_type = col_meta.get("dtype") or col_meta.get("target_dtype") or ""
-                        target_type = get_sql_cast_type(col_type, st_col)
+                        target_type = get_sql_cast_type(col_type, single_st_col)
                         for comp in [f"{clean_c}_raw", f"{clean_c}_clean", f"{clean_c}_validation_status", f"{clean_c}_validation_reason"]:
                             if comp.lower() not in seen_staging_cols:
                                 seen_staging_cols.add(comp.lower())
@@ -2195,7 +2205,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 processed_dedup_keys = set()
                 for st in dedup_steps:
                     col_val = str(st.get("column") or "").strip()
-                    is_row_level = col_val.lower() in ("row-level", "[row-level]", "")
+                    is_row_level = col_val.lower() in ("row-level", "[row-level]", "", "*", "[*]")
                     is_pk_dedup = (st.get("source_issue_type") == "duplicate_primary_key" or st.get("issue_type") == "duplicate_primary_key")
                     
                     if is_row_level:
@@ -2215,7 +2225,22 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                             if not partition_cols:
                                 partition_cols = [pk_col] if pk_col else ["column1", "column2"]
                     else:
-                        partition_cols = [c.strip() for c in col_val.split(",") if c.strip()]
+                        raw_cols = [c.strip().strip("[]") for c in col_val.split(",") if c.strip()]
+                        if "*" in raw_cols:
+                            exclude_cols = {pk_col} if pk_col else set()
+                            if watermark_col:
+                                exclude_cols.add(watermark_col)
+                            partition_cols = [
+                                c for c in cols
+                                if c not in exclude_cols and c.lower() not in (
+                                    "etl_batch_id", "run_id", "etl_created_at", "etl_updated_at",
+                                    "_rn", "_dedup_rn", "etl_run_id", "etl_created_date", "etl_updated_date"
+                                ) and not c.lower().startswith("etl_")
+                            ]
+                            if not partition_cols:
+                                partition_cols = [pk_col] if pk_col else ["column1", "column2"]
+                        else:
+                            partition_cols = raw_cols
                             
                     dedup_key = tuple(sorted(partition_cols))
                     if dedup_key in processed_dedup_keys:
@@ -2500,9 +2525,23 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     # S3-05: SQL Quality assessment badge
     from agent.etl_pipeline.validate_sql import validate_sql_basic_dict
     val_res = validate_sql_basic_dict(full_sql)
-    issues = val_res.get("issues") or []
-    
-    score = max(0, 100 - len(issues) * 15)
+    issues = list(val_res.get("issues") or [])
+    warnings = list(val_res.get("warnings") or [])
+
+    # Check for hard syntax smells
+    clean_code = re.sub(r"'(?:''|[^'])*'", "''", full_sql)
+    clean_code = re.sub(r"--[^\n]*", "", clean_code)
+    if "[*]" in clean_code or "CAST([*]" in clean_code:
+        issues.append("Fatal syntax: Wildcard [*] used as column identifier in query or window clause")
+    if re.search(r"\[\s*[^\]\n']+,[^\]\n']+\]", clean_code):
+        issues.append("Fatal syntax: Bracketed identifier contains comma (composite column leak in DDL/DML)")
+    proc_blocks = re.findall(r"CREATE\s+(?:OR\s+ALTER\s+)?PROCEDURE[\s\S]*?END\s*;", full_sql, re.IGNORECASE)
+    for pb in proc_blocks:
+        if re.search(r"\bALTER\s+TABLE\b", pb, re.IGNORECASE):
+            warnings.append("Performance/Locking: ALTER TABLE detected inside stored procedure body")
+            break
+
+    score = max(0, 100 - len(issues) * 20 - len(warnings) * 4)
     if score >= 90:
         grade = "A"
     elif score >= 80:
@@ -2518,9 +2557,10 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         f"-- Score: {score}/100",
         f"-- Grade: {grade}",
     ]
-    if issues:
-        badge_lines.append(f"-- Issues Detected ({len(issues)}):")
-        for iss in issues:
+    if issues or warnings:
+        all_reported = [f"[BLOCKER] {iss}" for iss in issues] + [f"[ADVISORY] {w}" for w in warnings]
+        badge_lines.append(f"-- Issues Detected ({len(all_reported)}):")
+        for iss in all_reported:
             badge_lines.append(f"--   - {iss}")
     else:
         badge_lines.append("-- No issues detected. Fully production ready!")

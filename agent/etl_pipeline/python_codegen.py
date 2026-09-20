@@ -262,12 +262,12 @@ def _emit_deduplicate_col(
     keys = []
     if plan and ds_name:
         keys = plan.get("business_keys", {}).get(ds_name) or []
-    if col and str(col).lower() not in ("row-level", "[row-level]"):
-        step_cols = [c.strip() for c in str(col).split(",") if c.strip()]
+    if col and str(col).lower() not in ("row-level", "[row-level]", "*", "[*]"):
+        step_cols = [c.strip().strip("[]") for c in str(col).split(",") if c.strip() and c.strip() not in ("*", "[*]")]
         keys.extend(step_cols)
     unique_keys = []
     for k in keys:
-        if k not in unique_keys:
+        if k not in unique_keys and k not in ("*", "[*]"):
             unique_keys.append(k)
             
     if unique_keys:
@@ -281,7 +281,7 @@ def _emit_deduplicate_col(
         lines.append(f"{ds_var} = {ds_var}.drop_duplicates(subset=[{cols_list}], keep='first')")
         return lines
     else:
-        return [f"{ds_var} = {ds_var}.drop_duplicates()"]
+        return [f"{ds_var} = {ds_var}.drop_duplicates(keep='first')"]
 
 
 def _emit_zero_to_null(col: str, ds_var: str, params: Dict[str, Any]) -> List[str]:
@@ -346,7 +346,7 @@ def _emit_nullify_dummy_dates(col: str, ds_var: str, _p: Dict[str, Any]) -> List
         f"# Nullify dummy dates (e.g. 1900-01-01 or Jan 1st default dates)",
         f"if {c} in {ds_var}.columns:",
         f"    _dates = pd.to_datetime({ds_var}[{c}], errors='coerce')",
-        f"    _mask = (_dates == '1900-01-01') | ((_dates.dt.month == 1) & (_dates.dt.day == 1))",
+        f"    _mask = (_dates == '1900-01-01') | ((_dates.dt.year <= 1900) & (_dates.dt.month == 1) & (_dates.dt.day == 1))",
         f"    {ds_var}.loc[_mask & {ds_var}[{c}].notna(), {c}] = pd.NA",
     ]
 
@@ -505,7 +505,7 @@ _ACTION_REGISTRY: Dict[str, Callable[[str, str, Dict[str, Any]], List[str]]] = {
     "cast_type": _emit_cast_type,
     "parse_dates": _emit_parse_dates,
     "nullify_date": _emit_parse_dates,
-    "nullify_dummy_dates": _emit_parse_dates,
+    "nullify_dummy_dates": _emit_nullify_dummy_dates,
     "sanitize_email": _emit_sanitize_email,
     "normalize_phone": _emit_normalize_phone,
     "hash_phone": _emit_hash_phone,
