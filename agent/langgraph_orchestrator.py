@@ -138,12 +138,33 @@ async def _node_extract_async(state: OrchestratorState) -> OrchestratorState:
     errors = []
     location_count = 0
 
-    if is_sql and (context.get("selected_tables") or context.get("last_table_list")):
-        selected_tables = context.get("selected_tables") or context.get("last_table_list") or []
-        if isinstance(selected_tables, str):
-            selected_tables = [selected_tables]
+    # Check for explicitly selected tables across state, session context, or sources.yaml
+    raw_sel_tables = (
+        state.get("selected_tables")
+        or state.get("tables")
+        or state.get("selected_table")
+        or context.get("selected_tables")
+        or context.get("selected_table")
+        or context.get("last_table_list")
+        or []
+    )
+    if isinstance(raw_sel_tables, str):
+        raw_sel_tables = [raw_sel_tables]
+    selected_tables = [str(t).strip() for t in raw_sel_tables if str(t).strip()]
+
+    # Also check if locations in sources.yaml specified tables
+    if not selected_tables:
+        for loc in (source_root.get("locations") or []):
+            loc_tables = loc.get("tables") or loc.get("selected_tables") or (loc.get("connection") or {}).get("tables")
+            if loc_tables:
+                if isinstance(loc_tables, str):
+                    loc_tables = [loc_tables]
+                selected_tables = [str(t).strip() for t in loc_tables if str(t).strip()]
+                break
+
+    if selected_tables:
         db_locs = [loc for loc in (source_root.get("locations") or []) if (loc.get("type") or "").lower() == "database"]
-        if selected_tables and db_locs:
+        if db_locs:
             db_idx = int(context.get("selected_db_location_index") or 0)
             db_idx = max(0, min(db_idx, len(db_locs) - 1))
             loc = db_locs[db_idx]
@@ -532,6 +553,7 @@ def run_orchestrator(
     approved_semantics: Optional[Dict[str, Dict[str, str]]] = None,
     session_id: str = "",
     business_rules: Optional[Dict[str, Any]] = None,
+    selected_tables: Optional[List[str]] = None,
     checkpointer=None,
 ) -> Dict[str, Any]:
     """
@@ -551,6 +573,7 @@ def run_orchestrator(
             "approved_semantics": approved_semantics or {},
             "session_id": session_id,
             "business_rules": business_rules or {},
+            "selected_tables": list(selected_tables) if selected_tables else None,
         }
     )
     if job_id:

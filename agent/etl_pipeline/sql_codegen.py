@@ -117,7 +117,7 @@ def translate_assertion_to_sql(assertion: str, cols: List[str] = None) -> str:
     return expr
 
 
-def _get_clean_table_name(ds_name: str) -> str:
+def _get_clean_table_name(ds_name: str, target_schema: str = None, timestamp_suffix: str = "") -> str:
     """Resolve raw table name to its clean table equivalent."""
     parts = ds_name.split(".", 1)
     if len(parts) == 2:
@@ -128,14 +128,22 @@ def _get_clean_table_name(ds_name: str) -> str:
     schema = schema.strip("[]")
     tbl_name = tbl_name.strip("[]")
     
+    if target_schema:
+        schema = target_schema.strip("[]")
+    
     tbl_lower = tbl_name.lower()
     if tbl_lower.endswith("_clean"):
         # Already a clean table — return as-is to avoid double-suffix (_Clean_Clean)
         clean_tbl = tbl_name
+    elif tbl_lower.endswith("_staging"):
+        clean_tbl = tbl_name[:-8] + "_Clean"
     elif tbl_lower.endswith("_raw"):
         clean_tbl = tbl_name[:-4] + "_Clean"
     else:
         clean_tbl = tbl_name + "_Clean"
+        
+    if timestamp_suffix:
+        clean_tbl = f"{clean_tbl}_{timestamp_suffix}"
         
     return f"{schema}.{clean_tbl}"
 
@@ -154,6 +162,8 @@ def _get_transformed_table_name(ds_name: str) -> str:
     
     if tbl_name.lower().endswith("_raw"):
         trans_tbl = tbl_name[:-4] + "_Transformed"
+    elif tbl_name.lower().endswith("_staging"):
+        trans_tbl = tbl_name[:-8] + "_Transformed"
     elif tbl_name.lower().endswith("_clean"):
         trans_tbl = tbl_name[:-6] + "_Transformed"
     else:
@@ -527,6 +537,8 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     invalid_values_to_seed = {}
     plan_id = str(plan.get("plan_id") or "unknown")
     business_rules: Dict[str, Any] = plan.get("business_rules") or {}
+    clean_schema: Optional[str] = business_rules.get("clean_schema") or plan.get("clean_schema") or None
+    timestamp_suffix: str = str(plan.get("timestamp_suffix") or business_rules.get("timestamp_suffix") or "")
     excluded_columns: List[str] = business_rules.get("exclude_columns") or []
     valid_values = business_rules.get("valid_values") or {}
 
@@ -678,6 +690,14 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         lines.append("-- __DEFAULT_VALUES_SEED_PLACEHOLDER__")
         lines.append("")
 
+        if clean_schema and clean_schema.lower() != "dbo" and dialect == "tsql":
+            lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = '{clean_schema}')")
+            lines.append(f"BEGIN")
+            lines.append(f"    EXEC('CREATE SCHEMA [{clean_schema}]');")
+            lines.append(f"END;")
+            lines.append(f"GO")
+            lines.append("")
+
         # Initialize target clean tables at script level to ensure dependent views compile
         lines.append("-- ============================================================")
         lines.append("-- Initialize Clean Tables if not exists")
@@ -686,7 +706,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         is_clean_script = (generation_mode != "transform_only")
         phase_suffix_script = "Clean" if is_clean_script else "Transformed"
         for ds_name, block in ds_plan.items():
-            tbl_clean = _get_clean_table_name(ds_name) if is_clean_script else _get_transformed_table_name(ds_name)
+            tbl_clean = _get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix) if is_clean_script else _get_transformed_table_name(ds_name)
             tbl_base = ds_name.split(".")[-1].strip("[]")
             clean_tbl = tsql_qualified_name(tbl_clean)
             
@@ -888,7 +908,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
 
     for ds_name, block in ds_plan.items():
         tbl_base = ds_name.split(".")[-1].strip("[]")
-        tbl_clean = _get_clean_table_name(ds_name)
+        tbl_clean = _get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix)
         tbl_transformed = _get_transformed_table_name(ds_name)
         
         phases_to_gen = []
@@ -924,9 +944,16 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             raw_tbl = src_tbl_expr
             clean_tbl = tgt_tbl_expr
             tbl_clean = target_tbl_str
-            tbl_staging = f"#{tbl_base}_Staging" if is_clean else f"#{tbl_base}_Transform_Staging"
             tbl_base = ds_name.split(".")[-1].strip("[]")
-            tbl_clean = _get_clean_table_name(ds_name)
+            tbl_pure = tbl_base
+            if tbl_pure.lower().endswith("_staging"):
+                tbl_pure = tbl_pure[:-8]
+            elif tbl_pure.lower().endswith("_clean"):
+                tbl_pure = tbl_pure[:-6]
+            elif tbl_pure.lower().endswith("_raw"):
+                tbl_pure = tbl_pure[:-4]
+            tbl_staging = f"#{tbl_pure}_Staging" if is_clean else f"#{tbl_pure}_Transform_Staging"
+            tbl_clean = _get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix)
         
         
             # Filter steps for current phase
@@ -1248,17 +1275,28 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 proc_lines.append(f"-- Create Staging Table with raw column types to preserve raw strings")
                 proc_lines.append(f"IF OBJECT_ID('tempdb..{tbl_staging}') IS NOT NULL DROP TABLE {tbl_staging};")
                 staging_cols_ddl = []
+                seen_staging_cols = set()
                 for col_name in cols:
-                    staging_cols_ddl.append(f"[{col_name}] NVARCHAR(MAX) NULL")
-                staging_cols_ddl.append("etl_batch_id INT NULL")
+                    c_clean = str(col_name).strip("[]")
+                    if c_clean.lower() not in seen_staging_cols:
+                        seen_staging_cols.add(c_clean.lower())
+                        staging_cols_ddl.append(f"[{c_clean}] NVARCHAR(MAX) NULL")
+                if "etl_batch_id" not in seen_staging_cols:
+                    seen_staging_cols.add("etl_batch_id")
+                    staging_cols_ddl.append("etl_batch_id INT NULL")
                 for st in steps:
                     if st.get("action") in ("flag_outliers", "clip_or_flag") and st.get("column") and st.get("column") not in excluded_columns:
-                        staging_cols_ddl.append(f"[{st.get('column')}_outlier_flagged] INT NULL")
+                        c_name = f"{st.get('column')}_outlier_flagged"
+                        if c_name.lower() not in seen_staging_cols:
+                            seen_staging_cols.add(c_name.lower())
+                            staging_cols_ddl.append(f"[{c_name}] INT NULL")
                     if st.get("action") == "cast_type" and st.get("column") and st.get("column") not in excluded_columns:
-                        staging_cols_ddl.append(f"[{st.get('column')}_int] BIGINT NULL")
+                        c_name = f"{st.get('column')}_int"
+                        if c_name.lower() not in seen_staging_cols:
+                            seen_staging_cols.add(c_name.lower())
+                            staging_cols_ddl.append(f"[{c_name}] BIGINT NULL")
 
                 # Add companion columns to staging table so UPDATE statements succeed without schema errors
-                seen_staging_companions = set()
                 for st in steps:
                     st_col = st.get("column")
                     if st_col and st_col not in excluded_columns and st_col not in ("*", "[Row-level]", "[row-level]"):
@@ -1267,8 +1305,8 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                         col_type = col_meta.get("dtype") or col_meta.get("target_dtype") or ""
                         target_type = get_sql_cast_type(col_type, st_col)
                         for comp in [f"{clean_c}_raw", f"{clean_c}_clean", f"{clean_c}_validation_status", f"{clean_c}_validation_reason"]:
-                            if comp not in seen_staging_companions:
-                                seen_staging_companions.add(comp)
+                            if comp.lower() not in seen_staging_cols:
+                                seen_staging_cols.add(comp.lower())
                                 if "status" in comp:
                                     comp_type = "VARCHAR(50)"
                                 elif "reason" in comp:
@@ -1278,9 +1316,15 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                                 else:
                                     comp_type = "NVARCHAR(MAX)"
                                 staging_cols_ddl.append(f"[{comp}] {comp_type} NULL")
-                staging_cols_ddl.append("[row_validation_status] VARCHAR(50) NULL")
-                staging_cols_ddl.append("[row_validation_reason] VARCHAR(500) NULL")
-                staging_cols_ddl.append("[is_duplicate_row] BIT NOT NULL DEFAULT 0")
+                if "row_validation_status" not in seen_staging_cols:
+                    seen_staging_cols.add("row_validation_status")
+                    staging_cols_ddl.append("[row_validation_status] VARCHAR(50) NULL")
+                if "row_validation_reason" not in seen_staging_cols:
+                    seen_staging_cols.add("row_validation_reason")
+                    staging_cols_ddl.append("[row_validation_reason] VARCHAR(500) NULL")
+                if "is_duplicate_row" not in seen_staging_cols:
+                    seen_staging_cols.add("is_duplicate_row")
+                    staging_cols_ddl.append("[is_duplicate_row] BIT NOT NULL DEFAULT 0")
 
                 ddl_joined = ", ".join(staging_cols_ddl)
                 proc_lines.append(f"CREATE TABLE {tbl_staging} ({ddl_joined});")
@@ -1627,7 +1671,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     rel_ds = p.get("related_dataset") or "?"
                     rel_col = p.get("related_column") or "?"
                     fk_action = p.get("fk_action") or "flag"
-                    parent_tbl = _get_clean_table_name(rel_ds)
+                    parent_tbl = _get_clean_table_name(rel_ds, target_schema=clean_schema, timestamp_suffix=timestamp_suffix)
                 
                     if dialect == "tsql":
                         step_lines.append(f"-- Referential integrity check: {col} -> {rel_ds}.{rel_col} (action={fk_action})")
@@ -2349,11 +2393,11 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 new_line = line
                 for ds_name in ds_plan.keys():
                     tbl_raw = tsql_qualified_name(ds_name)
-                    tbl_cl = tsql_qualified_name(_get_clean_table_name(ds_name))
+                    tbl_cl = tsql_qualified_name(_get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix))
                     new_line = new_line.replace(tbl_raw, tbl_cl)
                     
                     raw_base = ds_name.split(".")[-1].strip("[]")
-                    cl_base = _get_clean_table_name(ds_name).split(".")[-1].strip("[]")
+                    cl_base = _get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix).split(".")[-1].strip("[]")
                     new_line = new_line.replace(f"[{raw_base}]", f"[{cl_base}]")
                     # Prevent double-replacements by only matching raw_base as a full word boundary
                     new_line = re.sub(rf"\b{re.escape(raw_base)}\b", cl_base, new_line)
@@ -2442,4 +2486,6 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     ])
     
     full_sql = "\n".join(badge_lines) + full_sql
+    full_sql = re.sub(r"#([a-zA-Z0-9_]+?)_Staging_Staging\b", r"#\1_Staging", full_sql, flags=re.IGNORECASE)
+    full_sql = re.sub(r"#([a-zA-Z0-9_]+?)_staging_staging\b", r"#\1_Staging", full_sql, flags=re.IGNORECASE)
     return full_sql.strip() + "\n"

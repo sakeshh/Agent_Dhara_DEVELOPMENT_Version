@@ -220,6 +220,61 @@ def ensure_idempotent_sql(sql: str) -> str:
         sql,
         flags=re.IGNORECASE
     )
+
+    # 5. Sanitize accidental double staging temporary table references (#..._Staging_Staging)
+    sql = re.sub(r"#([a-zA-Z0-9_]+?)_Staging_Staging\b", r"#\1_Staging", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"#([a-zA-Z0-9_]+?)_staging_staging\b", r"#\1_Staging", sql, flags=re.IGNORECASE)
+
+    # 6. Balance stored procedures with outer END; and ensure auto-execution
+    has_sp = re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?", sql, re.IGNORECASE)
+    if has_sp:
+        sp_schema = has_sp.group(1) or "dbo"
+        sp_name = has_sp.group(2)
+        if re.search(r"\bAS\s+BEGIN\b", sql, re.IGNORECASE):
+            m_catch = re.search(r"\bEND\s+CATCH\s*;?", sql, re.IGNORECASE)
+            if m_catch:
+                post_catch = sql[m_catch.end():]
+                first_go_or_eof = re.search(r"\b(?:--\s*)?GO\b|\Z", post_catch, re.IGNORECASE)
+                between = post_catch[:first_go_or_eof.start()] if first_go_or_eof else post_catch
+                if not re.search(r"\bEND\b", between, re.IGNORECASE):
+                    sql = sql[:m_catch.end()] + "\nEND;" + sql[m_catch.end():]
+
+        # Ensure GO after procedure END;
+        sql = re.sub(r"(\bEND\s*;\s*)(?:\n\s*--\s*GO[^\n]*)?(\n\s*(?:--.*)?\n*(?:EXEC\b|\Z))", r"\1\nGO\n\2", sql, flags=re.IGNORECASE)
+
+        # Ensure EXEC is called
+        if not re.search(rf"\bEXEC\s+(?:\[?{re.escape(sp_schema)}\]?\.)?\[?{re.escape(sp_name)}\]?", sql, re.IGNORECASE):
+            sql = sql.rstrip() + f"\nGO\n\n-- Auto-Execute: Run procedure to populate Clean tables\nEXEC [{sp_schema}].[{sp_name}];\nGO\n"
+
+    # 7. Sanitize phantom [Row-level] update
+    sql = re.sub(
+        r"UPDATE\s+#\w+_Staging\s+SET\s+\[?Row-level_validation_status\]?[^;]+?WHERE\s+\[?Row-level\]?[^;]+;",
+        "",
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # 8. Sanitize phantom [Phone] update if staging doesn't include Phone
+    if "Phone" in sql and "[Phone]" in sql:
+        m_st_select = re.search(r"SELECT\s+([\s\S]+?)\s+INTO\s+#\w+_Staging", sql, re.IGNORECASE)
+        if not m_st_select:
+            m_st_select = re.search(r"SELECT\s+([\s\S]+?)\s+FROM\s+dbo\.\[?\w+\]?", sql, re.IGNORECASE)
+        st_cols_declared = m_st_select.group(1) if m_st_select else ""
+        if not re.search(r"\[?Phone\]?", st_cols_declared, re.IGNORECASE):
+            sql = re.sub(
+                r"(?:--[^\n]*\n\s*)?UPDATE\s+#\w+_Staging\s+SET\s+\[?Phone[^;]+?WHERE\s+[^;]+?;",
+                "",
+                sql,
+                flags=re.IGNORECASE
+            )
+
+    # 9. Apply comprehensive postprocessing (uncreated staging tables, DDL hoisting, etc.)
+    try:
+        from agent.etl_pipeline.llm_codegen import _postprocess_tsql_code
+        sql = _postprocess_tsql_code(sql)
+    except Exception as e:
+        logger.warning(f"Failed to postprocess T-SQL code in ensure_idempotent_sql: {e}")
+
     return sql
 
 

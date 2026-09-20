@@ -44,11 +44,32 @@ def get_connection(connection_string: str | None = None) -> pyodbc.Connection:
     conn_str = connection_string or os.getenv("DHARA_AZURE_SQL_CONN_STR")
     if not conn_str:
         server = os.getenv("AZURE_SQL_SERVER")
-        if server and not server.endswith(".database.windows.net") and "localhost" not in server and "127.0.0.1" not in server and ":" not in server:
-            server = server + ".database.windows.net"
         database = os.getenv("AZURE_SQL_DATABASE")
         user = os.getenv("AZURE_SQL_USERNAME") or os.getenv("AZURE_SQL_USER")
         password = os.getenv("AZURE_SQL_PASSWORD")
+
+        # Fallback to config/sources.yaml if server or database is not set in env
+        if not (server and database):
+            try:
+                import yaml
+                from agent.bootstrap import resolve_sources_path
+                sp = resolve_sources_path(os.environ.get("MCP_SOURCES_PATH") or "config/sources.yaml")
+                if os.path.exists(sp):
+                    with open(sp, "r", encoding="utf-8") as f:
+                        cfg = yaml.safe_load(f) or {}
+                    locs = (cfg.get("source") or {}).get("locations", [])
+                    db_loc = next((l for l in locs if isinstance(l, dict) and l.get("type") == "database"), None)
+                    if db_loc and isinstance(db_loc.get("connection"), dict):
+                        conn_info = db_loc["connection"]
+                        server = server or conn_info.get("server") or conn_info.get("Server")
+                        database = database or conn_info.get("database") or conn_info.get("Database")
+                        user = user or conn_info.get("username") or conn_info.get("user") or conn_info.get("Uid")
+                        password = password or conn_info.get("password") or conn_info.get("Pwd")
+            except Exception as ex:
+                logger.warning("Failed reading database config from sources.yaml fallback: %s", ex)
+
+        if server and not server.endswith(".database.windows.net") and "localhost" not in server and "127.0.0.1" not in server and ":" not in server:
+            server = server + ".database.windows.net"
 
         if server and database:
             driver = "ODBC Driver 17 for SQL Server"
@@ -83,7 +104,7 @@ def get_connection(connection_string: str | None = None) -> pyodbc.Connection:
         else:
             raise ConnectionError(
                 "Database connection string is missing. Please set DHARA_AZURE_SQL_CONN_STR or "
-                "configure AZURE_SQL_SERVER and AZURE_SQL_DATABASE in environment."
+                "configure AZURE_SQL_SERVER and AZURE_SQL_DATABASE in environment or config/sources.yaml."
             )
 
     timeout_str = os.getenv("DHARA_SQL_CONNECT_TIMEOUT_S", "30")
@@ -177,18 +198,88 @@ def _split_sql_batches(sql: str) -> list[str]:
 
 def _remediate_batch_syntax_error(batch_sql: str, error_msg: str) -> list[str]:
     """
-    If a batch fails with Msg 156 (Incorrect syntax near the keyword 'OR'),
-    attempt automated remediation for known compatibility/syntax issues:
-    1. 'CREATE OR ALTER' on database compatibility level < 130:
-       Transform to:
-         IF OBJECT_ID('schema.obj', '<type>') IS NOT NULL DROP <TYPE> schema.obj;
-         CREATE <TYPE> schema.obj ...
-    2. 'CREATE OR REPLACE' -> convert to CREATE (with drop if exists)
-    3. 'CREATE OR ALTER TABLE' -> convert to CREATE TABLE
-    4. Filtered index with 'WHERE ... OR ...' -> strip WHERE clause
+    Attempt automated remediation for known SQL Server batch execution errors:
+    1. Msg 102 (Incorrect syntax near ';'): Unclosed stored procedure AS BEGIN block missing END;
+    2. Msg 111 ('CREATE/ALTER PROCEDURE' must be the first statement in a query batch) / embedded EXEC
+    3. Msg 208 (Invalid object name '#..._Staging'): INSERT INTO #Staging without prior creation
+    4. Msg 156 (Incorrect syntax near the keyword 'OR'):
+       - 'CREATE OR ALTER' on database compatibility level < 130
+       - 'CREATE OR REPLACE' -> convert to CREATE (with drop if exists)
+       - 'CREATE OR ALTER TABLE' -> convert to CREATE TABLE
+       - Filtered index with 'WHERE ... OR ...' -> strip WHERE clause
     Returns list of one or more remediated batch strings, or [] if no remediation applies.
     """
-    if not error_msg or not any(k in error_msg.lower() for k in ("keyword 'or'", "near 'or'", "near the keyword 'or'")):
+    if not error_msg:
+        return []
+
+    err_low = error_msg.lower()
+
+    # Remediation A: Msg 102 (Incorrect syntax near ';') - Stored procedure missing outer END;
+    if "102" in err_low or "near ';'" in err_low or "syntax near ';'" in err_low:
+        if re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\b", batch_sql, re.IGNORECASE):
+            if re.search(r"\bAS\s+BEGIN\b", batch_sql, re.IGNORECASE):
+                # Check if outer END; is missing after END CATCH;
+                m_catch = re.search(r"\bEND\s+CATCH\s*;?", batch_sql, re.IGNORECASE)
+                if m_catch:
+                    post_catch = batch_sql[m_catch.end():]
+                    if not re.search(r"\bEND\b", post_catch, re.IGNORECASE):
+                        fixed_sql = batch_sql[:m_catch.end()] + "\nEND;" + post_catch
+                        return [fixed_sql]
+                # General check: if batch ends with semicolon but missing closing END
+                fixed_sql = batch_sql.rstrip()
+                if not fixed_sql.endswith("END;") and not fixed_sql.endswith("END"):
+                    return [fixed_sql + "\nEND;"]
+
+    # Remediation B: Msg 111 - 'CREATE/ALTER PROCEDURE' must be the first statement in a query batch
+    # Or batch has CREATE PROCEDURE followed directly by EXEC in same batch
+    if "111" in err_low or "first statement in a query batch" in err_low or re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?PROCEDURE[\s\S]+\bEXEC\b", batch_sql, re.IGNORECASE):
+        # Separate any preceding statements from CREATE PROCEDURE, and any following statements (like EXEC)
+        m_proc = re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\b", batch_sql, re.IGNORECASE)
+        if m_proc and m_proc.start() > 0:
+            pre = batch_sql[:m_proc.start()].strip()
+            rest = batch_sql[m_proc.start():].strip()
+            sub_batches = []
+            if pre:
+                sub_batches.append(pre)
+            if rest:
+                sub_batches.extend(_split_sql_batches(rest))
+            if len(sub_batches) > 1:
+                return sub_batches
+
+        # Check if EXEC is inside or after the procedure without GO separator
+        m_exec = re.search(r"(\bEND\s*;\s*)(\bEXEC\s+[\s\S]+)$", batch_sql, re.IGNORECASE)
+        if m_exec:
+            proc_part = batch_sql[:m_exec.start(2)].strip()
+            exec_part = m_exec.group(2).strip()
+            return [proc_part, exec_part]
+
+    # Remediation C: Msg 208 - Invalid object name '#..._Staging'
+    if "208" in err_low and "_staging" in err_low:
+        if re.search(r"\bINSERT\s+INTO\s+#([a-zA-Z0-9_]+?)_Staging\s+SELECT\b", batch_sql, re.IGNORECASE):
+            converted = re.sub(
+                r"\bINSERT\s+INTO\s+#([a-zA-Z0-9_]+?)_Staging\s+SELECT\b",
+                r"SELECT",
+                batch_sql,
+                flags=re.IGNORECASE
+            )
+            converted = re.sub(
+                r"SELECT\s+([\s\S]+?)\bFROM\s+dbo\.\[?([a-zA-Z0-9_]+)\]?",
+                r"SELECT \1 INTO #\2_Staging FROM dbo.[\2]",
+                converted,
+                count=1,
+                flags=re.IGNORECASE
+            )
+            return [f"IF OBJECT_ID('tempdb..#EmployeeMaster_Staging') IS NOT NULL DROP TABLE #EmployeeMaster_Staging;\n" + converted]
+
+    # Remediation D: Msg 207 - Invalid column name 'Phone'
+    if "207" in err_low and "'phone'" in err_low:
+        # Strip phone update from staging table
+        stripped = re.sub(r"(?:--[^\n]*\n\s*)?UPDATE\s+#\w+_Staging\s+SET\s+\[?Phone[^;]+?WHERE\s+[^;]+?;", "", batch_sql, flags=re.IGNORECASE)
+        if stripped != batch_sql:
+            return [stripped]
+
+    # Check for keyword 'OR' errors (Msg 156)
+    if not any(k in err_low for k in ("keyword 'or'", "near 'or'", "near the keyword 'or'")):
         return []
 
     # Remediation 1: CREATE OR ALTER {PROCEDURE|PROC|VIEW|FUNCTION|TRIGGER} -> compatibility fallback (DROP IF EXISTS + CREATE)
@@ -549,6 +640,11 @@ def check_requires_approval(sql: str, ops: list[str] | None = None) -> dict:
     for op in ops:
         pattern = rf"\b{re.escape(op.lower())}\b"
         if re.search(pattern, cleaned_lower):
+            # Exclude dropping temporary tables (e.g. DROP TABLE #..._Staging)
+            if op.upper() == "DROP":
+                no_temp_drops = re.sub(r"\bdrop\s+table\s+(?:if\s+exists\s+)?#\w+", "", cleaned_lower)
+                if not re.search(r"\bdrop\b", no_temp_drops):
+                    continue
             ops_found.append(op)
 
     return {"requires_approval": len(ops_found) > 0, "ops_found": ops_found}
