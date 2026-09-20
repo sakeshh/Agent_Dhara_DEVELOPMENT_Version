@@ -2654,17 +2654,41 @@ def _consolidate_and_filter_datasets(
 def _extract_assessment_dq_issues(assessment: Dict[str, Any], plan: Dict[str, Any]) -> List[Dict[str, Any]]:
     issues: List[Dict[str, Any]] = []
     seen = set()
+    seen_issue_ids = set()
+
+    def _is_col_in_dataset(ds: str, c: Any) -> bool:
+        if not c or not ds or ds == "_global":
+            return True
+        c_str = str(c).strip()
+        if c_str in ("*", "[Row-level]", "[row-level]", "row-level"):
+            return True
+        ds_info = (assessment.get("datasets") or {}).get(ds) or {}
+        if not ds_info:
+            ds_clean = ds.replace("dbo.", "").strip()
+            ds_info = (assessment.get("datasets") or {}).get(ds_clean) or {}
+        cols = (ds_info.get("columns") or {}).keys()
+        if not cols:
+            return True
+        known = {str(col_k).strip("[]").lower() for col_k in cols}
+        for part in c_str.split(","):
+            part_clean = part.strip().strip("[]").lower()
+            if part_clean and part_clean not in ("*", "row-level") and part_clean not in known:
+                return False
+        return True
 
     # 1. From assessment.data_quality_issues.datasets
     dq_issues_ds = (assessment.get("data_quality_issues") or {}).get("datasets") or {}
     for ds_name, dq_block in dq_issues_ds.items():
         for iss in (dq_block.get("issues") or []):
             col = iss.get("column")
+            if not _is_col_in_dataset(ds_name, col):
+                continue
             itype = iss.get("issue_type") or iss.get("rule_id") or "issue"
             key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
-            if key not in seen:
+            iid = iss.get("issue_id") or iss.get("id") or make_issue_id(ds_name, col, itype)
+            if key not in seen and iid not in seen_issue_ids:
                 seen.add(key)
-                iid = make_issue_id(ds_name, col, itype)
+                seen_issue_ids.add(iid)
                 issues.append({
                     "issue_id": iid,
                     "dataset": ds_name,
@@ -2681,11 +2705,14 @@ def _extract_assessment_dq_issues(assessment: Dict[str, Any], plan: Dict[str, An
         q = (ds_meta.get("quality") or {}) if isinstance(ds_meta, dict) else {}
         for iss in (q.get("issues") or []):
             col = iss.get("column")
+            if not _is_col_in_dataset(ds_name, col):
+                continue
             itype = iss.get("issue_type") or iss.get("rule_id") or "issue"
             key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
-            if key not in seen:
+            iid = iss.get("issue_id") or iss.get("id") or make_issue_id(ds_name, col, itype)
+            if key not in seen and iid not in seen_issue_ids:
                 seen.add(key)
-                iid = make_issue_id(ds_name, col, itype)
+                seen_issue_ids.add(iid)
                 issues.append({
                     "issue_id": iid,
                     "dataset": ds_name,
@@ -2701,11 +2728,14 @@ def _extract_assessment_dq_issues(assessment: Dict[str, Any], plan: Dict[str, An
     for item in (plan.get("manual_review") or []):
         ds_name = item.get("dataset") or ""
         col = item.get("column") or ""
+        if not _is_col_in_dataset(ds_name, col):
+            continue
         itype = item.get("issue_type") or item.get("rule_id") or "manual_review"
         key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
-        if key not in seen:
+        iid = item.get("id") or item.get("issue_id") or make_issue_id(ds_name, col, itype)
+        if key not in seen and iid not in seen_issue_ids:
             seen.add(key)
-            iid = item.get("id") or make_issue_id(ds_name, col, itype)
+            seen_issue_ids.add(iid)
             issues.append({
                 "issue_id": iid,
                 "dataset": ds_name,
@@ -2727,10 +2757,13 @@ def _extract_assessment_dq_issues(assessment: Dict[str, Any], plan: Dict[str, An
                 if not itype or itype in ("business_notes", "none"):
                     continue
                 col = st.get("column")
+                if not _is_col_in_dataset(ds_name, col):
+                    continue
                 key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
-                if key not in seen:
+                iid = st.get("issue_id") or make_issue_id(ds_name, col, itype)
+                if key not in seen and iid not in seen_issue_ids:
                     seen.add(key)
-                    iid = make_issue_id(ds_name, col, itype)
+                    seen_issue_ids.add(iid)
                     issues.append({
                         "issue_id": iid,
                         "dataset": ds_name,

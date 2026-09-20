@@ -146,6 +146,45 @@ def test_cross_field_composite_column_no_embedded_commas_in_ddl():
     assert "[ContractStartDate,ContractEndDate" not in sql
 
 
+def test_composite_deduplicate_and_transforms_no_comma_brackets_in_ddl_dml():
+    """Replicate reviewer's exact finding: [EmployeeID, EffectiveFrom_raw] and [EmployeeID, EffectiveFrom_clean]."""
+    plan = {
+        "plan_id": "test_composite_leak",
+        "generation_mode": "cleanse_only",
+        "datasets": {
+            "dbo.EmployeeHistory": {
+                "steps": [
+                    {"action": "deduplicate", "column": "EmployeeID, EffectiveFrom"},
+                    {"action": "trim", "column": "EmployeeID, EffectiveFrom"},
+                    {"action": "replace_sentinel_values", "column": "EmployeeID, EffectiveFrom"}
+                ]
+            }
+        }
+    }
+    assessment = {
+        "datasets": {
+            "dbo.EmployeeHistory": {
+                "columns": {
+                    "EmployeeID": {"dtype": "int", "candidate_primary_key": True},
+                    "EffectiveFrom": {"dtype": "date"},
+                    "Department": {"dtype": "varchar(50)"}
+                }
+            }
+        }
+    }
+    sql = generate_sql_etl(plan, assessment, dialect="tsql")
+    # Verify exact blocker reported by reviewer is absent:
+    assert "[EmployeeID, EffectiveFrom_raw]" not in sql
+    assert "[EmployeeID, EffectiveFrom_clean]" not in sql
+    assert "[EmployeeID, EffectiveFrom" not in sql
+    
+    clean_sql = re.sub(r"'(?:''|[^'])*'", "''", sql)
+    clean_sql = re.sub(r"--[^\n]*", "", clean_sql)
+    assert not re.search(r"\[\s*[^\]\n']+,[^\]\n']+\]", clean_sql), f"DDL/DML must not contain bracketed identifiers with commas"
+    ok, errors, warnings = validate_tsql(sql)
+    assert ok, f"T-SQL validation failed: {errors}"
+
+
 def test_categorical_columns_never_cast_to_numeric():
     """Ensure columns with names like 'Country', 'State', 'City' are never cast to DECIMAL/BIGINT."""
     # Even if dtype was profiled as decimal/numeric/float from messy data
@@ -234,3 +273,101 @@ def test_stored_procedures_do_not_contain_alter_table():
     assert "ALTER TABLE" not in proc_body, "Stored procedure body must not contain ALTER TABLE statements"
     # Clean table DDL must be present before the procedure
     assert "CREATE TABLE [dbo].[Customers_Clean]" in sql or "CREATE TABLE dbo.Customers_Clean" in sql
+
+
+def test_schema_grounding_and_entity_boundary_enforcement():
+    """Verify non-existent columns (EmploymentType) and cross-entity attributes (OfficeLocation) are not emitted."""
+    plan = {
+        "plan_id": "test_schema_grounding",
+        "generation_mode": "cleanse_only",
+        "datasets": {
+            "dbo.Dhara_Employee": {
+                "steps": [
+                    {"action": "trim", "column": "EmployeeName"},
+                    {"action": "sanitize_email", "column": "Email"},
+                    # Non-existent column in this dataset:
+                    {"action": "replace_sentinel_values", "column": "EmploymentType"},
+                    # Cross-table leaked attribute from OrgReference:
+                    {"action": "replace_sentinel_values", "column": "OfficeLocation"},
+                    {"action": "cast_type", "column": "ReferenceID", "target_type": "int"}
+                ]
+            }
+        }
+    }
+    assessment = {
+        "datasets": {
+            "dbo.Dhara_Employee": {
+                "columns": {
+                    "EmployeeID": {"dtype": "int", "candidate_primary_key": True},
+                    "EmployeeName": {"dtype": "varchar(100)"},
+                    "Email": {"dtype": "varchar(100)"}
+                }
+            }
+        },
+        "data_quality_issues": {
+            "datasets": {
+                "dbo.Dhara_Employee": {
+                    "issues": [
+                        # Issue on non-existent column
+                        {"column": "EmploymentType", "type": "null_value", "severity": "high", "id": "ISSUE-orphan-1"},
+                        # Leaked issue from another entity
+                        {"column": "OfficeLocation", "type": "placeholder", "severity": "low", "id": "ISSUE-leaked-2"}
+                    ]
+                }
+            }
+        }
+    }
+    sql = generate_sql_etl(plan, assessment, dialect="tsql")
+
+    # Schema Grounding: EmploymentType is not in Dhara_Employee schema -> must NOT be emitted
+    assert "EmploymentType_validation_status" not in sql, "Non-existent column must not have validation status"
+    assert "EmploymentType_raw" not in sql, "Non-existent column must not have companion raw column"
+    assert "EmploymentType" not in sql, "Non-existent column must not appear in generated SQL"
+
+    # Entity Boundary: OfficeLocation and ReferenceID must NOT appear in Dhara_Employee procedure
+    assert "OfficeLocation" not in sql, "Cross-table leaked attribute must not appear in Dhara_Employee"
+    assert "ReferenceID" not in sql, "Cross-table leaked attribute must not appear in Dhara_Employee"
+
+    # Legitimate columns must be present and valid
+    assert "EmployeeName_raw" in sql
+    assert "Email_validation_status" in sql
+    ok, errors, warnings = validate_tsql(sql)
+    assert ok, f"T-SQL validation failed: {errors}"
+
+
+def test_validation_conflict_resolution_and_duplicate_suppression():
+    """Verify duplicate issue_ids are suppressed and validation reasons accumulate without overwriting."""
+    plan = {
+        "plan_id": "test_conflict_and_dedup",
+        "generation_mode": "cleanse_only",
+        "datasets": {
+            "dbo.Users": {
+                "steps": [
+                    {"action": "sanitize_email", "column": "Email", "issue_id": "ISSUE-50af3a64"},
+                    # Duplicate step with same issue_id:
+                    {"action": "sanitize_email", "column": "Email", "issue_id": "ISSUE-50af3a64"},
+                    {"action": "trim", "column": "Email"}
+                ]
+            }
+        }
+    }
+    assessment = {
+        "datasets": {
+            "dbo.Users": {
+                "columns": {
+                    "UserID": {"dtype": "int", "candidate_primary_key": True},
+                    "Email": {"dtype": "varchar(200)"}
+                }
+            }
+        }
+    }
+    sql = generate_sql_etl(plan, assessment, dialect="tsql")
+
+    # Verify duplicate issue suppression: only one sanitize_email transformation generated
+    assert sql.count("COVERS: ISSUE-50af3a64") == 1
+    assert sql.count("[Email_clean] =") == 1
+    assert sql.count("[Email_validation_status] = CASE WHEN") == 1
+
+    # Verify conflict resolution: accumulation pattern is used
+    assert "[Email_validation_reason] IS NULL" in sql
+    assert "+ '; '" in sql or "+ ';'" in sql, "Validation reason accumulation pattern must be present"
