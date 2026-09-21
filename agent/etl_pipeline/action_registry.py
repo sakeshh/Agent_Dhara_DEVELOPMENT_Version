@@ -364,9 +364,85 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
 
     # ─────────────────────────────────────────────────────────────────────
+    # CANONICALIZED FLAG ACTIONS — Phase 1 replacements injected by
+    # issue_to_step_compiler and canonicalize_promoted_plan.
+    # These are fully valid plan actions; they must be registered here so
+    # get_action_meta() does NOT return _unknown and trigger false errors.
+    # ─────────────────────────────────────────────────────────────────────
+
+    "flag_missing_key": {
+        "phase": 1, "auto_eligible": True, "destructive": False,
+        "requires_review": False, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "description": (
+            "Flag rows where a required/FK key column is null. "
+            "Adds validation_status and validation_reason columns. No row removal."
+        ),
+    },
+    "flag_missing_declared_key": {
+        "phase": 1, "auto_eligible": False, "destructive": False,
+        "requires_review": True, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "description": (
+            "Flag rows where a declared primary/business key is null. "
+            "Requires steward acknowledgement before ETL proceeds."
+        ),
+    },
+    "flag_domain_violation": {
+        "phase": 1, "auto_eligible": True, "destructive": False,
+        "requires_review": False, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "description": (
+            "Flag rows where a column value falls outside its declared domain/enum. "
+            "Adds validation_status and validation_reason columns. No value mutation."
+        ),
+    },
+    "nullify_punctuation": {
+        "phase": 1, "auto_eligible": True, "destructive": False,
+        "requires_review": False, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "description": (
+            "Set values that consist entirely of punctuation, symbols, or whitespace "
+            "(e.g. ???, ---, N/A) to NULL. Preserves meaningful text values."
+        ),
+    },
+    "fill_nulls_flag": {
+        "phase": 1, "auto_eligible": True, "destructive": False,
+        "requires_review": False, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "description": (
+            "Preserve null values and add a boolean flag column indicating null presence. "
+            "No fill value is applied — this is a diagnostic marker only."
+        ),
+    },
+    "at_least_one": {
+        "phase": 1, "auto_eligible": True, "destructive": False,
+        "requires_review": False, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "description": (
+            "Flag rows where none of the specified columns have a non-null value "
+            "(at-least-one constraint). Does not mutate values."
+        ),
+    },
+    "baseline_string_trim": {
+        "phase": 1, "auto_eligible": True, "destructive": False,
+        "requires_review": False, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "description": "Synthetic issue type for baseline B1 string trim steps (no real DQ issue).",
+    },
+    "baseline_type_enforcement": {
+        "phase": 1, "auto_eligible": True, "destructive": False,
+        "requires_review": False, "changes_row_population": False,
+        "changes_business_meaning": False,
+        "description": "Synthetic issue type for baseline B1 cast_type steps (no real DQ issue).",
+    },
+
+
+    # ─────────────────────────────────────────────────────────────────────
     # EXPLICIT NULL DISPOSITION ACTIONS — Phase 1 canonical replacements
     # for fill_nulls_simple. Each encodes exactly one approved policy.
     # ─────────────────────────────────────────────────────────────────────
+
 
     "fill_null_with_constant": {
         "phase": 1, "auto_eligible": False, "destructive": False,

@@ -267,6 +267,8 @@ def apply_manual_resolutions(
 
         ds = str(item.get("dataset") or "").strip()
         col = item.get("column")
+        if not col or str(col).strip().lower() in ("unknown", "none", "null", "all", "table", "dataset", "-", "[table-level]", "[row-level]"):
+            col = "*"
 
         # P0: Route configuration actions separately from dataset column transformations
         if action in ("update_manifest", "ignore_mismatch", "acknowledge_mismatch", "reconcile_schema") or "manifest" in issue_type:
@@ -295,8 +297,23 @@ def apply_manual_resolutions(
             resolved_log.append({**item, "promoted": True, "configuration_patch_id": cfg_patch.patch_id})
             continue
 
-        # P0-D: Block synthetic/global dataset scopes
+        # P0-D: Block synthetic/global dataset scopes.
+        # Exception: missing_required_column issues are legitimately global (the column doesn't exist
+        # in *any* dataset). Route these to skip_requirement so they can be resolved by removing
+        # the column from business_rules.required_columns.
         if not ds or ds in ("_global", "global"):
+            if issue_type == "missing_required_column":
+                # Remove from required_columns (same as skip_requirement action)
+                req_cols = rules.get("required_columns") or []
+                col_str = str(item.get("column") or "").strip()
+                rules["required_columns"] = [rc for rc in req_cols if str(rc).lower() != col_str.lower()]
+                plan["business_rules"] = rules
+                item["status"] = "resolved"
+                item["resolved_action"] = "skip_requirement"
+                item["selected_resolution"] = rid
+                resolved_log.append({**item, "promoted": True, "skip_reason": "missing_required_column_skipped"})
+                continue
+            # All other global-scope items cannot be promoted to a dataset step
             errs.append(
                 f"Item {iid} has synthetic global scope (dataset='{ds}'). "
                 "Use RELATIONSHIP or PORTFOLIO scope for cross-dataset operations. "
@@ -497,9 +514,21 @@ def apply_manual_resolutions(
             severity=str(item.get("severity") or "medium"),
             never_drop_rows=never_drop,
         )
+        col_val = item.get("column")
+        auto_step_id, auto_fingerprint = make_step_id({
+            "dataset_id": ds,
+            "column": col_val,
+            "action": default_action,
+            "params": {},
+            "source_issue_ids": [str(item.get("id") or "")],
+            "policy_id": "",
+        })
+        iid_str = str(item.get("id") or manual_review_item_id(ds, col_val, issue_type))
         steps.append({
+            "step_id": auto_step_id,
+            "action_fingerprint": auto_fingerprint,
             "order": len(steps) + 1,
-            "column": item.get("column"),
+            "column": col_val,
             "action": default_action,
             "bucket": res_bucket["bucket"],
             "phase": res_bucket["phase"],
@@ -513,6 +542,11 @@ def apply_manual_resolutions(
             },
             "severity": item.get("severity") or "medium",
             "source_issue_type": issue_type,
+            "source_issue_types": [issue_type],
+            "source_issue_ids": [iid_str],
+            "auto_fixable": True,
+            "execution_mode": "AUTO_RESOLVED",
+            "resolution_status": "AUTO_RESOLVED",
         })
         steps.sort(
             key=lambda s: (_ACTION_PRIORITY.get(str(s.get("action") or ""), 80),

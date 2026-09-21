@@ -31,3 +31,11 @@ async def test_circuit_breaker():
     assert "Circuit open" in err
     
     _PLAN_FAILURE_COUNTS[plan_id] = 0
+
+
+def test_retry_budget_and_deadline_settings():
+    from agent.etl_pipeline.llm_codegen import _RETRY_BUDGET
+    # Verify retry budget is tightened to at most 1 retry per engine to avoid 504 timeouts
+    assert _RETRY_BUDGET.get("sql-tsql") == 1
+    assert _RETRY_BUDGET.get("python") == 1
+    assert _RETRY_BUDGET.get("pyspark") == 1

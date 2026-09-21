@@ -123,6 +123,28 @@ relationships:
         casefold: false
         null_tokens: ["", "N/A", "UNKNOWN", "none", "null", "unknown"]
 
+    - name: REL_EMP_MANAGER
+      relationship_id: REL_EMP_MANAGER
+      parent:
+        dataset: dbo.Dhara_Employee
+        columns: [EmployeeID]
+      child:
+        dataset: dbo.Dhara_Employee
+        columns: [ManagerID]
+      source_dataset: dbo.Dhara_Employee
+      source_columns: [ManagerID]
+      target_dataset: dbo.Dhara_Employee
+      target_columns: [EmployeeID]
+      relationship_type: SELF_REFERENCING_FOREIGN_KEY
+      cardinality: MANY_TO_ONE
+      null_policy: ALLOW_FOR_TOP_LEVEL
+      severity: high
+      gating: false
+      normalization:
+        trim: true
+        casefold: false
+        null_tokens: ["", "N/A", "UNKNOWN", "none", "null", "unknown", "None", "NULL"]
+
 # Duplicate detection (same schema + high ID overlap).
 duplicate_detection:
   min_id_overlap_ratio: 0.95

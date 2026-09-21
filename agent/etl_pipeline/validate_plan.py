@@ -75,10 +75,18 @@ def validate_etl_plan(
                 params.setdefault("reason_column", f"{col}_validation_reason")
             if action == "drop_rows" and never_drop:
                 errs.append(f"never_drop_rows: drop_rows on {ds_name}.{col} is not allowed")
-            if col and str(col) not in cols and str(col) not in ("*", "[Row-level]"):
+            table_level_exemptions = {"*", "[row-level]", "[table-level]", "[dataset-level]", "dataset", "table", "unknown", "none", "null", "all"}
+            if col and str(col).strip().lower() in table_level_exemptions:
+                st["column"] = "*"
+                col = "*"
+            elif col:
+                # Case-insensitive column check (Bug 2 fix)
                 cols_lower = {str(c).lower() for c in cols}
+                col_lower = str(col).strip().lower()
+                # Handle composite column references (comma-separated)
                 sub_cols = [c.strip() for c in str(col).split(",") if c.strip()]
-                if not (sub_cols and all(str(sc).lower() in cols_lower for sc in sub_cols)):
+                all_parts_known = all(sc.lower() in cols_lower for sc in sub_cols) if sub_cols else (col_lower in cols_lower)
+                if not all_parts_known:
                     errs.append(f"column '{col}' not in assessment schema for dataset '{ds_name}'")
             if col:
                 seen_cols.setdefault(str(col), []).append(action)
@@ -123,18 +131,35 @@ def validate_etl_plan(
             col = issue.get("column")
             if sev == "HIGH" and fix == "NOT_FIXABLE":
                 covered_in_plan = False
+                # Bug 3 fix: use case-insensitive comparison for dataset and column names
+                col_norm = str(col).strip().lower() if col is not None else ""
+                ds_norm = str(ds_name).strip().lower()
                 for mr in (plan.get("manual_review") or []):
-                    if isinstance(mr, dict) and str(mr.get("dataset")) == ds_name and str(mr.get("column")) == str(col):
+                    if not isinstance(mr, dict):
+                        continue
+                    mr_ds = str(mr.get("dataset") or "").strip().lower()
+                    mr_col = str(mr.get("column") or "").strip().lower() if mr.get("column") is not None else ""
+                    if mr_ds == ds_norm and mr_col == col_norm:
                         covered_in_plan = True
                         break
-                for mr in (plan.get("resolved_manual_review") or []):
-                    if isinstance(mr, dict) and str(mr.get("dataset")) == ds_name and str(mr.get("column")) == str(col):
-                        covered_in_plan = True
-                        break
-                for b in (plan.get("blocked") or []):
-                    if isinstance(b, dict) and str(b.get("dataset")) == ds_name and str(b.get("column")) == str(col):
-                        covered_in_plan = True
-                        break
+                if not covered_in_plan:
+                    for mr in (plan.get("resolved_manual_review") or []):
+                        if not isinstance(mr, dict):
+                            continue
+                        mr_ds = str(mr.get("dataset") or "").strip().lower()
+                        mr_col = str(mr.get("column") or "").strip().lower() if mr.get("column") is not None else ""
+                        if mr_ds == ds_norm and mr_col == col_norm:
+                            covered_in_plan = True
+                            break
+                if not covered_in_plan:
+                    for b in (plan.get("blocked") or []):
+                        if not isinstance(b, dict):
+                            continue
+                        b_ds = str(b.get("dataset") or "").strip().lower()
+                        b_col = str(b.get("column") or "").strip().lower() if b.get("column") is not None else ""
+                        if b_ds == ds_norm and b_col == col_norm:
+                            covered_in_plan = True
+                            break
                 if not covered_in_plan:
                     errs.append(
                         f"Dataset '{ds_name}' column '{col}' has a HIGH severity NOT_FIXABLE issue ({issue.get('type')}) "
@@ -172,6 +197,9 @@ def validate_etl_plan(
         
         plan["validation_certificate"] = {
             "status": "PASSED",
+            "structural_status": "VALID",
+            "readiness": "BLOCKED_PENDING_MANUAL_REVIEW" if manual_pending else "READY_FOR_EXECUTION",
+            "codegen_eligible": (len(manual_pending) == 0),
             "validated_plan_hash": plan_hash,
             "validator_version": "1.0.0",
             "action_registry_version": "1.0.0",
@@ -224,6 +252,68 @@ def validate_issue_registration(raw_issue_type: str) -> Dict[str, Any]:
     }
 
 
+def normalize_manual_review_registration(manual_review_item: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalizes a manual review record before structural validation.
+    Preserves original issue type and routes unregistered issues to universal manual review
+    without failing structural plan validation.
+    """
+    item = dict(manual_review_item)
+    issue_type = (
+        item.get("issue_type")
+        or item.get("detector_issue_type")
+        or item.get("rule_type")
+        or item.get("finding_name")
+        or item.get("type")
+        or "unspecified_issue"
+    )
+    issue_type_str = str(issue_type).strip() if issue_type else "unspecified_issue"
+    if not issue_type_str or issue_type_str.lower() == "unknown":
+        for alt_key in ("detector_issue_type", "rule_type", "finding_name", "type"):
+            alt_val = item.get(alt_key)
+            if alt_val and str(alt_val).lower() not in ("unknown", "none", ""):
+                issue_type_str = str(alt_val).strip()
+                break
+        else:
+            issue_type_str = "unspecified_issue"
+
+    registration = validate_issue_registration(issue_type_str)
+
+    item["issue_type"] = issue_type_str
+    item["original_issue_type"] = issue_type_str
+
+    if registration["registration_status"] == "unknown":
+        item["planning_disposition"] = "MANUAL_REVIEW_REQUIRED"
+        item["reason_code"] = "NO_APPROVED_REMEDIATION_MAPPING"
+        item["execution_eligible"] = False
+        item["readiness"] = "REQUIRES_HUMAN_APPROVAL"
+        item["status"] = item.get("status") or "pending"
+        item["catalogue_registration_status"] = "UNREGISTERED"
+    else:
+        item["catalogue_registration_status"] = "REGISTERED"
+        item.setdefault("planning_disposition", "MANUAL_REVIEW_REQUIRED")
+        item.setdefault("execution_eligible", False)
+        item.setdefault("readiness", "REQUIRES_HUMAN_APPROVAL")
+        item.setdefault("status", item.get("status") or "pending")
+
+    return item
+
+
+def normalize_manual_review_items(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Returns a new normalized plan without mutating the input plan."""
+    import copy
+    new_plan = copy.deepcopy(plan)
+    mr_list = new_plan.get("manual_review") or []
+    normalized_mr = []
+    for m in mr_list:
+        if isinstance(m, dict):
+            normalized_mr.append(normalize_manual_review_registration(m))
+        else:
+            normalized_mr.append(m)
+    new_plan["manual_review"] = normalized_mr
+    return new_plan
+
+
 def validate_phase1_plan(
     plan: Dict[str, Any],
     assessment: Dict[str, Any],
@@ -250,8 +340,11 @@ def validate_phase1_plan(
             if is_phase1 and meta.get("phase") == 2:
                 errs.append(f"Phase 1 error: Action '{action}' on {ds_name}.{st.get('column')} is Phase 2 (transform) and not allowed in Phase 1.")
                 
-            # Ambiguous/invalid actions
-            if meta.get("invalid") or is_invalid_action(action):
+            # Ambiguous/invalid actions — Bug 4 fix:
+            # _unknown means the action is not in the registry (e.g. canonicalized actions like
+            # flag_missing_key, preserve_null). These are NOT errors — they are valid plan actions
+            # added by the canonicalization layer. Only flag actions explicitly marked "invalid".
+            if meta.get("invalid") or (not meta.get("_unknown") and is_invalid_action(action)):
                 errs.append(f"Validation error: Action '{action}' on {ds_name}.{st.get('column')} is invalid/ambiguous.")
 
             # Required parameter auto-healing — inject safe Phase 1 defaults rather than failing
@@ -287,7 +380,12 @@ def validate_phase1_plan(
         it = mr.get("issue_type")
         reg = validate_issue_registration(str(it or ""))
         if reg["registration_status"] == "unknown":
-            errs.append(f"Validation error: Manual review item has unknown/unmapped issue_type: '{it}'")
+            # Unregistered issue types are structurally VALID when routed to manual review.
+            # Structural failure ONLY occurs if an unregistered issue is marked execution-eligible.
+            if mr.get("execution_eligible", False):
+                errs.append(f"Structural error: Unregistered issue '{it}' is marked execution_eligible=True.")
+            if mr.get("planning_disposition") and mr.get("planning_disposition") != "MANUAL_REVIEW_REQUIRED":
+                errs.append(f"Structural error: Unregistered issue '{it}' has disposition '{mr.get('planning_disposition')}'; must be MANUAL_REVIEW_REQUIRED.")
 
     return errs
 

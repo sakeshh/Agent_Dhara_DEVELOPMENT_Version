@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from agent.etl_pipeline.codegen_shared import (
     UnsupportedCodegenActionError,
@@ -19,6 +19,9 @@ def quote_sql_server_identifier(identifier: str) -> str:
     clean = str(identifier or "").strip()
     if clean.startswith("[") and clean.endswith("]"):
         clean = clean[1:-1]
+    if "," in clean:
+        sub_parts = [p.strip().strip("[]") for p in clean.split(",") if p.strip()]
+        return ", ".join(f"[{p.replace(']', ']]')}]" for p in sub_parts)
     escaped = clean.replace("]", "]]")
     return f"[{escaped}]"
 
@@ -32,6 +35,35 @@ def quote_multipart_identifier(multipart_ident: str) -> str:
 def _brk(ident: str) -> str:
     """T-SQL style bracket quoting (delegates to quote_sql_server_identifier)."""
     return quote_sql_server_identifier(ident)
+
+
+_NON_WATERMARK_DATE_PATTERNS = (
+    "birth", "dob", "effective", "hire", "start", "end", "expiry",
+    "due", "order", "invoice", "payment", "ship", "delivery", "event",
+    "admission", "discharge", "booking", "flight", "contract"
+)
+
+
+def _resolve_watermark_column(cols_info: Dict[str, Any]) -> Optional[str]:
+    """Dynamically resolves a reliable audit modification timestamp for incremental extraction.
+    Strictly excludes business dates (e.g. DateOfBirth, HireDate, OrderDate)."""
+    if not cols_info:
+        return None
+    # 1. Primary: Explicit modification audit timestamps
+    for col_name in cols_info.keys():
+        col_l = col_name.lower()
+        if any(w in col_l for w in ("modified", "updated", "change_date", "sys_change_version", "source_updated_at", "last_modified")):
+            return col_name
+        if col_l.endswith("_at") or col_l.endswith("_ts"):
+            if not any(nw in col_l for nw in _NON_WATERMARK_DATE_PATTERNS):
+                return col_name
+    # 2. Secondary: Explicit watermark / change-tracking columns
+    for col_name in cols_info.keys():
+        col_l = col_name.lower()
+        if any(w in col_l for w in ("watermark", "etl_timestamp", "source_timestamp", "last_run")):
+            if not any(nw in col_l for nw in _NON_WATERMARK_DATE_PATTERNS):
+                return col_name
+    return None
 
 
 def translate_assertion_to_sql(assertion: str, cols: List[str] = None) -> str:
@@ -235,7 +267,7 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
         action = st.get("action")
         col_class = _classify_column(col_name, col_meta, sem_schema, ds_name)
         
-        if action == "trim":
+        if action in ("trim", "trim_preserve_case"):
             if col_class not in ("metric", "date"):
                 is_internal = any(
                     (s.get("action") == "trim") and 
@@ -273,7 +305,7 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
             clean_expr = f"REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE({inner_cast}, N'-', N''), N' ', N''), N'(', N''), N')', N''), N'+', N''), N'.', N'')"
             expr = f"CASE WHEN LEN({clean_expr}) BETWEEN 7 AND 15 AND {clean_expr} NOT LIKE '%[^0-9]%' THEN {clean_expr} ELSE NULL END"
         elif action == "nullify_dummy_dates":
-            expr = f"CASE WHEN {expr} = '1900-01-01' OR FORMAT(TRY_CAST({expr} AS DATE), 'MM-dd') = '01-01' THEN NULL ELSE {expr} END"
+            expr = f"CASE WHEN {expr} = '1900-01-01' OR (YEAR(TRY_CAST({expr} AS DATE)) <= 1900 AND FORMAT(TRY_CAST({expr} AS DATE), 'MM-dd') = '01-01') THEN NULL ELSE {expr} END"
         elif action == "nullify_punctuation":
             if col_class not in ("metric", "date"):
                 expr = f"CASE WHEN {_wrap_string_cast(expr)} NOT LIKE '%[a-zA-Z0-9]%' THEN NULL ELSE {expr} END"
@@ -283,7 +315,13 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
             inner_cast = expr if is_already_string(expr) else f"CAST({expr} AS NVARCHAR(200))"
             expr = f"N'***' + RIGHT(REPLACE(REPLACE({inner_cast}, N'-', N''), N' ', N''), 4)"
         elif action == "standardize_boolean":
-            expr = f"CASE WHEN LOWER(CAST({expr} AS NVARCHAR(10))) IN ('1', 'true', 'yes', 'y', 't') THEN 1 ELSE 0 END"
+            inner_b = f"LOWER(LTRIM(RTRIM({_wrap_string_cast(expr)})))"
+            expr = (
+                f"CASE "
+                f"WHEN {inner_b} IN ('1', 'true', 'yes', 'y', 't') THEN 1 "
+                f"WHEN {inner_b} IN ('0', 'false', 'no', 'n', 'f') THEN 0 "
+                f"ELSE NULL END"
+            )
         elif action == "regex_replace":
             expr = f"REPLACE(REPLACE({_wrap_string_cast(expr)}, N'''', N''), N'\"', N'')"
         elif action in ("range_clip", "clip_outliers"):
@@ -307,16 +345,13 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
                 expr = f"CASE WHEN {cast_f} < 0 THEN NULL ELSE {cast_f} END"
         elif action in ("replace_sentinel_values", "normalize_registered_placeholder"):
             expr_str = f"LOWER(LTRIM(RTRIM({_wrap_string_cast(expr)})))"
-            if any(k in col_name.lower() for k in ("instructorid", "instructor_id")):
-                expr = f"CASE WHEN TRY_CAST({expr} AS BIGINT) IN (999, -999, 999999, 9999999) OR {expr_str} IN ('999', '-999', '999999', '9999999') THEN NULL ELSE {expr} END"
-            else:
-                expr = (
-                    f"CASE "
-                    f"WHEN {expr_str} IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified', '0000', '') "
-                    f"OR TRY_CAST({expr} AS BIGINT) IN (999, -999, 999999, 9999999, 99999) "
-                    f"OR TRY_CAST({expr} AS FLOAT) IN (999, -999, 999999, 9999999, -9999, 99999) "
-                    f"THEN NULL ELSE {expr} END"
-                )
+            expr = (
+                f"CASE "
+                f"WHEN {expr_str} IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified', '0000', '') "
+                f"OR TRY_CAST({expr} AS BIGINT) IN (999, -999, 999999, 9999999, 99999) "
+                f"OR TRY_CAST({expr} AS FLOAT) IN (999, -999, 999999, 9999999, -9999, 99999) "
+                f"THEN NULL ELSE {expr} END"
+            )
         elif action == "coerce_numeric":
             is_decimal = False
             col_lower = col_name.lower()
@@ -337,10 +372,7 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
                 f"ELSE {parsed_expr} END"
             )
         elif action == "zero_to_null":
-            if any(k in col_name.lower() for k in ("instructorid", "instructor_id")):
-                expr = f"CASE WHEN TRY_CAST({expr} AS BIGINT) IN (999, -999, 999999, 9999999) OR LOWER(LTRIM(RTRIM({_wrap_string_cast(expr)}))) IN ('999', '-999', '999999', '9999999') THEN NULL ELSE {expr} END"
-            else:
-                expr = f"CASE WHEN TRY_CAST({expr} AS FLOAT) = 0 THEN NULL ELSE {expr} END"
+            expr = f"CASE WHEN TRY_CAST({expr} AS FLOAT) = 0 THEN NULL ELSE {expr} END"
         elif action == "replace_values":
             mapping = (business_rules.get("replace_values") or {}).get(col_name) or {}
             if isinstance(mapping, dict) and mapping:
@@ -351,11 +383,24 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
                     case_expr += f" WHEN {_wrap_string_cast(expr)} = N'{ov}' THEN N'{nv}'"
                 case_expr += f" ELSE {expr} END"
                 expr = case_expr
+        elif action in ("fill_constant", "fill_null_with_constant"):
+            params = st.get("params") or {}
+            cval = str(params.get("constant_value", params.get("fill_value", "unknown"))).replace("'", "''")
+            expr = f"COALESCE({expr}, N'{cval}')"
         elif action in (
             "noop", "keep_as_is", "fill_nulls_simple", "fill_or_drop", "cast_type",
             "deduplicate", "flag_business_key_duplicate", "flag_duplicate_candidates",
             "flag_near_duplicate_cluster", "validate_referential_integrity_or_stage",
             "at_least_one", "validate_and_partition_relationship", "drop_column", "exclude_column",
+            "preserve_null_and_flag", "preserve_and_flag", "preserve_null",
+            "preserve_missing_suspected_key", "accept_null_as_optional",
+            "fill_nulls_flag", "flag_only", "nullify_clean_value",
+            "flag_missing_key", "flag_missing_declared_key", "flag_domain_violation",
+            "flag_range_violation", "flag_cross_field_violation", "flag_high_null_key",
+            "quarantine_row", "quarantine_null_rows", "quarantine_missing_key",
+            "quarantine_orphan_fk", "quarantine_key_null", "drop_rows",
+            "impute_numeric", "impute_date", "create_normalized_match_key",
+            "skip_etl", "skip_requirement", "review_manually", "force_unlock", "join_datasets",
         ):
             pass
         else:
@@ -365,11 +410,34 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
     return expr
 
 
+def _accumulate_status(col_clean: str, status_expr: str) -> str:
+    """Accumulates validation status without overwriting previous rule findings."""
+    return (
+        f"CASE "
+        f"WHEN [{col_clean}_validation_status] IS NULL OR [{col_clean}_validation_status] = 'valid' THEN {status_expr} "
+        f"WHEN {status_expr} IS NOT NULL AND {status_expr} != 'valid' AND [{col_clean}_validation_status] NOT LIKE '%' + {status_expr} + '%' "
+        f"THEN [{col_clean}_validation_status] + ';' + {status_expr} "
+        f"ELSE [{col_clean}_validation_status] END"
+    )
+
+
+def _accumulate_reason(col_clean: str, reason_expr: str) -> str:
+    """Accumulates validation reason without overwriting previous rule findings."""
+    return (
+        f"CASE "
+        f"WHEN [{col_clean}_validation_reason] IS NULL THEN {reason_expr} "
+        f"WHEN {reason_expr} IS NOT NULL AND [{col_clean}_validation_reason] NOT LIKE '%' + {reason_expr} + '%' "
+        f"THEN [{col_clean}_validation_reason] + '; ' + {reason_expr} "
+        f"ELSE [{col_clean}_validation_reason] END"
+    )
+
+
 def _supplement_steps_with_dq_issues(
     existing_steps: List[Dict[str, Any]],
     ds_name: str,
     assessment: Dict[str, Any],
-    plan: Dict[str, Any]
+    plan: Dict[str, Any],
+    known_cols: Optional[Set[str]] = None,
 ) -> List[Dict[str, Any]]:
     steps = list(existing_steps)
     stepped_cols = {str(st.get("column") or "").lower(): str(st.get("action") or "").lower() for st in steps if st.get("column")}
@@ -402,11 +470,22 @@ def _supplement_steps_with_dq_issues(
     seen_issues = set()
     for iss in issues_for_ds:
         col = iss.get("column")
-        col_l = str(col).lower() if col else "*"
+        col_clean_name = str(col).strip("[]").lower() if col else "*"
+        col_l = col_clean_name
+        
+        # Entity boundary enforcement: reject rules for columns outside this dataset schema
+        if known_cols and col and col not in ("*", "[Row-level]", "[row-level]") and col_clean_name not in known_cols:
+            continue
+            
         itype = str(iss.get("issue_type") or iss.get("rule_id") or "").lower()
+        iss_id = str(iss.get("id") or iss.get("issue_id") or "").strip()
+        if iss_id and iss_id in seen_issues:
+            continue
         if (col_l, itype) in seen_issues:
             continue
         seen_issues.add((col_l, itype))
+        if iss_id:
+            seen_issues.add(iss_id)
         
         existing_act = stepped_cols.get(col_l)
         
@@ -545,15 +624,28 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     excluded_columns: List[str] = business_rules.get("exclude_columns") or []
     valid_values = business_rules.get("valid_values") or {}
 
-    _SQL_SUPPORTED_ACTIONS = frozenset({
-        "trim", "lowercase", "uppercase", "sanitize_email", "normalize_phone",
+    from agent.etl_pipeline.action_registry import ACTION_REGISTRY
+    _SQL_SUPPORTED_ACTIONS = frozenset(
+        act for act, meta in ACTION_REGISTRY.items() if not meta.get("invalid")
+    ) | frozenset({
+        "trim", "trim_preserve_case", "lowercase", "uppercase", "sanitize_email", "normalize_phone",
         "hash_phone", "mask_phone", "standardize_boolean", "regex_replace",
         "range_clip", "clip_outliers", "cap_outliers", "flag_outliers", "clip_or_flag",
         "replace_sentinel_values", "normalize_registered_placeholder", "nullify_sentinels",
         "nullify_dummy_dates", "nullify_punctuation", "nullify_date", "nullify_future_dates",
         "coerce_numeric", "cast_type", "replace_values", "zero_to_null",
         "parse_dates", "parse_dates_safe",
-        "fill_nulls_simple", "fill_or_drop",
+        "fill_nulls_simple", "fill_or_drop", "fill_constant", "fill_null_with_constant", "fill_nulls_flag",
+        "preserve_null_and_flag", "preserve_and_flag", "preserve_null",
+        "preserve_missing_suspected_key", "accept_null_as_optional",
+        "flag_only", "nullify_clean_value",
+        "flag_missing_key", "flag_missing_declared_key", "flag_domain_violation",
+        "flag_range_violation", "flag_cross_field_violation", "flag_high_null_key",
+        "quarantine_row", "quarantine_null_rows", "quarantine_missing_key",
+        "quarantine_orphan_fk", "quarantine_key_null", "drop_rows",
+        "impute_numeric", "impute_date",
+        "create_normalized_match_key", "join_datasets",
+        "accept_null_as_optional", "skip_etl", "skip_requirement", "review_manually", "force_unlock",
         "deduplicate", "flag_business_key_duplicate", "flag_duplicate_candidates",
         "flag_near_duplicate_cluster", "validate_referential_integrity_or_stage",
         "validate_and_partition_relationship", "at_least_one",
@@ -790,19 +882,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     index_keys.append(j.get("child_key"))
             
             # resolve watermark column
-            watermark_col = None
-            for col_name in cols_info.keys():
-                col_lower = col_name.lower()
-                if any(x in col_lower for x in ("modified", "update", "changed")) or col_lower.endswith("_at"):
-                    if "date" in col_lower or "time" in col_lower or "stamp" in col_lower or col_lower.endswith("_at"):
-                        watermark_col = col_name
-                        break
-            if not watermark_col:
-                for col_name in cols_info.keys():
-                    col_lower = col_name.lower()
-                    if "date" in col_lower or "time" in col_lower or "stamp" in col_lower:
-                        watermark_col = col_name
-                        break
+            watermark_col = _resolve_watermark_column(cols_info)
             
             if watermark_col:
                 index_keys.append(watermark_col)
@@ -948,14 +1028,8 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             clean_tbl = tgt_tbl_expr
             tbl_clean = target_tbl_str
             tbl_base = ds_name.split(".")[-1].strip("[]")
-            tbl_pure = tbl_base
-            if tbl_pure.lower().endswith("_staging"):
-                tbl_pure = tbl_pure[:-8]
-            elif tbl_pure.lower().endswith("_clean"):
-                tbl_pure = tbl_pure[:-6]
-            elif tbl_pure.lower().endswith("_raw"):
-                tbl_pure = tbl_pure[:-4]
-            tbl_staging = f"#{tbl_pure}_Staging" if is_clean else f"#{tbl_pure}_Transform_Staging"
+            stg_base = tbl_base[:-8] if tbl_base.lower().endswith("_staging") else tbl_base
+            tbl_staging = f"#{stg_base}_Staging" if is_clean else f"#{stg_base}_Transform_Staging"
             tbl_clean = _get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix)
         
         
@@ -970,21 +1044,94 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 elif not is_clean and act_phase == "transform":
                     steps_phase.append(st)
 
-            if is_clean:
-                steps_phase = _supplement_steps_with_dq_issues(steps_phase, ds_name, assessment, plan)
-
             # Consolidate, filter, and sort steps for this dataset
+            local_excluded_columns = set(excluded_columns)
+            skipped_comments = []
+            for st in (block.get("steps") or []):
+                if st.get("action") in ("exclude_column", "drop_column") and st.get("column"):
+                    col_name = st.get("column")
+                    local_excluded_columns.add(col_name)
+                    skipped_comments.append(f"-- Column {col_name} skipped via exclude_column transform step")
+
             ds_info = assessment.get("datasets", {}).get(ds_name) or {} if assessment else {}
+            if not ds_info and assessment:
+                ds_clean = ds_name.replace("dbo.", "").strip()
+                ds_info = assessment.get("datasets", {}).get(ds_clean) or {}
             cols_info = ds_info.get("columns") or {}
+            cols = [c for c in cols_info.keys() if c not in local_excluded_columns]
+            cols_lower = {c.strip("[]").lower(): c for c in cols}
+            known_cols = set(cols_lower.keys())
+
+            if is_clean:
+                steps_phase = _supplement_steps_with_dq_issues(steps_phase, ds_name, assessment, plan, known_cols=known_cols)
         
+            MULTI_COLUMN_ACTIONS = {
+                "deduplicate", "flag_duplicate_candidates", "flag_business_key_duplicate",
+                "flag_near_duplicate_cluster", "at_least_one", "validate_referential_integrity_or_stage"
+            }
+            expanded_steps_phase = []
+            for st in steps_phase:
+                if not isinstance(st, dict):
+                    continue
+                act = str(st.get("action") or "").strip().lower()
+                c = st.get("column")
+                if not c and isinstance(st.get("columns"), list):
+                    c = ", ".join(str(x) for x in st.get("columns"))
+                if c and act not in MULTI_COLUMN_ACTIONS and "," in str(c):
+                    sub_parts = [p.strip().strip("[]") for p in str(c).split(",") if p.strip() and p.strip() not in ("*", "[Row-level]", "[row-level]")]
+                    for sub in sub_parts:
+                        st_sub = dict(st)
+                        st_sub["column"] = sub
+                        expanded_steps_phase.append(st_sub)
+                else:
+                    expanded_steps_phase.append(st)
+
             filtered_steps = []
             seen_operations = set()
+            seen_issue_ids = set()
         
-            for st in steps_phase:
+            for st in expanded_steps_phase:
                 if not isinstance(st, dict):
                     continue
                 action = str(st.get("action") or "").strip().lower()
                 col = st.get("column")
+                if not col and isinstance(st.get("columns"), list):
+                    col = ", ".join(str(x) for x in st.get("columns"))
+                
+                # 1. Schema Grounding & Entity Boundary Enforcement:
+                # Never emit rules for columns that do not exist in this dataset's schema
+                if col and known_cols:
+                    if action in MULTI_COLUMN_ACTIONS:
+                        col_parts = [p.strip().strip("[]").lower() for p in str(col).split(",") if p.strip()]
+                        invalid_parts = [p for p in col_parts if p not in known_cols and p not in ("*", "row-level")]
+                        if invalid_parts:
+                            iss_id = st.get("issue_id") or st.get("id") or action
+                            if isinstance(plan, dict):
+                                plan.setdefault("generation_report", {}).setdefault("skipped_rules", []).append({
+                                    "issue_id": iss_id, "dataset": ds_name, "columns": col, "reason": f"Columns {invalid_parts} not in dataset schema"
+                                })
+                            continue
+                    else:
+                        col_clean_key = str(col).strip("[]").lower()
+                        if col_clean_key not in known_cols and col not in ("*", "[Row-level]", "[row-level]"):
+                            # Drop rules for columns that do not exist in this table schema
+                            iss_id = st.get("issue_id") or st.get("id") or action
+                            if isinstance(plan, dict):
+                                plan.setdefault("generation_report", {}).setdefault("skipped_rules", []).append({
+                                    "issue_id": iss_id, "dataset": ds_name, "column": col, "reason": "Column not in dataset schema"
+                                })
+                            continue
+                        if col_clean_key in cols_lower:
+                            st = dict(st)
+                            st["column"] = cols_lower[col_clean_key]
+                            col = st["column"]
+
+                # 2. Duplicate Rule Suppression (by issue_id)
+                issue_id = str(st.get("issue_id") or st.get("id") or "").strip()
+                if issue_id and issue_id in seen_issue_ids:
+                    continue
+                if issue_id:
+                    seen_issue_ids.add(issue_id)
             
                 # Type-aware filtering for string operations
                 if action in ("trim", "lowercase", "uppercase", "sanitize_email"):
@@ -1063,39 +1210,17 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
 
             never_drop = bool(business_rules.get("never_drop_rows"))
             non_nullable_cols = business_rules.get("non_nullable") or []
-            local_excluded_columns = set(excluded_columns)
-            skipped_comments = []
-            for st in (block.get("steps") or []):
-                if st.get("action") in ("exclude_column", "drop_column") and st.get("column"):
-                    col_name = st.get("column")
-                    local_excluded_columns.add(col_name)
-                    skipped_comments.append(f"-- Column {col_name} skipped via exclude_column transform step")
         
             # Meta extraction for keys, indexing and incremental loading
-            cols = []
             pk_col = None
             watermark_col = None
-            if assessment and "datasets" in assessment:
-                ds_info = assessment["datasets"].get(ds_name) or {}
-                cols_info = ds_info.get("columns") or {}
-                cols = [c for c in cols_info.keys() if c not in local_excluded_columns]
+            if cols_info:
                 for col_name, cmeta in cols_info.items():
                     if cmeta.get("candidate_primary_key") and not pk_col:
                         pk_col = col_name
             
-                # Prioritized watermark selection
-                for col_name in cols_info.keys():
-                    col_lower = col_name.lower()
-                    if any(x in col_lower for x in ("modified", "update", "changed")) or col_lower.endswith("_at"):
-                        if "date" in col_lower or "time" in col_lower or "stamp" in col_lower or col_lower.endswith("_at"):
-                            watermark_col = col_name
-                            break
-                if not watermark_col:
-                    for col_name in cols_info.keys():
-                        col_lower = col_name.lower()
-                        if "date" in col_lower or "time" in col_lower or "stamp" in col_lower:
-                            watermark_col = col_name
-                            break
+                # Prioritized audit watermark selection (strictly excludes business dates like DateOfBirth)
+                watermark_col = _resolve_watermark_column(cols_info)
         
             # Fallback key search
             if cols and not pk_col:
@@ -1112,6 +1237,123 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             col_list = ", ".join(f"[{c}]" for c in cols) if cols else "*"
         
             lines.append(f"-- === dataset: {ds_name} === ")
+
+            # Pre-procedure One-Time DDL Setup (Executed outside procedure to avoid Sch-M locks)
+            if dialect == "tsql":
+                lines.append(f"-- Initialize Clean Table Structure")
+                lines.append(f"IF OBJECT_ID('{target_tbl_str}', 'U') IS NULL")
+                lines.append("BEGIN")
+            
+                # Explicit CREATE TABLE
+                create_cols = []
+                for c in cols:
+                    c_meta = cols_info.get(c) or {}
+                    c_type = c_meta.get("dtype") or c_meta.get("target_dtype") or ""
+                    target_type = get_sql_cast_type(c_type, c)
+                
+                    # Check nullability
+                    if c == pk_col or c in non_nullable_cols:
+                        null_str = "NOT NULL"
+                    else:
+                        null_str = "NULL"
+                    create_cols.append(f"        [{c}] {target_type} {null_str}")
+            
+                # Add metadata columns
+                create_cols.append("        etl_created_at DATETIME DEFAULT GETDATE()")
+                create_cols.append("        etl_updated_at DATETIME DEFAULT GETDATE()")
+                create_cols.append("        etl_batch_id INT NULL")
+                
+                # Add SCD Type 2 columns if applicable
+                if scd_type == "type2":
+                    create_cols.append("        start_date DATETIME DEFAULT GETDATE()")
+                    create_cols.append("        end_date DATETIME DEFAULT '9999-12-31'")
+                    create_cols.append("        is_current BIT DEFAULT 1")
+            
+                # Add primary key constraint inline if pk_col exists
+                phase_suffix = "Clean" if is_clean else "Transformed"
+                if pk_col:
+                    if scd_type == "type2":
+                        create_cols.append(f"        CONSTRAINT [PK_{tbl_base}_{phase_suffix}] PRIMARY KEY ([{pk_col}], start_date)")
+                    else:
+                        create_cols.append(f"        CONSTRAINT [PK_{tbl_base}_{phase_suffix}] PRIMARY KEY ([{pk_col}])")
+                
+                lines.append(f"    CREATE TABLE {clean_tbl} (")
+                lines.append(",\n".join(create_cols))
+                lines.append("    );")
+            
+                # Setup index keys
+                index_keys = []
+                rel = plan.get("relationships") or {}
+                for j in rel.get("joins") or []:
+                    if j.get("parent_dataset") == ds_name:
+                        index_keys.append(j.get("parent_key"))
+                    elif j.get("child_dataset") == ds_name:
+                        index_keys.append(j.get("child_key"))
+                if watermark_col:
+                    index_keys.append(watermark_col)
+                
+                for ik in sorted(list(set(index_keys))):
+                    lines.append(f"    CREATE NONCLUSTERED INDEX idx_{tbl_base}_{phase_suffix}_{ik} ON {clean_tbl}([{ik}]);")
+                lines.append("END;")
+                lines.append("")
+            
+                # DDL alterations for companion columns
+                ddl_lines = []
+                seen_clean_companions = set()
+                for st in steps:
+                    col = st.get("column")
+                    action = str(st.get("action") or "").lower()
+                    if not col or col in excluded_columns or col in ("*", "[Row-level]", "[row-level]"):
+                        continue
+                    if action in ("deduplicate", "flag_duplicate_candidates", "flag_business_key_duplicate", "flag_near_duplicate_cluster", "validate_referential_integrity_or_stage"):
+                        continue
+                    sub_cols = [c.strip().strip("[]") for c in str(col).split(",") if c.strip() and c.strip() not in ("*", "[Row-level]", "[row-level]")]
+                    for single_col in sub_cols:
+                        if single_col in excluded_columns:
+                            continue
+                        col_clean = str(single_col).replace("'", "''")
+                        if action in ("flag_outliers", "clip_or_flag"):
+                            ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{col_clean}_outlier_flagged')")
+                            ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{col_clean}_outlier_flagged] BIT NOT NULL DEFAULT 0;")
+                        elif action == "cast_type":
+                            target_t = str(st.get("params", {}).get("target_type") or st.get("params", {}).get("dtype") or col_meta.get("target_dtype") or "").lower()
+                            is_monetary = any(m in single_col.lower() for m in ("salary", "price", "amount", "cost", "fee", "revenue", "balance", "budget", "total"))
+                            if any(it in target_t for it in ("int", "bigint", "integer")) and not is_monetary:
+                                ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{col_clean}_int')")
+                                ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{col_clean}_int] BIGINT;")
+
+                        # Companion columns for clean target
+                        col_meta = cols_info.get(single_col) or {}
+                        col_type = col_meta.get("dtype") or col_meta.get("target_dtype") or ""
+                        target_type = get_sql_cast_type(col_type, single_col)
+                        for comp, ctype in [
+                            (f"{col_clean}_raw", "NVARCHAR(MAX) NULL"),
+                            (f"{col_clean}_clean", f"{target_type} NULL"),
+                            (f"{col_clean}_validation_status", "VARCHAR(50) NULL"),
+                            (f"{col_clean}_validation_reason", "VARCHAR(500) NULL")
+                        ]:
+                            if comp not in seen_clean_companions:
+                                seen_clean_companions.add(comp)
+                                ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{comp}')")
+                                ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{comp}] {ctype};")
+
+                for comp, ctype in [
+                    ("row_validation_status", "VARCHAR(50) NULL"),
+                    ("row_validation_reason", "VARCHAR(500) NULL"),
+                    ("is_duplicate_row", "BIT NOT NULL DEFAULT 0"),
+                ]:
+                    if comp not in seen_clean_companions:
+                        seen_clean_companions.add(comp)
+                        ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{comp}')")
+                        ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{comp}] {ctype};")
+                
+                if ddl_lines:
+                    lines.append("-- Add generated transformation columns to Clean Table")
+                    lines.extend(ddl_lines)
+                    lines.append("")
+                
+                lines.append("GO")
+                lines.append("")
         
             # Stored Procedure boundary setup for T-SQL
             proc_lines: List[str] = []
@@ -1167,114 +1409,6 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             )
 
             if dialect == "tsql":
-                proc_lines.append(f"-- Initialize Clean Table Structure")
-                proc_lines.append(f"IF OBJECT_ID('{target_tbl_str}', 'U') IS NULL")
-                proc_lines.append("BEGIN")
-            
-                # Explicit CREATE TABLE
-                create_cols = []
-                for c in cols:
-                    c_meta = cols_info.get(c) or {}
-                    c_type = c_meta.get("dtype") or c_meta.get("target_dtype") or ""
-                    target_type = get_sql_cast_type(c_type, c)
-                
-                    # Check nullability
-                    if c == pk_col or c in non_nullable_cols:
-                        null_str = "NOT NULL"
-                    else:
-                        null_str = "NULL"
-                    create_cols.append(f"        [{c}] {target_type} {null_str}")
-            
-                # Add metadata columns
-                create_cols.append("        etl_created_at DATETIME DEFAULT GETDATE()")
-                create_cols.append("        etl_updated_at DATETIME DEFAULT GETDATE()")
-                create_cols.append("        etl_batch_id INT NULL")
-                
-                # Add SCD Type 2 columns if applicable
-                if scd_type == "type2":
-                    create_cols.append("        start_date DATETIME DEFAULT GETDATE()")
-                    create_cols.append("        end_date DATETIME DEFAULT '9999-12-31'")
-                    create_cols.append("        is_current BIT DEFAULT 1")
-            
-                # Add primary key constraint inline if pk_col exists
-                phase_suffix = "Clean" if is_clean else "Transformed"
-                if pk_col:
-                    if scd_type == "type2":
-                        create_cols.append(f"        CONSTRAINT [PK_{tbl_base}_{phase_suffix}] PRIMARY KEY ([{pk_col}], start_date)")
-                    else:
-                        create_cols.append(f"        CONSTRAINT [PK_{tbl_base}_{phase_suffix}] PRIMARY KEY ([{pk_col}])")
-                
-                proc_lines.append(f"    CREATE TABLE {clean_tbl} (")
-                proc_lines.append(",\n".join(create_cols))
-                proc_lines.append("    );")
-            
-                # Setup index keys
-                index_keys = []
-                rel = plan.get("relationships") or {}
-                for j in rel.get("joins") or []:
-                    if j.get("parent_dataset") == ds_name:
-                        index_keys.append(j.get("parent_key"))
-                    elif j.get("child_dataset") == ds_name:
-                        index_keys.append(j.get("child_key"))
-                if watermark_col:
-                    index_keys.append(watermark_col)
-                
-                for ik in sorted(list(set(index_keys))):
-                    proc_lines.append(f"    CREATE NONCLUSTERED INDEX idx_{tbl_base}_{phase_suffix}_{ik} ON {clean_tbl}([{ik}]);")
-                proc_lines.append("END")
-                proc_lines.append("")
-            
-            # DDL alterations (run before staging setup)
-            ddl_lines = []
-            seen_clean_companions = set()
-            for st in steps:
-                col = st.get("column")
-                action = str(st.get("action") or "")
-                if not col or col in excluded_columns or col in ("*", "[Row-level]", "[row-level]"):
-                    continue
-                col_clean = str(col).replace("'", "''")
-                if action in ("flag_outliers", "clip_or_flag"):
-                    ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{col_clean}_outlier_flagged')")
-                    ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{col_clean}_outlier_flagged] BIT NOT NULL DEFAULT 0;")
-                elif action == "cast_type":
-                    ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{col_clean}_int')")
-                    ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{col_clean}_int] BIGINT;")
-
-                # Companion columns for clean target
-                col_meta = cols_info.get(col) or {}
-                col_type = col_meta.get("dtype") or col_meta.get("target_dtype") or ""
-                target_type = get_sql_cast_type(col_type, col)
-                for comp, ctype in [
-                    (f"{col_clean}_raw", "NVARCHAR(MAX) NULL"),
-                    (f"{col_clean}_clean", f"{target_type} NULL"),
-                    (f"{col_clean}_validation_status", "VARCHAR(50) NULL"),
-                    (f"{col_clean}_validation_reason", "VARCHAR(500) NULL")
-                ]:
-                    if comp not in seen_clean_companions:
-                        seen_clean_companions.add(comp)
-                        ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{comp}')")
-                        ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{comp}] {ctype};")
-
-            for comp, ctype in [
-                ("row_validation_status", "VARCHAR(50) NULL"),
-                ("row_validation_reason", "VARCHAR(500) NULL"),
-                ("is_duplicate_row", "BIT NOT NULL DEFAULT 0"),
-            ]:
-                if comp not in seen_clean_companions:
-                    seen_clean_companions.add(comp)
-                    ddl_lines.append(f"IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('{target_tbl_str}') AND name = '{comp}')")
-                    ddl_lines.append(f"    ALTER TABLE {clean_tbl} ADD [{comp}] {ctype};")
-                
-            if ddl_lines:
-                if dialect == "tsql":
-                    proc_lines.append("-- Add generated transformation columns to Clean Table")
-                    proc_lines.extend(ddl_lines)
-                    proc_lines.append("")
-                else:
-                    lines.extend(ddl_lines)
-                    lines.append("")
-
-            if dialect == "tsql":
                 proc_lines.append(f"-- Create Staging Table with raw column types to preserve raw strings")
                 proc_lines.append(f"IF OBJECT_ID('tempdb..{tbl_staging}') IS NOT NULL DROP TABLE {tbl_staging};")
                 staging_cols_ddl = []
@@ -1288,25 +1422,43 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     seen_staging_cols.add("etl_batch_id")
                     staging_cols_ddl.append("etl_batch_id INT NULL")
                 for st in steps:
-                    if st.get("action") in ("flag_outliers", "clip_or_flag") and st.get("column") and st.get("column") not in excluded_columns:
-                        c_name = f"{st.get('column')}_outlier_flagged"
-                        if c_name.lower() not in seen_staging_cols:
-                            seen_staging_cols.add(c_name.lower())
-                            staging_cols_ddl.append(f"[{c_name}] INT NULL")
-                    if st.get("action") == "cast_type" and st.get("column") and st.get("column") not in excluded_columns:
-                        c_name = f"{st.get('column')}_int"
-                        if c_name.lower() not in seen_staging_cols:
-                            seen_staging_cols.add(c_name.lower())
-                            staging_cols_ddl.append(f"[{c_name}] BIGINT NULL")
+                    st_col = st.get("column")
+                    if not st_col or st_col in excluded_columns or st_col in ("*", "[Row-level]", "[row-level]"):
+                        continue
+                    st_sub_cols = [c.strip().strip("[]") for c in str(st_col).split(",") if c.strip() and c.strip() not in ("*", "[Row-level]", "[row-level]")]
+                    for single_st_col in st_sub_cols:
+                        if single_st_col in excluded_columns:
+                            continue
+                        if st.get("action") in ("flag_outliers", "clip_or_flag"):
+                            c_name = f"{single_st_col}_outlier_flagged"
+                            if c_name.lower() not in seen_staging_cols:
+                                seen_staging_cols.add(c_name.lower())
+                                staging_cols_ddl.append(f"[{c_name}] INT NULL")
+                        if st.get("action") == "cast_type":
+                            target_t = str(st.get("params", {}).get("target_type") or st.get("params", {}).get("dtype") or col_meta.get("target_dtype") or "").lower()
+                            is_monetary = any(m in single_st_col.lower() for m in ("salary", "price", "amount", "cost", "fee", "revenue", "balance", "budget", "total"))
+                            if any(it in target_t for it in ("int", "bigint", "integer")) and not is_monetary:
+                                c_name = f"{single_st_col}_int"
+                                if c_name.lower() not in seen_staging_cols:
+                                    seen_staging_cols.add(c_name.lower())
+                                    staging_cols_ddl.append(f"[{c_name}] BIGINT NULL")
 
                 # Add companion columns to staging table so UPDATE statements succeed without schema errors
                 for st in steps:
                     st_col = st.get("column")
-                    if st_col and st_col not in excluded_columns and st_col not in ("*", "[Row-level]", "[row-level]"):
-                        clean_c = str(st_col).replace("'", "''")
-                        col_meta = cols_info.get(st_col) or {}
+                    if not st_col or st_col in excluded_columns or st_col in ("*", "[Row-level]", "[row-level]"):
+                        continue
+                    st_act = str(st.get("action") or "").lower()
+                    if st_act in ("deduplicate", "flag_duplicate_candidates", "flag_business_key_duplicate", "flag_near_duplicate_cluster", "validate_referential_integrity_or_stage"):
+                        continue
+                    st_sub_cols = [c.strip().strip("[]") for c in str(st_col).split(",") if c.strip() and c.strip() not in ("*", "[Row-level]", "[row-level]")]
+                    for single_st_col in st_sub_cols:
+                        if single_st_col in excluded_columns:
+                            continue
+                        clean_c = str(single_st_col).replace("'", "''")
+                        col_meta = cols_info.get(single_st_col) or {}
                         col_type = col_meta.get("dtype") or col_meta.get("target_dtype") or ""
-                        target_type = get_sql_cast_type(col_type, st_col)
+                        target_type = get_sql_cast_type(col_type, single_st_col)
                         for comp in [f"{clean_c}_raw", f"{clean_c}_clean", f"{clean_c}_validation_status", f"{clean_c}_validation_reason"]:
                             if comp.lower() not in seen_staging_cols:
                                 seen_staging_cols.add(comp.lower())
@@ -1366,6 +1518,14 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 else:
                     proc_lines.extend(get_copy_sql_lines())
                 proc_lines.append("")
+
+                # Preserve immutable raw snapshot for validations and reject logging
+                raw_copies = [f"[{c}_raw] = [{c}]" for c in cols if f"{c}_raw".lower() in seen_staging_cols]
+                if raw_copies:
+                    proc_lines.append("-- Preserve raw column values before any cleaning or mutation")
+                    proc_lines.append(f"UPDATE {tbl_staging}")
+                    proc_lines.append("SET " + ",\n    ".join(raw_copies) + ";")
+                    proc_lines.append("")
             else:
                 lines.append(f"-- ANSI Init Target: CREATE TABLE {tbl_staging} AS SELECT * FROM {raw_tbl};")
                 lines.append("")
@@ -1433,8 +1593,9 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     if col_class == "metric" and not (sql_t in ("BIGINT", "INT", "FLOAT", "REAL") or sql_t.startswith("DECIMAL")):
                         sql_t = "DECIMAL(18, 2)"
                 
-                    # Check for BIGINT IDs
-                    if sql_t == "BIGINT" and (c_name.lower().endswith("id") or c_name.lower().endswith("key")):
+                    # Check for BIGINT IDs (only if column dtype is actually numeric/integer)
+                    is_numeric_id_type = any(x in str(c_type).lower() for x in ("int", "bigint", "smallint", "tinyint", "numeric"))
+                    if sql_t == "BIGINT" and is_numeric_id_type and (c_name.lower().endswith("id") or c_name.lower().endswith("key")):
                         step_lines.append(f"-- Quarantine rows where ID column [{c_name}] is not numeric to dbo.etl_rejects")
                         step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
                         step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
@@ -1517,24 +1678,37 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                             step_lines.append(f"")
                             # Phase 1: keep the row; the null date stays NULL in the clean table
 
-                        # 2. Nullify (not delete) unparseable dates — row is kept, bad date becomes NULL
-                        step_lines.append(f"-- Log unparseable dates from {tbl_staging}.{c} to dbo.etl_rejects (audit only; row is kept)")
-                        step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
-                        step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
-                        step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
-                        step_lines.append(f"       'Column [{col}] value ' + ISNULL(CAST(r.{c} AS NVARCHAR(MAX)), 'NULL') + ' is not a valid date (set to NULL)'")
-                        step_lines.append(f"FROM {tbl_staging} r")
-                        step_lines.append(f"WHERE r.{c} IS NOT NULL AND COALESCE(")
-                        step_lines.append(f"    TRY_CONVERT(date, r.{c}, 120),")
-                        step_lines.append(f"    TRY_CONVERT(date, r.{c}, 103),")
-                        step_lines.append(f"    TRY_CONVERT(date, r.{c}, 101),")
-                        step_lines.append(f"    TRY_CONVERT(date, r.{c}, 111)")
-                        step_lines.append(f") IS NULL;")
-                        step_lines.append(f"")
+                        # 2. Unparseable dates handling per policy
                         if not never_drop:
+                            step_lines.append(f"-- Quarantine unparseable dates from {tbl_staging}.{c} to dbo.etl_rejects (row quarantined and removed)")
+                            step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
+                            step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
+                            step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
+                            step_lines.append(f"       'Column [{col}] value ' + ISNULL(CAST(r.{c} AS NVARCHAR(MAX)), 'NULL') + ' is not a valid date (row quarantined)'")
+                            step_lines.append(f"FROM {tbl_staging} r")
+                            step_lines.append(f"WHERE r.{c} IS NOT NULL AND COALESCE(")
+                            step_lines.append(f"    TRY_CONVERT(date, r.{c}, 120),")
+                            step_lines.append(f"    TRY_CONVERT(date, r.{c}, 103),")
+                            step_lines.append(f"    TRY_CONVERT(date, r.{c}, 101),")
+                            step_lines.append(f"    TRY_CONVERT(date, r.{c}, 111)")
+                            step_lines.append(f") IS NULL;")
+                            step_lines.append(f"")
                             step_lines.append(f"DELETE FROM {tbl_staging} WHERE {c} IS NOT NULL AND COALESCE(TRY_CONVERT(date, {c}, 120), TRY_CONVERT(date, {c}, 103), TRY_CONVERT(date, {c}, 101), TRY_CONVERT(date, {c}, 111)) IS NULL;")
                             step_lines.append(f"")
                         else:
+                            step_lines.append(f"-- Log and nullify unparseable dates from {tbl_staging}.{c} (audit only; row kept, bad date set to NULL)")
+                            step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
+                            step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
+                            step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
+                            step_lines.append(f"       'Column [{col}] value ' + ISNULL(CAST(r.{c} AS NVARCHAR(MAX)), 'NULL') + ' is not a valid date (set to NULL, row kept)'")
+                            step_lines.append(f"FROM {tbl_staging} r")
+                            step_lines.append(f"WHERE r.{c} IS NOT NULL AND COALESCE(")
+                            step_lines.append(f"    TRY_CONVERT(date, r.{c}, 120),")
+                            step_lines.append(f"    TRY_CONVERT(date, r.{c}, 103),")
+                            step_lines.append(f"    TRY_CONVERT(date, r.{c}, 101),")
+                            step_lines.append(f"    TRY_CONVERT(date, r.{c}, 111)")
+                            step_lines.append(f") IS NULL;")
+                            step_lines.append(f"")
                             # Nullify the bad date value — row survives with NULL date
                             step_lines.append(f"-- Nullify unparseable date values in {tbl_staging}.{c} (keep row, set bad date to NULL)")
                             step_lines.append(f"UPDATE {tbl_staging} SET {c} = NULL")
@@ -1657,17 +1831,18 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                         step_lines.append(f"")
                 elif action in ("replace_sentinel_values", "normalize_registered_placeholder"):
                     if dialect == "tsql":
+                        raw_ref = f"r.[{col}_raw]" if f"{col}_raw".lower() in seen_staging_cols else f"r.{c}"
                         placeholder_cond = (
-                            f"LOWER(LTRIM(RTRIM(CAST(r.{c} AS NVARCHAR(MAX))))) IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified') "
-                            f"OR TRY_CAST(r.{c} AS FLOAT) IN (999, -999, 999999, -9999, 99999)"
+                            f"LOWER(LTRIM(RTRIM(CAST({raw_ref} AS NVARCHAR(MAX))))) IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified') "
+                            f"OR TRY_CAST({raw_ref} AS FLOAT) IN (999, -999, 999999, -9999, 99999)"
                         )
                         step_lines.append(f"-- Log placeholder / sentinel values for [{col}] to dbo.etl_rejects (audit only; replaced with NULL)")
                         step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
                         step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
                         step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
-                        step_lines.append(f"       'Column [{col}] contains registered placeholder/sentinel token ' + CAST(r.{c} AS NVARCHAR(MAX))")
+                        step_lines.append(f"       'Column [{col}] contains registered placeholder/sentinel token ' + CAST({raw_ref} AS NVARCHAR(MAX))")
                         step_lines.append(f"FROM {tbl_staging} r")
-                        step_lines.append(f"WHERE r.{c} IS NOT NULL AND ({placeholder_cond});")
+                        step_lines.append(f"WHERE {raw_ref} IS NOT NULL AND ({placeholder_cond});")
                         step_lines.append(f"")
                 elif action == "validate_referential_integrity_or_stage":
                     p = step_params(st)
@@ -1774,11 +1949,14 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 action = st.get("action")
                 # Only expressions
                 if action in (
-                    "trim", "lowercase", "uppercase", "sanitize_email", "normalize_phone", 
+                    "trim", "trim_preserve_case", "lowercase", "uppercase", "sanitize_email", "normalize_phone", 
                     "hash_phone", "mask_phone", "standardize_boolean", "regex_replace", 
                     "range_clip", "clip_outliers", "replace_sentinel_values", "normalize_registered_placeholder",
                     "coerce_numeric", "cast_type", "replace_values", "nullify_dummy_dates", 
-                    "nullify_punctuation", "parse_dates", "parse_dates_safe", "nullify_date", "zero_to_null"
+                    "nullify_punctuation", "parse_dates", "parse_dates_safe", "nullify_date", "zero_to_null",
+                    "preserve_null_and_flag", "preserve_and_flag", "preserve_null",
+                    "preserve_missing_suspected_key", "accept_null_as_optional",
+                    "flag_only", "fill_constant", "fill_null_with_constant",
                 ):
                     if col not in column_transforms:
                         column_transforms[col] = []
@@ -1817,43 +1995,79 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                                 status_expr = f"CASE WHEN TRY_CAST([{col_name}] AS FLOAT) < {lower_b} THEN 'negative_value_review_required' ELSE 'valid' END"
                                 reason_expr = f"CASE WHEN TRY_CAST([{col_name}] AS FLOAT) < {lower_b} THEN 'Catalog price/measure cannot be negative' ELSE NULL END"
                         update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
-                        update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {_accumulate_reason(col_clean, reason_expr)}")
                     elif any(a in ("replace_sentinel_values", "normalize_registered_placeholder") for a in actions):
-                        if any(k in col_name.lower() for k in ("instructorid", "instructor_id")):
-                            status_expr = f"CASE WHEN TRY_CAST([{col_name}] AS BIGINT) IN (999, -999, 999999, 9999999) OR LOWER(LTRIM(RTRIM(CAST([{col_name}] AS NVARCHAR(MAX))))) IN ('999', '-999', '999999', '9999999') THEN 'sentinel_value' ELSE 'valid' END"
-                            reason_expr = f"CASE WHEN TRY_CAST([{col_name}] AS BIGINT) IN (999, -999, 999999, 9999999) OR LOWER(LTRIM(RTRIM(CAST([{col_name}] AS NVARCHAR(MAX))))) IN ('999', '-999', '999999', '9999999') THEN 'InstructorID sentinel value replaced with NULL' ELSE NULL END"
-                        else:
-                            status_expr = f"CASE WHEN LOWER(LTRIM(RTRIM(CAST([{col_name}] AS NVARCHAR(MAX))))) IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified', '0000') OR TRY_CAST([{col_name}] AS FLOAT) IN (999, -999, 999999, 9999999, -9999, 99999) THEN 'placeholder_normalized_to_null' ELSE 'valid' END"
-                            reason_expr = f"CASE WHEN LOWER(LTRIM(RTRIM(CAST([{col_name}] AS NVARCHAR(MAX))))) IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified', '0000') OR TRY_CAST([{col_name}] AS FLOAT) IN (999, -999, 999999, 9999999, -9999, 99999) THEN 'Configured placeholder token normalized to NULL' ELSE NULL END"
+                        status_expr = f"CASE WHEN LOWER(LTRIM(RTRIM(CAST([{col_clean}_raw] AS NVARCHAR(MAX))))) IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified', '0000') OR TRY_CAST([{col_clean}_raw] AS FLOAT) IN (999, -999, 999999, 9999999, -9999, 99999) THEN 'placeholder_normalized_to_null' ELSE 'valid' END"
+                        reason_expr = f"CASE WHEN LOWER(LTRIM(RTRIM(CAST([{col_clean}_raw] AS NVARCHAR(MAX))))) IN ('???', 'n/a', 'na', 'null', 'none', 'unknown', 'dummy', 'temp', 'test', '###', '-', 'unspecified', '0000') OR TRY_CAST([{col_clean}_raw] AS FLOAT) IN (999, -999, 999999, 9999999, -9999, 99999) THEN 'Configured placeholder token normalized to NULL' ELSE NULL END"
                         update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
-                        update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {_accumulate_reason(col_clean, reason_expr)}")
                     elif any(a in ("parse_dates", "parse_dates_safe", "nullify_date", "nullify_dummy_dates") for a in actions):
-                        parsed_dt = f"COALESCE(TRY_CONVERT(date, [{col_name}], 120), TRY_CONVERT(date, [{col_name}], 103), TRY_CONVERT(date, [{col_name}], 101), TRY_CONVERT(date, [{col_name}], 111))"
-                        status_expr = f"CASE WHEN [{col_name}] IS NULL OR LTRIM(RTRIM(CAST([{col_name}] AS NVARCHAR(MAX)))) = '' THEN 'missing_value' WHEN {parsed_dt} IN ('1900-01-01', '9999-12-31', '0001-01-01') THEN 'sentinel_value' WHEN {parsed_dt} IS NULL OR {parsed_dt} < '1900-01-01' OR {parsed_dt} > '2099-12-31' THEN 'impossible_calendar_date' ELSE 'valid' END"
-                        reason_expr = f"CASE WHEN {parsed_dt} IN ('1900-01-01', '9999-12-31', '0001-01-01') THEN 'Sentinel date replaced with NULL' WHEN {parsed_dt} IS NULL AND [{col_name}] IS NOT NULL THEN 'Invalid calendar date or unparseable format' ELSE NULL END"
+                        parsed_dt = f"COALESCE(TRY_CONVERT(date, [{col_clean}_raw], 120), TRY_CONVERT(date, [{col_clean}_raw], 103), TRY_CONVERT(date, [{col_clean}_raw], 101), TRY_CONVERT(date, [{col_clean}_raw], 111))"
+                        status_expr = f"CASE WHEN [{col_clean}_raw] IS NULL OR LTRIM(RTRIM(CAST([{col_clean}_raw] AS NVARCHAR(MAX)))) = '' THEN 'missing_value' WHEN {parsed_dt} IN ('1900-01-01', '9999-12-31', '0001-01-01') THEN 'sentinel_value' WHEN {parsed_dt} IS NULL OR {parsed_dt} < '1900-01-01' OR {parsed_dt} > '2099-12-31' THEN 'impossible_calendar_date' ELSE 'valid' END"
+                        reason_expr = f"CASE WHEN {parsed_dt} IN ('1900-01-01', '9999-12-31', '0001-01-01') THEN 'Sentinel date replaced with NULL' WHEN {parsed_dt} IS NULL AND [{col_clean}_raw] IS NOT NULL THEN 'Invalid calendar date or unparseable format' ELSE NULL END"
                         update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
-                        update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {_accumulate_reason(col_clean, reason_expr)}")
+                    elif "standardize_boolean" in actions:
+                        inner_raw = f"LOWER(LTRIM(RTRIM(CAST([{col_clean}_raw] AS NVARCHAR(50)))))"
+                        status_expr = (
+                            f"CASE "
+                            f"WHEN [{col_clean}_raw] IS NULL OR {inner_raw} = '' THEN 'missing_value' "
+                            f"WHEN {inner_raw} IN ('1', 'true', 'yes', 'y', 't', '0', 'false', 'no', 'n', 'f') THEN 'valid' "
+                            f"ELSE 'invalid_boolean_format' END"
+                        )
+                        reason_expr = (
+                            f"CASE "
+                            f"WHEN [{col_clean}_raw] IS NOT NULL AND {inner_raw} <> '' AND {inner_raw} NOT IN ('1', 'true', 'yes', 'y', 't', '0', 'false', 'no', 'n', 'f') "
+                            f"THEN 'Value ' + CAST([{col_clean}_raw] AS NVARCHAR(50)) + ' cannot be parsed as boolean' "
+                            f"ELSE NULL END"
+                        )
+                        update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {_accumulate_reason(col_clean, reason_expr)}")
                     elif "normalize_phone" in actions:
-                        inner_p = f"CAST([{col_name}] AS NVARCHAR(200))"
+                        inner_p = f"CAST([{col_clean}_raw] AS NVARCHAR(200))"
                         cln_p = f"REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE({inner_p}, N'-', N''), N' ', N''), N'(', N''), N')', N''), N'+', N''), N'.', N'')"
-                        status_expr = f"CASE WHEN [{col_name}] IS NULL THEN 'missing_value' WHEN LEN({cln_p}) BETWEEN 7 AND 15 AND {cln_p} NOT LIKE '%[^0-9]%' THEN 'valid' ELSE 'invalid_phone_format' END"
-                        reason_expr = f"CASE WHEN [{col_name}] IS NOT NULL AND (LEN({cln_p}) NOT BETWEEN 7 AND 15 OR {cln_p} LIKE '%[^0-9]%') THEN 'Phone length must be between 7 and 15 digits' ELSE NULL END"
+                        status_expr = f"CASE WHEN [{col_clean}_raw] IS NULL THEN 'missing_value' WHEN LEN({cln_p}) BETWEEN 7 AND 15 AND {cln_p} NOT LIKE '%[^0-9]%' THEN 'valid' ELSE 'invalid_phone_format' END"
+                        reason_expr = f"CASE WHEN [{col_clean}_raw] IS NOT NULL AND (LEN({cln_p}) NOT BETWEEN 7 AND 15 OR {cln_p} LIKE '%[^0-9]%') THEN 'Phone length must be between 7 and 15 digits' ELSE NULL END"
                         update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
-                        update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {_accumulate_reason(col_clean, reason_expr)}")
                     elif "sanitize_email" in actions:
-                        cln_e = f"LOWER(LTRIM(RTRIM(CAST([{col_name}] AS NVARCHAR(MAX)))))"
-                        status_expr = f"CASE WHEN [{col_name}] IS NULL THEN 'missing_value' WHEN {cln_e} LIKE '%_@_%._%' AND {cln_e} NOT LIKE '%@%@%' AND {cln_e} NOT LIKE '%..%' THEN 'valid' ELSE 'invalid_email_format' END"
-                        reason_expr = f"CASE WHEN [{col_name}] IS NOT NULL AND NOT ({cln_e} LIKE '%_@_%._%' AND {cln_e} NOT LIKE '%@%@%' AND {cln_e} NOT LIKE '%..%') THEN 'Invalid email syntax or domain' ELSE NULL END"
+                        cln_e = f"LOWER(LTRIM(RTRIM(CAST([{col_clean}_raw] AS NVARCHAR(MAX)))))"
+                        status_expr = f"CASE WHEN [{col_clean}_raw] IS NULL THEN 'missing_value' WHEN {cln_e} LIKE '%_@_%._%' AND {cln_e} NOT LIKE '%@%@%' AND {cln_e} NOT LIKE '%..%' THEN 'valid' ELSE 'invalid_email_format' END"
+                        reason_expr = f"CASE WHEN [{col_clean}_raw] IS NOT NULL AND NOT ({cln_e} LIKE '%_@_%._%' AND {cln_e} NOT LIKE '%@%@%' AND {cln_e} NOT LIKE '%..%') THEN 'Invalid email syntax or domain' ELSE NULL END"
                         update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
-                        update_clauses.append(f"[{col_clean}_validation_reason] = {reason_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {_accumulate_reason(col_clean, reason_expr)}")
+                    elif any(a in ("preserve_null_and_flag", "preserve_and_flag", "preserve_null", "preserve_missing_suspected_key", "accept_null_as_optional") for a in actions):
+                        status_expr = f"CASE WHEN [{col_name}] IS NULL THEN 'missing_value' ELSE 'valid' END"
+                        reason_expr = f"CASE WHEN [{col_name}] IS NULL THEN 'Missing value preserved per policy' ELSE NULL END"
+                        update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {_accumulate_reason(col_clean, reason_expr)}")
+                    elif any(a in ("fill_constant", "fill_null_with_constant") for a in actions):
+                        status_expr = f"CASE WHEN [{col_clean}_raw] IS NULL THEN 'filled_constant' ELSE 'valid' END"
+                        reason_expr = f"CASE WHEN [{col_clean}_raw] IS NULL THEN 'Missing value filled with constant' ELSE NULL END"
+                        update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {_accumulate_reason(col_clean, reason_expr)}")
+                    elif any(a in ("flag_only", "flag_missing_key", "flag_missing_declared_key") for a in actions):
+                        status_expr = f"CASE WHEN [{col_name}] IS NULL THEN 'missing_value_flagged' ELSE 'valid' END"
+                        reason_expr = f"CASE WHEN [{col_name}] IS NULL THEN 'Missing value flagged for review' ELSE NULL END"
+                        update_clauses.append(f"[{col_clean}_validation_status] = {status_expr}")
+                        update_clauses.append(f"[{col_clean}_validation_reason] = {_accumulate_reason(col_clean, reason_expr)}")
                     else:
-                        update_clauses.append(f"[{col_clean}_validation_status] = 'valid'")
+                        update_clauses.append(f"[{col_clean}_validation_status] = COALESCE([{col_clean}_validation_status], 'valid')")
                 if has_cast_type:
-                    col_clean = str(col_name).replace("'", "''")
-                    update_clauses.append(f"[{col_clean}_int] = TRY_CAST([{col_name}] AS BIGINT)")
+                    target_t = str(col_meta.get("target_dtype") or "").lower()
+                    is_monetary = any(m in col_name.lower() for m in ("salary", "price", "amount", "cost", "fee", "revenue", "balance", "budget", "total"))
+                    if any(it in target_t for it in ("int", "bigint", "integer")) and not is_monetary:
+                        col_clean = str(col_name).replace("'", "''")
+                        update_clauses.append(f"[{col_clean}_int] = TRY_CAST([{col_name}] AS BIGINT)")
 
-            # Baseline column sweep for columns with no steps (Fix 2)
-            stepped_cols = {s.get("column") for s in steps if s.get("column")}
+            stepped_cols = set()
+            for s in steps:
+                sc = s.get("column")
+                if sc:
+                    for sub in str(sc).split(","):
+                        sub_clean = sub.strip().strip("[]")
+                        if sub_clean:
+                            stepped_cols.add(sub_clean)
             for col_name, col_meta in cols_info.items():
                 if col_name in stepped_cols or col_name in local_excluded_columns:
                     continue
@@ -1865,6 +2079,14 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     update_clauses.append(f"[{col_name}] = TRY_CAST([{col_name}] AS {cast_type})")
                 
             if update_clauses:
+                covered_issues = []
+                for col_steps in column_transforms.values():
+                    for st in col_steps:
+                        iid = str(st.get("issue_id") or st.get("id") or "").strip()
+                        if iid and iid not in covered_issues:
+                            covered_issues.append(iid)
+                for iid in covered_issues:
+                    step_lines.append(f"-- COVERS: {iid}")
                 step_lines.append(f"-- Single-Pass expression updates on {tbl_staging}")
                 update_sql = f"UPDATE {tbl_staging}\nSET " + ",\n    ".join(update_clauses) + "\nWHERE 1=1;"
                 step_lines.extend(update_sql.splitlines())
@@ -2037,16 +2259,26 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     c = st.get("column")
                     if not c or c in excluded_columns or c in ("*", "[Row-level]", "[row-level]"):
                         continue
-                    cc = str(c).replace("'", "''")
-                    for comp in [f"{cc}_raw", f"{cc}_clean", f"{cc}_validation_status", f"{cc}_validation_reason"]:
-                        if comp not in clean_cols:
-                            clean_cols.append(comp)
-                    if st.get("action") in ("flag_outliers", "clip_or_flag"):
-                        if f"{cc}_outlier_flagged" not in clean_cols:
-                            clean_cols.append(f"{cc}_outlier_flagged")
-                    if st.get("action") == "cast_type":
-                        if f"{cc}_int" not in clean_cols:
-                            clean_cols.append(f"{cc}_int")
+                    action = str(st.get("action") or "").lower()
+                    if action in ("deduplicate", "flag_duplicate_candidates", "flag_business_key_duplicate", "flag_near_duplicate_cluster", "validate_referential_integrity_or_stage"):
+                        continue
+                    sub_cols = [col_item.strip().strip("[]") for col_item in str(c).split(",") if col_item.strip() and col_item.strip() not in ("*", "[Row-level]", "[row-level]")]
+                    for single_c in sub_cols:
+                        if single_c in excluded_columns:
+                            continue
+                        cc = str(single_c).replace("'", "''")
+                        for comp in [f"{cc}_raw", f"{cc}_clean", f"{cc}_validation_status", f"{cc}_validation_reason"]:
+                            if comp not in clean_cols:
+                                clean_cols.append(comp)
+                        if action in ("flag_outliers", "clip_or_flag"):
+                            if f"{cc}_outlier_flagged" not in clean_cols:
+                                clean_cols.append(f"{cc}_outlier_flagged")
+                        if action == "cast_type":
+                            target_t = str(st.get("params", {}).get("target_type") or st.get("params", {}).get("dtype") or cols_info.get(single_c, {}).get("target_dtype") or "").lower()
+                            is_monetary = any(m in single_c.lower() for m in ("salary", "price", "amount", "cost", "fee", "revenue", "balance", "budget", "total"))
+                            if any(it in target_t for it in ("int", "bigint", "integer")) and not is_monetary:
+                                if f"{cc}_int" not in clean_cols:
+                                    clean_cols.append(f"{cc}_int")
                 for comp in ["row_validation_status", "row_validation_reason", "is_duplicate_row"]:
                     if comp not in clean_cols:
                         clean_cols.append(comp)
@@ -2076,6 +2308,17 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     else:
                         select_parts.append(f"TRY_CAST([{c}] AS {target_type})")
                 select_list_typed = ", ".join(select_parts)
+
+                if is_clean and pk_col and dialect == "tsql":
+                    step_lines.append(f"-- Mandatory Gate: Ensure primary key [{pk_col}] is NOT NULL before target clean table insertion")
+                    step_lines.append(f"INSERT INTO dbo.etl_rejects (process_name, table_name, row_data, error_reason)")
+                    step_lines.append(f"SELECT '{sp_name}', '{tbl_clean}',")
+                    step_lines.append(f"       (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),")
+                    step_lines.append(f"       'Primary key [{pk_col}] cannot be NULL on clean table insert'")
+                    step_lines.append(f"FROM {tbl_staging} r")
+                    step_lines.append(f"WHERE r.[{pk_col}] IS NULL;")
+                    step_lines.append(f"DELETE FROM {tbl_staging} WHERE [{pk_col}] IS NULL;")
+                    step_lines.append("")
 
                 if scd_type == "type2":
                     step_lines.append("-- Copy fully transformed data from Staging to target Clean table (SCD Type 2)")
@@ -2154,7 +2397,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 processed_dedup_keys = set()
                 for st in dedup_steps:
                     col_val = str(st.get("column") or "").strip()
-                    is_row_level = col_val.lower() in ("row-level", "[row-level]", "")
+                    is_row_level = col_val.lower() in ("row-level", "[row-level]", "", "*", "[*]")
                     is_pk_dedup = (st.get("source_issue_type") == "duplicate_primary_key" or st.get("issue_type") == "duplicate_primary_key")
                     
                     if is_row_level:
@@ -2172,9 +2415,34 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                                 ) and not c.lower().startswith("etl_")
                             ]
                             if not partition_cols:
-                                partition_cols = [pk_col] if pk_col else ["column1", "column2"]
+                                if pk_col:
+                                    partition_cols = [pk_col]
+                                elif cols:
+                                    partition_cols = [c for c in cols if not c.lower().startswith("etl_")]
+                                else:
+                                    continue
                     else:
-                        partition_cols = [c.strip() for c in col_val.split(",") if c.strip()]
+                        raw_cols = [c.strip().strip("[]") for c in col_val.split(",") if c.strip()]
+                        if "*" in raw_cols:
+                            exclude_cols = {pk_col} if pk_col else set()
+                            if watermark_col:
+                                exclude_cols.add(watermark_col)
+                            partition_cols = [
+                                c for c in cols
+                                if c not in exclude_cols and c.lower() not in (
+                                    "etl_batch_id", "run_id", "etl_created_at", "etl_updated_at",
+                                    "_rn", "_dedup_rn", "etl_run_id", "etl_created_date", "etl_updated_date"
+                                ) and not c.lower().startswith("etl_")
+                            ]
+                            if not partition_cols:
+                                if pk_col:
+                                    partition_cols = [pk_col]
+                                elif cols:
+                                    partition_cols = [c for c in cols if not c.lower().startswith("etl_")]
+                                else:
+                                    continue
+                        else:
+                            partition_cols = raw_cols
                             
                     dedup_key = tuple(sorted(partition_cols))
                     if dedup_key in processed_dedup_keys:
@@ -2186,10 +2454,27 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                         for c in partition_cols
                     ]
                     partition_clause = ", ".join(partition_exprs)
+                    order_parts = []
                     if watermark_col:
-                        order_clause = f"[{watermark_col}] DESC"
-                    else:
-                        order_clause = "(SELECT NULL)"
+                        order_parts.append(f"[{watermark_col}] DESC")
+                    if pk_col and pk_col not in partition_cols:
+                        order_parts.append(f"[{pk_col}] ASC")
+                    elif pk_col and not watermark_col:
+                        order_parts.append(f"[{pk_col}] ASC")
+                    
+                    # Deterministic tie-breaker fallback (avoids non-deterministic ORDER BY (SELECT NULL))
+                    if not order_parts:
+                        candidate_tie_breakers = [c for c in cols if c not in partition_cols and not c.lower().startswith("etl_")]
+                        if candidate_tie_breakers:
+                            order_parts.append(f"[{candidate_tie_breakers[0]}] ASC")
+                        elif pk_col:
+                            order_parts.append(f"[{pk_col}] ASC")
+                        elif partition_cols:
+                            order_parts.append(f"[{partition_cols[0]}] ASC")
+                        else:
+                            order_parts.append("etl_batch_id ASC")
+                            
+                    order_clause = ", ".join(order_parts)
                         
                     label = "primary key" if is_row_level and is_pk_dedup else "near-duplicate attributes"
                     st_act = str(st.get("action") or "").lower()
@@ -2459,9 +2744,23 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     # S3-05: SQL Quality assessment badge
     from agent.etl_pipeline.validate_sql import validate_sql_basic_dict
     val_res = validate_sql_basic_dict(full_sql)
-    issues = val_res.get("issues") or []
-    
-    score = max(0, 100 - len(issues) * 15)
+    issues = list(val_res.get("issues") or [])
+    warnings = list(val_res.get("warnings") or [])
+
+    # Check for hard syntax smells
+    clean_code = re.sub(r"'(?:''|[^'])*'", "''", full_sql)
+    clean_code = re.sub(r"--[^\n]*", "", clean_code)
+    if "[*]" in clean_code or "CAST([*]" in clean_code:
+        issues.append("Fatal syntax: Wildcard [*] used as column identifier in query or window clause")
+    if re.search(r"\[\s*[^\]\n']+,[^\]\n']+\]", clean_code):
+        issues.append("Fatal syntax: Bracketed identifier contains comma (composite column leak in DDL/DML)")
+    proc_blocks = re.findall(r"CREATE\s+(?:OR\s+ALTER\s+)?PROCEDURE[\s\S]*?END\s*;", full_sql, re.IGNORECASE)
+    for pb in proc_blocks:
+        if re.search(r"\bALTER\s+TABLE\b", pb, re.IGNORECASE):
+            warnings.append("Performance/Locking: ALTER TABLE detected inside stored procedure body")
+            break
+
+    score = max(0, 100 - len(issues) * 20 - len(warnings) * 4)
     if score >= 90:
         grade = "A"
     elif score >= 80:
@@ -2477,12 +2776,14 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         f"-- Score: {score}/100",
         f"-- Grade: {grade}",
     ]
-    if issues:
-        badge_lines.append(f"-- Issues Detected ({len(issues)}):")
-        for iss in issues:
+    if issues or warnings:
+        all_reported = [f"[BLOCKER] {iss}" for iss in issues] + [f"[ADVISORY] {w}" for w in warnings]
+        badge_lines.append(f"-- Issues Detected ({len(all_reported)}):")
+        for iss in all_reported:
             badge_lines.append(f"--   - {iss}")
     else:
-        badge_lines.append("-- No issues detected. Fully production ready!")
+        badge_lines.append("-- No static code-generation issues detected.")
+        badge_lines.append("-- Generated SQL still requires compilation and integration validation.")
     badge_lines.extend([
         "-- ============================================================",
         ""

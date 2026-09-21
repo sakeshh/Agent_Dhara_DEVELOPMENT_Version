@@ -1032,25 +1032,55 @@ def _postprocess_tsql_code(code: str) -> str:
     )
 
     # 1c. Balance Stored Procedures and ensure auto-execution
-    has_sp = re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?", code, re.IGNORECASE)
-    if has_sp:
-        sp_schema = has_sp.group(1) or "dbo"
-        sp_name = has_sp.group(2)
-        full_sp_call = f"[{sp_schema}].[{sp_name}]"
+    # First, strip any dummy/hallucinated procedures that only call EXEC dbo.ProcName
+    code = re.sub(
+        r"CREATE\s+(?:OR\s+ALTER\s+)?PROCEDURE\s+\[?\w+\]?(?:\.\[?\w+\]?)?\s+AS\s+BEGIN\s+(?:--[^\n]*\n\s*)*EXEC\s+(?:\[?dbo\]?\.)?\[?ProcName\]?;?\s*END;\s*GO\s*(?:EXEC\s+\[?\w+\]?(?:\.\[?\w+\]?)?;?\s*GO)?",
+        "",
+        code,
+        flags=re.IGNORECASE
+    )
+    code = re.sub(r"\bEXEC\s+(?:\[?dbo\]?\.)?\[?ProcName\]?;?", "", code, flags=re.IGNORECASE)
 
-        # Check if procedure AS BEGIN is missing outer END; before GO or EOF
-        # In T-SQL: BEGIN TRY/CATCH blocks end with END CATCH. If there is no matching END; after END CATCH, inject it.
-        if re.search(r"\bAS\s+BEGIN\b", code, re.IGNORECASE):
-            # Check if outer END; is missing after END CATCH;
-            m_catch = re.search(r"\bEND\s+CATCH\s*;?", code, re.IGNORECASE)
-            if m_catch:
-                post_catch = code[m_catch.end():]
-                # If there is no 'END' closing the procedure before any subsequent GO or EOF:
-                first_go_or_eof = re.search(r"\b(?:--\s*)?GO\b|\Z", post_catch, re.IGNORECASE)
-                between = post_catch[:first_go_or_eof.start()] if first_go_or_eof else post_catch
-                if not re.search(r"\bEND\b", between, re.IGNORECASE):
-                    insert_pos = m_catch.end()
-                    code = code[:insert_pos] + "\nEND;" + code[insert_pos:]
+    # Clean any accidental orphaned END; after END CATCH in top-level execution batches that do NOT start with CREATE PROCEDURE
+    def _fix_orphaned_catch_end(m):
+        full = m.group(0)
+        prefix_code = code[:m.start()]
+        # Check if the current batch (after last GO or from start) defines a PROCEDURE
+        last_go = prefix_code.rfind("GO")
+        batch_start = prefix_code[last_go + 2:] if last_go != -1 else prefix_code
+        if not re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\b", batch_start, re.IGNORECASE):
+            return m.group(1)  # strip the orphaned END;
+        return full
+
+    code = re.sub(
+        r"(\bEND\s+CATCH\s*;?)\s*\n\s*END\s*;",
+        _fix_orphaned_catch_end,
+        code,
+        flags=re.IGNORECASE
+    )
+
+    sp_matches = list(re.finditer(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?", code, re.IGNORECASE))
+    if sp_matches:
+        for sp_match in sp_matches:
+            sp_schema = sp_match.group(1) or "dbo"
+            sp_name = sp_match.group(2)
+            full_sp_call = f"[{sp_schema}].[{sp_name}]"
+
+            # Find the body of THIS stored procedure (from sp_match.start() to next GO or EOF)
+            post_sp = code[sp_match.start():]
+            m_next_go = re.search(r"\b(?:--\s*)?GO\b|\Z", post_sp[sp_match.end() - sp_match.start():], re.IGNORECASE)
+            sp_end = sp_match.start() + (sp_match.end() - sp_match.start()) + (m_next_go.start() if m_next_go else len(post_sp))
+            sp_body = code[sp_match.start():sp_end]
+
+            if re.search(r"\bAS\s+BEGIN\b", sp_body, re.IGNORECASE):
+                # Check if this procedure body has BEGIN TRY ... END CATCH
+                m_catch = re.search(r"\bEND\s+CATCH\s*;?", sp_body, re.IGNORECASE)
+                if m_catch:
+                    after_catch = sp_body[m_catch.end():]
+                    # If no 'END' closes the procedure before the end of the procedure body
+                    if not re.search(r"\bEND\b", after_catch, re.IGNORECASE):
+                        insert_rel_pos = sp_match.start() + m_catch.end()
+                        code = code[:insert_rel_pos] + "\nEND;" + code[insert_rel_pos:]
 
         # Ensure procedure has a real GO delimiter at the end of its definition
         code = re.sub(r"(\bEND\s*;\s*)\n\s*--\s*GO[^\n]*", r"\1\nGO", code, flags=re.IGNORECASE)
@@ -1249,7 +1279,7 @@ def _postprocess_tsql_code(code: str) -> str:
         flags=re.IGNORECASE
     )
 
-    # 6. Ensure companion columns exist on staging tables
+    # 6. Ensure companion columns and referenced base columns exist on staging tables
     staging_tables = re.findall(r"#([a-zA-Z0-9_]+)_Staging\b", code, re.IGNORECASE)
     for st_name in set(staging_tables):
         if st_name.lower().endswith("_staging"):
@@ -1262,14 +1292,27 @@ def _postprocess_tsql_code(code: str) -> str:
             cols_needed.add("row_validation_status")
             cols_needed.add("row_validation_reason")
         for upd in updates:
-            set_cols = re.findall(r"\[([a-zA-Z0-9_]+)\]\s*=", upd)
+            # Match both bracketed [Col] = and unbracketed Col =
+            set_matches = re.findall(r"(?:\[([a-zA-Z0-9_]+)\]|\b([a-zA-Z0-9_]+)\b)\s*=", upd)
+            set_cols = [m[0] or m[1] for m in set_matches if (m[0] or m[1])]
             for sc in set_cols:
-                if sc.endswith("_clean") or sc.endswith("_validation_status") or sc.endswith("_validation_reason"):
+                if sc.endswith("_clean") or sc.endswith("_validation_status") or sc.endswith("_validation_reason") or sc.endswith("_raw"):
                     cols_needed.add(sc)
-                    base_c = re.sub(r"_(clean|validation_status|validation_reason)$", "", sc)
+                    base_c = re.sub(r"_(clean|validation_status|validation_reason|raw)$", "", sc)
                     cols_needed.add(f"{base_c}_clean")
                     cols_needed.add(f"{base_c}_validation_status")
                     cols_needed.add(f"{base_c}_validation_reason")
+                    cols_needed.add(base_c)
+                else:
+                    cols_needed.add(sc)
+
+        where_clauses = re.findall(rf"UPDATE\s+{re.escape(st_full)}\s+SET\s+[^;]+?WHERE\s+([^;]+?);", code, re.IGNORECASE)
+        for wh in where_clauses:
+            where_matches = re.findall(r"(?:\[([a-zA-Z0-9_]+)\]|\b([a-zA-Z0-9_]+)\b)\s*(?:IS\s+NULL|IS\s+NOT\s+NULL|IN\b|LIKE\b|>|<|=)", wh, re.IGNORECASE)
+            for wm in where_matches:
+                wc = wm[0] or wm[1]
+                if wc and wc.upper() not in ("GETDATE", "NULL", "SELECT", "COUNT", "HAVING", "GROUP", "BY", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "EXISTS"):
+                    cols_needed.add(wc)
 
         if cols_needed:
             create_st = re.search(rf"SELECT\s+[^;]+INTO\s+{re.escape(st_full)}[^;]*;", code, re.IGNORECASE)
@@ -1287,6 +1330,8 @@ def _postprocess_tsql_code(code: str) -> str:
                             ctype = "VARCHAR(500) NULL"
                         elif mc.endswith("_validation_status"):
                             ctype = "VARCHAR(50) NULL"
+                        elif mc.endswith("_clean") or mc.endswith("_raw"):
+                            ctype = "NVARCHAR(MAX) NULL"
                         else:
                             ctype = "NVARCHAR(MAX) NULL"
                         alter_clauses.append(f"    IF NOT EXISTS (SELECT 1 FROM tempdb.sys.columns WHERE object_id = OBJECT_ID('tempdb..{st_full}') AND name = '{mc}')\n        ALTER TABLE {st_full} ADD [{mc}] {ctype};")
@@ -1303,14 +1348,18 @@ def _postprocess_tsql_code(code: str) -> str:
         st_updates = re.findall(rf"UPDATE\s+{re.escape(st_full)}\s+SET\s+([^;]+?)(?:WHERE\b|;)", code, re.IGNORECASE)
         status_cols_for_table = set()
         for upd in st_updates:
-            status_cols_for_table.update(re.findall(r"\[([a-zA-Z0-9_]+)_validation_status\]", upd))
+            st_matches = re.findall(r"(?:\[([a-zA-Z0-9_]+)_validation_status\]|\b([a-zA-Z0-9_]+)_validation_status\b)", upd)
+            for sm in st_matches:
+                base_val = sm[0] or sm[1]
+                if base_val:
+                    status_cols_for_table.add(base_val)
 
         for base_col in status_cols_for_table:
             clean_col = f"{base_col}_clean"
             stat_col = f"{base_col}_validation_status"
             guard_marker = f"-- Integrity Guard ({st_name}): Nullify [{clean_col}]"
             if guard_marker not in code:
-                ins_match = re.search(rf"INSERT\s+INTO\s+dbo\.\[?{st_name}(?:_Clean)?\]?", code, re.IGNORECASE)
+                ins_match = re.search(rf"INSERT\s+INTO\s+(?:cleanedTables|dbo)\.\[?{st_name}(?:_Clean)?\]?", code, re.IGNORECASE)
                 if ins_match:
                     guard_stmt = (
                         f"\n    {guard_marker} where anomaly status is present\n"
@@ -2044,12 +2093,18 @@ T-SQL REQUIREMENTS:
      - Target clean tables: ALWAYS include the timestamp suffix in the clean table name: `cleanedTables.<Table>_Clean_<timestamp>` (e.g. `cleanedTables.<Table>_Clean_20260921_123000` formatted with date and time YYYYMMDD_HHMMSS) in the `cleanedTables` schema so multiple executions do not overlap or error. Ensure `IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'cleanedTables') EXEC('CREATE SCHEMA cleanedTables');` is executed before clean table DDL.
      - Tables: `IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TableName' AND schema_id = SCHEMA_ID('cleanedTables')) CREATE TABLE cleanedTables.TableName (...);`
      - Indexes: `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IndexName' AND object_id = OBJECT_ID('cleanedTables.TableName')) CREATE NONCLUSTERED INDEX IndexName ON cleanedTables.TableName (...);`
-     - If writing a Stored Procedure: `CREATE OR ALTER PROCEDURE dbo.ProcName AS BEGIN ... END; GO`.
+     - If writing a Stored Procedure: `CREATE OR ALTER PROCEDURE dbo.etl_clean_<TableName> AS BEGIN ... END; GO`.
        CRITICAL: The procedure MUST close with `END;` on its own line, followed by `GO`, and MUST immediately be followed by an auto-execution call:
-       `EXEC dbo.ProcName; GO`
+       `EXEC dbo.etl_clean_<TableName>; GO`
        so that executing the script in Azure SQL actually runs the pipeline and populates the clean tables (preventing empty 0-row tables).
+       NEVER emit unresolved placeholder names like `dbo.ProcName`!
        Alternatively, write a direct single-batch transactional script without a stored procedure wrapper.
      - Each outer script DDL statement MUST be followed by a `GO` batch separator on its own line.
+- MULTI-DATASET ISOLATION (CRITICAL FOR MULTI-TABLE PLANS):
+  When a plan includes multiple tables/datasets:
+  1. Process each table/dataset in its own isolated block with its own dedicated staging table: `#<Table>_Staging`.
+  2. For each table, create `#<Table>_Staging`, run ONLY that table's column validation updates, and execute its `INSERT INTO cleanedTables.<Table>_Clean`.
+  3. NEVER execute an UPDATE or rule for Table B against `#TableA_Staging`!
   2. ABSOLUTE FORBIDDEN: NEVER output `GO` inside `BEGIN TRY ... END TRY`, inside `BEGIN CATCH ... END CATCH`, or inside procedure execution bodies:
      Once an execution block begins (`SET NOCOUNT ON; SET XACT_ABORT ON; DECLARE @run_id INT; BEGIN TRY...`), NEVER emit `GO` inside the TRY or CATCH blocks!
      In T-SQL, `GO` ends the batch and destroys local variables like `@run_id`, causing fatal compilation errors (`Must declare the scalar variable "@run_id"`).
@@ -2548,7 +2603,7 @@ def _consolidate_and_filter_datasets(
             
             # Type-aware filtering: outlier logic is numeric-only (always enforce regardless of strict_mode)
             if action in ("flag_outliers", "clip_or_flag", "clip_outliers", "cap_outliers"):
-                if col:
+                if col is not None:  # Bug 6 fix: guard against None (row-level/wildcard steps)
                     col_meta = _get_col_meta(col, step)
                     col_str = str(col).lower()
                     is_key = any(k in col_str for k in ("id", "key", "code", "ref", "num", "no", "nbr", "uuid", "guid", "sku", "ean", "isbn", "asin"))
@@ -2556,6 +2611,7 @@ def _consolidate_and_filter_datasets(
                     if is_key or is_cat or not _is_numeric_column(col, col_meta):
                         logger.info(f"[Step Filter] Dropped '{action}' on '{col}' — non-numeric/identifier/categorical (ds={ds_name})")
                         continue
+                # row-level outlier steps (col=None) pass through to deduplication/seen_operations
                         
             # 2. Operation Deduplication / Normalization
             norm_action = action
@@ -2599,17 +2655,41 @@ def _consolidate_and_filter_datasets(
 def _extract_assessment_dq_issues(assessment: Dict[str, Any], plan: Dict[str, Any]) -> List[Dict[str, Any]]:
     issues: List[Dict[str, Any]] = []
     seen = set()
+    seen_issue_ids = set()
+
+    def _is_col_in_dataset(ds: str, c: Any) -> bool:
+        if not c or not ds or ds == "_global":
+            return True
+        c_str = str(c).strip()
+        if c_str in ("*", "[Row-level]", "[row-level]", "row-level"):
+            return True
+        ds_info = (assessment.get("datasets") or {}).get(ds) or {}
+        if not ds_info:
+            ds_clean = ds.replace("dbo.", "").strip()
+            ds_info = (assessment.get("datasets") or {}).get(ds_clean) or {}
+        cols = (ds_info.get("columns") or {}).keys()
+        if not cols:
+            return True
+        known = {str(col_k).strip("[]").lower() for col_k in cols}
+        for part in c_str.split(","):
+            part_clean = part.strip().strip("[]").lower()
+            if part_clean and part_clean not in ("*", "row-level") and part_clean not in known:
+                return False
+        return True
 
     # 1. From assessment.data_quality_issues.datasets
     dq_issues_ds = (assessment.get("data_quality_issues") or {}).get("datasets") or {}
     for ds_name, dq_block in dq_issues_ds.items():
         for iss in (dq_block.get("issues") or []):
             col = iss.get("column")
+            if not _is_col_in_dataset(ds_name, col):
+                continue
             itype = iss.get("issue_type") or iss.get("rule_id") or "issue"
             key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
-            if key not in seen:
+            iid = iss.get("issue_id") or iss.get("id") or make_issue_id(ds_name, col, itype)
+            if key not in seen and iid not in seen_issue_ids:
                 seen.add(key)
-                iid = make_issue_id(ds_name, col, itype)
+                seen_issue_ids.add(iid)
                 issues.append({
                     "issue_id": iid,
                     "dataset": ds_name,
@@ -2626,11 +2706,14 @@ def _extract_assessment_dq_issues(assessment: Dict[str, Any], plan: Dict[str, An
         q = (ds_meta.get("quality") or {}) if isinstance(ds_meta, dict) else {}
         for iss in (q.get("issues") or []):
             col = iss.get("column")
+            if not _is_col_in_dataset(ds_name, col):
+                continue
             itype = iss.get("issue_type") or iss.get("rule_id") or "issue"
             key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
-            if key not in seen:
+            iid = iss.get("issue_id") or iss.get("id") or make_issue_id(ds_name, col, itype)
+            if key not in seen and iid not in seen_issue_ids:
                 seen.add(key)
-                iid = make_issue_id(ds_name, col, itype)
+                seen_issue_ids.add(iid)
                 issues.append({
                     "issue_id": iid,
                     "dataset": ds_name,
@@ -2646,11 +2729,14 @@ def _extract_assessment_dq_issues(assessment: Dict[str, Any], plan: Dict[str, An
     for item in (plan.get("manual_review") or []):
         ds_name = item.get("dataset") or ""
         col = item.get("column") or ""
+        if not _is_col_in_dataset(ds_name, col):
+            continue
         itype = item.get("issue_type") or item.get("rule_id") or "manual_review"
         key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
-        if key not in seen:
+        iid = item.get("id") or item.get("issue_id") or make_issue_id(ds_name, col, itype)
+        if key not in seen and iid not in seen_issue_ids:
             seen.add(key)
-            iid = item.get("id") or make_issue_id(ds_name, col, itype)
+            seen_issue_ids.add(iid)
             issues.append({
                 "issue_id": iid,
                 "dataset": ds_name,
@@ -2672,10 +2758,13 @@ def _extract_assessment_dq_issues(assessment: Dict[str, Any], plan: Dict[str, An
                 if not itype or itype in ("business_notes", "none"):
                     continue
                 col = st.get("column")
+                if not _is_col_in_dataset(ds_name, col):
+                    continue
                 key = (str(ds_name).lower(), str(col).lower() if col else "", str(itype).lower())
-                if key not in seen:
+                iid = st.get("issue_id") or make_issue_id(ds_name, col, itype)
+                if key not in seen and iid not in seen_issue_ids:
                     seen.add(key)
-                    iid = make_issue_id(ds_name, col, itype)
+                    seen_issue_ids.add(iid)
                     issues.append({
                         "issue_id": iid,
                         "dataset": ds_name,
@@ -3060,12 +3149,20 @@ def _build_user_message_parts(
         f"Generate complete ETL for this approved plan:\n{json.dumps(prompt_payload, separators=(',', ':'), default=str)}",
     ]
     
-    if payload.get("required_transform_functions"):
+    if payload.get("required_transform_functions") and engine_key in ("python", "pyspark"):
         req_fns = payload["required_transform_functions"]
         req_lines = [f"- Define function '{item['function_name']}' to transform dataset '{item['dataset_id']}'" for item in req_fns]
         user_parts.append(
             "REQUIRED TRANSFORM FUNCTION REGISTRY (you MUST define exactly these transform function names):\n"
             + "\n".join(req_lines)
+        )
+
+    if engine_key in ("sql-tsql", "sql-ansi"):
+        user_parts.append(
+            "T-SQL MULTI-DATASET ISOLATION CONTRACT:\n"
+            "If the plan contains multiple tables/datasets, generate an isolated execution pipeline for EACH table. "
+            "Every table MUST have its own temporary staging table (#<Table>_Staging) and its own INSERT INTO cleanedTables.<Table>_Clean. "
+            "NEVER cross-apply validation rules or column updates for one table to another table's staging table."
         )
     manifest = payload.get("connector_manifest") or {}
     m_ds = manifest.get("datasets") or {}
@@ -3303,6 +3400,7 @@ def _call_llm(
     *,
     fix_errors: Optional[List[str]] = None,
     previous_output: Optional[str] = None,
+    timeout: Optional[float] = None,
 ) -> Tuple[str, str]:
     client, model = _get_llm_client()
     if not client or not model:
@@ -3327,7 +3425,8 @@ def _call_llm(
         max_tokens = _safe_max_tokens(user_message, engine_key)
 
     # 1.3 OpenAI/Azure retry & timeout handling loop
-    max_attempts = 3
+    call_timeout = timeout if timeout is not None else float(os.getenv("LLM_REQUEST_TIMEOUT", "60"))
+    max_attempts = 2
     response = None
     last_err = None
     for attempt in range(max_attempts):
@@ -3340,14 +3439,14 @@ def _call_llm(
                 ],
                 temperature=0,
                 max_tokens=max_tokens,
-                timeout=float(os.getenv("LLM_REQUEST_TIMEOUT", "180")),
+                timeout=call_timeout,
             )
             break
         except (RateLimitError, APITimeoutError) as e:
             last_err = e
             if attempt == max_attempts - 1:
                 raise LLMInfraError(f"LLM request failed after retries: {e}") from e
-            sleep_time = 3.0 if attempt > 0 else 1.0
+            sleep_time = 2.0
             logger.warning(f"LLM rate limit or timeout on attempt {attempt + 1}, retrying in {sleep_time}s... Error: {e}")
             time.sleep(sleep_time)
         except Exception as e:
@@ -3437,11 +3536,11 @@ def _build_retry_context(code: str, errors: List[str]) -> str:
 
 
 _RETRY_BUDGET: Dict[str, int] = {
-    "python": 2,
-    "sql-tsql": 3,
-    "sql-ansi": 2,
-    "pyspark": 2,
-    "adf": 2,
+    "python": 1,
+    "sql-tsql": 1,
+    "sql-ansi": 1,
+    "pyspark": 1,
+    "adf": 1,
 }
 
 
@@ -3614,8 +3713,23 @@ def _generate_etl_with_llm_impl(
     
     max_retries = _RETRY_BUDGET.get(engine_key, 2)
     
+    start_time = time.time()
+    # Enforce safety deadline (default 75s) to guarantee HTTP response completes well within Azure App Service's 230s limit
+    SAFETY_DEADLINE_SECONDS = float(os.getenv("DHARA_CODEGEN_DEADLINE_SECONDS", "75"))
+
     code = ""
     for attempt in range(max_retries + 1):
+        elapsed = time.time() - start_time
+        remaining = SAFETY_DEADLINE_SECONDS - elapsed
+        if attempt > 0 and remaining < 15.0:
+            logger.warning(
+                f"LLM codegen deadline approaching (elapsed={elapsed:.1f}s, deadline={SAFETY_DEADLINE_SECONDS}s). "
+                f"Aborting retry {attempt} to allow fast deterministic template fallback."
+            )
+            if code and not is_llm_generation_error(code):
+                return code, f"LLM generation timed out on validation retry: {fix_errors}"
+            return None, f"LLM generation exceeded safety deadline ({SAFETY_DEADLINE_SECONDS}s)"
+
         import copy
         if attempt == 0:
             trimmed_payload = trim_payload(payload, _CODEGEN_TRIM_CONFIG)
@@ -3647,24 +3761,26 @@ def _generate_etl_with_llm_impl(
         else:
             prev = None
 
+        current_call_timeout = min(float(os.getenv("LLM_REQUEST_TIMEOUT", "60")), max(15.0, remaining))
         try:
             raw_code, stripped_code = _call_llm(
                 engine_key,
                 trimmed_payload,
                 fix_errors=fix_errors or None,
                 previous_output=prev,
+                timeout=current_call_timeout,
             )
         except (LLMInfraError, ConnectorConfigError) as exc:
             last_error = str(exc)
             _write_failure_cache(cache_key, last_error)
             if isinstance(exc, ConnectorConfigError):
                 return None, f"Connector configuration error: {exc}. Check your source connection settings."
-            if "truncated" in last_error.lower() and attempt < max_retries:
+            if "truncated" in last_error.lower() and attempt < max_retries and (time.time() - start_time < SAFETY_DEADLINE_SECONDS - 15.0):
                 logger.info(f"LLM output truncated. Retrying with harder payload trim...")
                 trimmed_payload = trim_payload(trimmed_payload, _FLOOR_TRIM_CONFIG)
                 fix_errors = []
                 continue
-            if attempt < max_retries:
+            if attempt < max_retries and (time.time() - start_time < SAFETY_DEADLINE_SECONDS - 15.0):
                 continue
             return None, f"LLM infrastructure error: {last_error}"
 
@@ -3844,6 +3960,12 @@ def _generate_etl_with_llm_impl(
                 _code_cache_put(cache_key, {"code": code, "time": time.time(), "ok": True})
                 return code, None
             if attempt < max_retries:
+                if time.time() - start_time >= SAFETY_DEADLINE_SECONDS - 15.0:
+                    logger.warning(
+                        f"LLM codegen deadline approaching (elapsed={time.time() - start_time:.1f}s). "
+                        "Aborting retry to allow fast template fallback."
+                    )
+                    break
                 logger.info(f"[Retry Debug] Attempt {attempt + 1} code failed validation with errors: {errs}.")
                 fix_errors = errs
                 continue

@@ -5,6 +5,8 @@ import re
 from typing import Any, Dict, List, Tuple, Optional
 import pandas as pd
 
+from agent.profiling.type_inference import normalize_column_name, _TECHNICAL_SURROGATE_NAMES
+
 logger = logging.getLogger("agent.profiler.relationship_registry")
 
 class RelationshipConfigError(ValueError):
@@ -193,6 +195,9 @@ def discover_inferred_relationships(
     suffixes = discovery_cfg.get("suffixes") or ["_id", "_key", "_code", "_sku", "id", "key", "code", "sku"]
 
     def _is_key_like(name: str) -> bool:
+        norm = normalize_column_name(name)
+        if norm.compact in _TECHNICAL_SURROGATE_NAMES or norm.canonical in _TECHNICAL_SURROGATE_NAMES:
+            return False
         name_lower = name.lower()
         if name_lower in ("id", "sku", "pk", "fk", "key", "code"):
             return True

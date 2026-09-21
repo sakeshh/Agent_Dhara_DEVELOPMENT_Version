@@ -32,6 +32,7 @@ def validate_python(code: str, never_drop_rows: bool = False) -> Tuple[bool, Lis
         (r"\bexec\b", "exec() is forbidden"),
         (r"\bos\.system\b", "os.system() is forbidden"),
         (r"pd\.read_csv\(['\"].*\.xml", "read_csv on .xml file — use read_xml"),
+        (r"drop_duplicates\([^)]*subset=\[[^\]]*['\"]\*['\"][^\]]*\]", "Invalid Pandas: drop_duplicates(subset=['*']) is invalid ('*' is not a DataFrame column)"),
     ]
     for pattern, msg in forbidden:
         if re.search(pattern, code):
@@ -93,6 +94,21 @@ def validate_tsql(code: str, never_drop_rows: bool = False) -> Tuple[bool, List[
     if "ROLLBACK" in upper and "BEGIN TRANSACTION" not in upper and "BEGIN TRAN" not in upper:
         errors.append("Invalid T-SQL: ROLLBACK encountered without corresponding BEGIN TRANSACTION")
 
+    # Check for invalid wildcard column identifier
+    code_no_strings = re.sub(r"'(?:''|[^'])*'", "''", code)
+    code_no_strings = re.sub(r"--[^\n]*", "", code_no_strings)
+    if "[*]" in code_no_strings:
+        errors.append("Invalid T-SQL: '[*]' used as column identifier")
+        
+    # Check for comma inside bracketed identifier
+    if re.search(r"\[\s*[^\]\n']+,[^\]\n']+\]", code_no_strings):
+        errors.append("Invalid T-SQL: Bracketed identifier contains comma")
+
+    # Check for ALTER TABLE inside stored procedure body
+    proc_match = re.search(r"CREATE\s+(?:OR\s+ALTER\s+)?PROCEDURE[\s\S]*?END\s*;", code, re.IGNORECASE)
+    if proc_match and re.search(r"\bALTER\s+TABLE\b", proc_match.group(0), re.IGNORECASE):
+        warnings.append("Advisory: ALTER TABLE statement found inside stored procedure body (violates DBA best practices; use pre-procedure DDL)")
+
     # Advisory only
     if "ETL_REJECTS" not in upper:
         warnings.append("Advisory: Missing dbo.etl_rejects table — recommended for DQ reject tracking")
@@ -111,6 +127,9 @@ def validate_pyspark(code: str, never_drop_rows: bool = False) -> Tuple[bool, Li
     except SyntaxError as e:
         errors.append(f"SyntaxError line {e.lineno}: {e.msg}")
         return False, errors, warnings
+    
+    if re.search(r"partitionBy\(\s*['\"]\*['\"]\s*\)", code):
+        errors.append("Invalid PySpark: Window.partitionBy('*') is invalid (asterisk is not a column name)")
     
     if "spark.read.csv" in code and ".xml" in code:
         errors.append("read.csv on .xml file — use XML format reader")

@@ -3103,6 +3103,11 @@ def build_legacy_action_migration_registry() -> Dict[str, LegacyActionMigrationR
     pass_through("accept_null_as_optional", "policy_accepted_null")
     pass_through("skip_requirement", "policy_skipped_requirement")
     pass_through("force_unlock", "steward_force_unlock")
+    # Canonicalized constraint/baseline actions — pass-through (flag only, no row mutation)
+    pass_through("at_least_one", "intentional_at_least_one_constraint")
+    pass_through("baseline_string_trim", "synthetic_baseline_trim")
+    pass_through("baseline_type_enforcement", "synthetic_baseline_cast")
+    pass_through("nullify_punctuation", "intentional_nullify_punctuation")
 
     # MANUAL_REVIEW
     manual_review("review_manually", "data_steward", "explicit_manual_review_required")

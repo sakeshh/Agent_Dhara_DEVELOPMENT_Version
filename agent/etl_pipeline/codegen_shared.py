@@ -133,11 +133,32 @@ def plan_actions(plan: Dict[str, Any]) -> List[str]:
     return actions
 
 
+# Columns that are categorically typed or name/master-data fields -- NEVER cast to numeric
+_CATEGORICAL_PATTERNS = (
+    "region", "channel", "location", "category", "status",
+    "country", "state", "city", "zone", "segment", "type",
+    "department", "division", "brand", "product_name", "tier",
+    "machine", "site", "facility", "plant", "warehouse", "floor",
+)
+_NAME_FIELD_PATTERNS = (
+    "name", "title", "description", "label", "machine",
+    "customer", "vendor", "supplier", "employee", "owner",
+)
+
+
 def get_sql_cast_type(col_type: Optional[str], col_name: str) -> str:
     col_lower = col_name.lower()
     t = col_type.lower() if col_type else ""
     is_generic_string = not t or t in ("object", "string", "varchar", "nvarchar", "char", "text")
     
+    # 0. Categorical text columns (country, state, city, status, name, etc.)
+    # Must NEVER be cast to numeric, even if dirty sample data inferred decimal/numeric/int.
+    is_metric = any(m in col_lower for m in ("amount", "price", "budget", "cost", "qty", "quantity", "total", "score", "rate")) or \
+                ("count" in col_lower and not any(x in col_lower for x in ("country", "account", "discount", "counter")))
+    is_categorical = any(k in col_lower for k in _CATEGORICAL_PATTERNS) or any(k in col_lower for k in _NAME_FIELD_PATTERNS)
+    if is_categorical and not is_metric and not col_lower.endswith(("_id", "_key", "_num", "_no")):
+        return "NVARCHAR(MAX)"
+
     # 1. Date/Time checks
     if not is_generic_string:
         if "datetime" in t or "timestamp" in t:
@@ -155,17 +176,18 @@ def get_sql_cast_type(col_type: Optional[str], col_name: str) -> str:
             return "DATETIME"
 
     # 2. Numeric checks
+    is_monetary = any(m in col_lower for m in ("amount", "price", "salary", "cost", "fee", "budget", "revenue", "balance", "fare"))
     if not is_generic_string:
+        if is_monetary:
+            return "DECIMAL(18,2)"
         if "int" in t:
             return "BIGINT"
         if "float" in t or "real" in t or "double" in t:
             return "FLOAT"
         if "decimal" in t or "numeric" in t:
-            if "amount" in col_lower or "price" in col_lower:
-                return "DECIMAL(18,2)"
-            return "DECIMAL(18,4)"
+            return "DECIMAL(18,2)" if is_monetary else "DECIMAL(18,4)"
     else:
-        if "amount" in col_lower or "price" in col_lower:
+        if is_monetary:
             return "DECIMAL(18,2)"
         if "quantity" in col_lower or "qty" in col_lower or ("count" in col_lower and not any(x in col_lower for x in ("account", "discount", "counter"))):
             return "DECIMAL(18,4)"
@@ -228,7 +250,7 @@ def sql_fill_update_lines(
     else:
         if is_date:
             lines.append(
-                f"UPDATE {table_sql} SET {col_bracket} = COALESCE({col_bracket}, '1900-01-01') WHERE {col_bracket} IS NULL;"
+                f"UPDATE {table_sql} SET {col_bracket} = COALESCE({col_bracket}, '1970-01-01') WHERE {col_bracket} IS NULL;"
             )
         elif is_numeric:
             lines.append(

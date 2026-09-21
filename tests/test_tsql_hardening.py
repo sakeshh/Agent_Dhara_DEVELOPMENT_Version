@@ -191,3 +191,50 @@ def test_failure_log_exception_preserves_original_transformation_error():
     # 4. Strict sequence assertion: ROLLBACK -> Nested TRY -> UPDATE Log -> Nested CATCH -> THROW
     assert rollback_pos < nested_try_pos < update_log_pos < nested_catch_pos < throw_pos
 
+
+def test_tsql_preserve_null_and_flag_and_fill_constant():
+    """Verify preserve_null_and_flag and fill_constant compile cleanly without unsupported action errors."""
+    plan = {
+        "plan_id": "plan-tsql-preserve",
+        "datasets": {
+            "dbo.Employees": {
+                "steps": [
+                    {
+                        "id": "STEP-CONTRACTENDDATE-68BFE576",
+                        "action": "preserve_null_and_flag",
+                        "column": "ContractEndDate",
+                    },
+                    {
+                        "id": "STEP-DEPT-FILL",
+                        "action": "fill_constant",
+                        "column": "Department",
+                        "params": {"constant_value": "General"},
+                    },
+                ]
+            }
+        },
+    }
+    assessment = {
+        "datasets": {
+            "dbo.Employees": {
+                "columns": {
+                    "EmployeeID": {"dtype": "int", "candidate_primary_key": True},
+                    "ContractEndDate": {"dtype": "date"},
+                    "Department": {"dtype": "nvarchar"},
+                }
+            }
+        }
+    }
+
+    sql = generate_sql_etl(plan, assessment, dialect="tsql")
+
+    # preserve_null_and_flag companion columns and updates
+    assert "[ContractEndDate_validation_status]" in sql
+    assert "[ContractEndDate_validation_reason]" in sql
+    assert "[ContractEndDate_validation_status] = CASE WHEN [ContractEndDate] IS NULL THEN 'missing_value' ELSE 'valid' END" in sql
+
+    # fill_constant updates
+    assert "[Department_validation_status]" in sql
+    assert "COALESCE([Department], N'General')" in sql
+
+

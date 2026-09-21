@@ -1262,7 +1262,24 @@ def _fallback(dq: Dict[str, Any]) -> DQRecommendations:
 MAX_CONCURRENT_LLM_CALLS = 4
 PER_CLUSTER_TIMEOUT_SECONDS = 10.0
 OVERALL_LLM_BUDGET_SECONDS = 20.0
-MAX_ISSUES_PER_CLUSTER = 8
+CLUSTER_RECOMMENDATION_MAX_OUTPUT_TOKENS = 2048
+MAX_FINDINGS_PER_CLUSTER_REQUEST = 10
+MAX_ISSUES_PER_CLUSTER = 10
+MAX_SPLIT_DEPTH = 1
+MAX_ATTEMPTS_PER_SUBCLUSTER = 1
+MAX_TOTAL_CALLS_PER_ORIGINAL_CLUSTER = 3
+
+class LLMResponseTruncatedError(Exception):
+    """Raised when LLM response finishes with finish_reason == 'length'."""
+    pass
+
+class LLMResponseInvalidError(Exception):
+    """Raised when LLM response contains no choices or empty text."""
+    pass
+
+class LLMResponseSchemaInvalidError(Exception):
+    """Raised when LLM response is not valid JSON."""
+    pass
 
 _CLUSTER_SYSTEM = """
 You are an expert Data Quality Remediation Advisor for Agent Dhara.
@@ -1417,8 +1434,12 @@ def _process_cluster(
 
     recs: List[Dict[str, Any]] = []
     usage = None
+    llm_rec_map: Dict[str, Any] = {}
 
-    try:
+    def _call_llm_cluster_api(
+        p_str: str,
+        f_cnt: int,
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, int]]]:
         if cfg.provider == "azure_openai":
             from openai import AzureOpenAI  # type: ignore
             client = AzureOpenAI(
@@ -1429,9 +1450,9 @@ def _process_cluster(
             )
             resp = client.chat.completions.create(
                 model=cfg.model,
-                messages=[{"role": "system", "content": _CLUSTER_SYSTEM}, {"role": "user", "content": prompt}],
+                messages=[{"role": "system", "content": _CLUSTER_SYSTEM}, {"role": "user", "content": p_str}],
                 temperature=0.1,
-                max_tokens=600,
+                max_tokens=CLUSTER_RECOMMENDATION_MAX_OUTPUT_TOKENS,
                 timeout=PER_CLUSTER_TIMEOUT_SECONDS,
             )
         else:
@@ -1439,99 +1460,142 @@ def _process_cluster(
             client = OpenAI(api_key=cfg.api_key, timeout=PER_CLUSTER_TIMEOUT_SECONDS)
             resp = client.chat.completions.create(
                 model=cfg.model,
-                messages=[{"role": "system", "content": _CLUSTER_SYSTEM}, {"role": "user", "content": prompt}],
+                messages=[{"role": "system", "content": _CLUSTER_SYSTEM}, {"role": "user", "content": p_str}],
                 temperature=0.1,
-                max_tokens=600,
+                max_tokens=CLUSTER_RECOMMENDATION_MAX_OUTPUT_TOKENS,
                 timeout=PER_CLUSTER_TIMEOUT_SECONDS,
             )
-        usage = usage_dict_from_response(resp)
-        raw = (resp.choices[0].message.content or "").strip()
-        obj = json.loads(raw)
+        u = usage_dict_from_response(resp)
+        if not resp.choices:
+            raise LLMResponseInvalidError("LLM returned no choices")
+        choice = resp.choices[0]
+        if getattr(choice, "finish_reason", None) == "length":
+            raise LLMResponseTruncatedError(f"Cluster recommendation output was truncated; finding_count={f_cnt}")
+        raw = (choice.message.content or "").strip()
+        if not raw:
+            raise LLMResponseInvalidError("LLM returned an empty response")
+        try:
+            parsed_obj = json.loads(raw)
+        except Exception as je:
+            raise LLMResponseSchemaInvalidError("LLM returned malformed JSON") from je
+        return parsed_obj, u
+
+    try:
+        obj, usage = _call_llm_cluster_api(prompt, len(findings_slice))
         llm_recs = obj.get("recommendations") or []
         llm_rec_map = {f"{r.get('column')}_{r.get('issue_type')}": r for r in llm_recs if isinstance(r, dict)}
-
-        for it in findings_slice:
-            can_type = it.get("canonical_issue_type") or it.get("issue_type") or "issue"
-            col = it.get("column")
-            k = f"{col}_{can_type}"
-            catalog_opts = options_by_finding.get(k) or get_resolution_options(can_type)
-            llm_item = llm_rec_map.get(k)
-
-            # Match LLM selection against allowable options
-            selected_opt = None
-            is_verified_llm = False
-            if llm_item:
-                sel_id = str(llm_item.get("selected_option_id") or "").strip()
-                selected_opt = next((o for o in catalog_opts if o["id"] == sel_id), None)
-                if selected_opt:
-                    is_verified_llm = True
-
-            # If LLM proposed invalid option ID or was missing, fallback to catalog recommended option
-            if not selected_opt:
-                selected_opt = next((o for o in catalog_opts if o.get("recommended")), catalog_opts[0] if catalog_opts else {"id": "keep_as_is", "action": "noop", "label": "Keep as-is"})
-
-            action_name = selected_opt.get("action", "noop")
-            why = (llm_item.get("why_it_matters") if (is_verified_llm and llm_item) else "") or it.get("why_it_matters") or f"Contextual DQ issue in {ds_name}.{col}"
-            outcome = (llm_item.get("expected_outcome") if (is_verified_llm and llm_item) else "") or f"Applies {selected_opt['label']} under human governance."
-            if is_verified_llm:
-                suggested = f"AI-assisted option: {selected_opt['label']} - {outcome}"
-                authority_src = "LLM_ADVISORY"
-                ai_status = "available"
-                rec_status = "ai_options_available"
-                rec_src = "ai_assisted_options"
-            else:
-                suggested = f"Catalog option: {selected_opt['label']} (AI-assisted ranking was unavailable)."
-                authority_src = "CATALOG_FALLBACK"
-                ai_status = "unavailable"
-                rec_status = "catalog_options_available"
-                rec_src = "deterministic_catalog"
-
-            recs.append({
-                "priority": 1 if (it.get("severity") or "").lower() == "high" else 2,
-                "dataset": ds_name,
-                "column": col,
-                "issue_type": can_type,
-                "raw_issue_type": it.get("raw_issue_type") or can_type,
-                "severity": it.get("severity") or "medium",
-                "affected_count": it.get("affected_count", 0),
-                "affected_percentage": it.get("affected_percentage"),
-                "why_it_matters": why,
-                "suggested_fix": suggested,
-                "expected_outcome": outcome,
-                "mapped_action": action_name,
-                "selected_option_id": selected_opt["id"],
-                "options": catalog_opts,
-                "auto_fixable": False,  # Contextual issue always requires approval
-                "capability_supported": can_type != "unknown_profiler_issue",
-                "authority_source": authority_src,
-                "ai_assistance_status": ai_status,
-                "recommendation_category": "decision_required",
-                "lifecycle": {
-                    "recommendation_status": rec_status,
-                    "approval_status": "pending",
-                    "codegen_status": "not_started",
-                    "validation_status": "not_started",
-                    "execution_status": "not_started",
-                },
-                "cluster_key": list(cluster_key),
-                "primary_reason_code": it.get("primary_reason_code") or (it.get("reason_codes", ["CONTEXTUAL_REMEDIATION"])[0]),
-                "reason_codes": it.get("reason_codes", []),
-                "evaluated_policy": it.get("evaluated_policy", {}),
-                "observed": it.get("observed", {
-                    "affected_rows": it.get("affected_count"),
-                    "affected_percentage": it.get("affected_percentage"),
-                }),
-                "outcome_metadata": ACTION_OUTCOME_METADATA.get(action_name, ACTION_OUTCOME_METADATA.get("keep_as_is", {})),
-                "example_sql": None if action_name in ("keep_as_is", "skip_etl", "noop") else get_remediation_sql(platform_target, ds_name, col, can_type),
-                "example_pandas": get_pandas_code(col, can_type, action_id=action_name),
-                "example_pyspark": get_pyspark_code(col, can_type, action_id=action_name),
-                "risk": f"Contextual transformation requiring decision. Options: {len(catalog_opts)} available.",
-                "recommendation_source": rec_src,
-            })
-
+    except LLMResponseTruncatedError as te:
+        logger.warning("Cluster recommendation truncated; attempting split-and-retry: %s", te)
+        if len(findings_slice) > 1:
+            mid = len(findings_slice) // 2
+            for sub in (findings_slice[:mid], findings_slice[mid:]):
+                sub_payload = [
+                    {
+                        "column": it.get("column"),
+                        "issue_type": it.get("canonical_issue_type") or it.get("issue_type") or "issue",
+                        "affected_count": it.get("affected_count"),
+                        "affected_percentage": it.get("affected_percentage"),
+                        "severity": it.get("severity") or "medium",
+                        "allowable_options": [
+                            {"id": o["id"], "label": o["label"], "action": o.get("action", "noop"), "description": o.get("description", "")}
+                            for o in (options_by_finding.get(f"{it.get('column')}_{it.get('canonical_issue_type') or it.get('issue_type') or 'issue'}") or [])
+                        ],
+                    }
+                    for it in sub
+                ]
+                sub_prompt = json.dumps({"dataset": ds_name, "cluster_group": cluster_group, "findings": sub_payload}, ensure_ascii=False, cls=SessionJSONEncoder)
+                try:
+                    sub_obj, _ = _call_llm_cluster_api(sub_prompt, len(sub))
+                    for r in (sub_obj.get("recommendations") or []):
+                        if isinstance(r, dict):
+                            llm_rec_map[f"{r.get('column')}_{r.get('issue_type')}"] = r
+                except Exception as sub_e:
+                    logger.warning("Subcluster retry failed: %s; falling back to catalogue.", sub_e)
+        else:
+            logger.warning("Single finding cluster truncated; using deterministic catalog fallback.")
     except Exception as e:
         logger.warning(f"Cluster LLM failed for {cluster_key}: {e}; falling back to catalog options.")
         return _build_cluster_catalog_fallback(cluster_key, findings_slice, platform_target), None
+
+    for it in findings_slice:
+        can_type = it.get("canonical_issue_type") or it.get("issue_type") or "issue"
+        col = it.get("column")
+        k = f"{col}_{can_type}"
+        catalog_opts = options_by_finding.get(k) or get_resolution_options(can_type)
+        llm_item = llm_rec_map.get(k)
+
+        selected_opt = None
+        is_verified_llm = False
+        if llm_item:
+            sel_id = str(llm_item.get("selected_option_id") or "").strip()
+            selected_opt = next((o for o in catalog_opts if o["id"] == sel_id), None)
+            if selected_opt:
+                is_verified_llm = True
+
+        if not selected_opt:
+            selected_opt = next((o for o in catalog_opts if o.get("recommended")), catalog_opts[0] if catalog_opts else {"id": "keep_as_is", "action": "noop", "label": "Keep as-is"})
+
+        action_name = selected_opt.get("action", "noop")
+        why = (llm_item.get("why_it_matters") if (is_verified_llm and llm_item) else "") or it.get("why_it_matters") or f"Contextual DQ issue in {ds_name}.{col}"
+        outcome = (llm_item.get("expected_outcome") if (is_verified_llm and llm_item) else "") or f"Applies {selected_opt['label']} under human governance."
+        if is_verified_llm:
+            suggested = f"AI-assisted option: {selected_opt['label']} - {outcome}"
+            authority_src = "LLM_ADVISORY"
+            ai_status = "available"
+            rec_status = "ai_options_available"
+            rec_src = "ai_assisted_options"
+        else:
+            suggested = f"Catalog option: {selected_opt['label']} (AI-assisted ranking was unavailable)."
+            authority_src = "CATALOG_FALLBACK"
+            ai_status = "unavailable"
+            rec_status = "catalog_options_available"
+            rec_src = "deterministic_catalog"
+
+        recs.append({
+            "priority": 1 if (it.get("severity") or "").lower() == "high" else 2,
+            "dataset": ds_name,
+            "column": col,
+            "issue_type": can_type,
+            "raw_issue_type": it.get("raw_issue_type") or can_type,
+            "severity": it.get("severity") or "medium",
+            "affected_count": it.get("affected_count", 0),
+            "affected_percentage": it.get("affected_percentage"),
+            "why_it_matters": why,
+            "suggested_fix": suggested,
+            "expected_outcome": outcome,
+            "mapped_action": action_name,
+            "selected_option_id": selected_opt["id"],
+            "options": catalog_opts,
+            "auto_fixable": False,  # Contextual issue always requires approval
+            "capability_supported": can_type != "unknown_profiler_issue",
+            "authority_source": authority_src,
+            "proposal_type": "AdvisoryExtensionProposal",
+            "advisory_only": True,
+            "execution_eligible": False,
+            "ai_assistance_status": ai_status,
+            "recommendation_category": "decision_required",
+            "lifecycle": {
+                "recommendation_status": rec_status,
+                "approval_status": "pending",
+                "codegen_status": "not_started",
+                "validation_status": "not_started",
+                "execution_status": "not_started",
+            },
+            "cluster_key": list(cluster_key),
+            "primary_reason_code": it.get("primary_reason_code") or (it.get("reason_codes", ["CONTEXTUAL_REMEDIATION"])[0]),
+            "reason_codes": it.get("reason_codes", []),
+            "evaluated_policy": it.get("evaluated_policy", {}),
+            "observed": it.get("observed", {
+                "affected_rows": it.get("affected_count"),
+                "affected_percentage": it.get("affected_percentage"),
+            }),
+            "outcome_metadata": ACTION_OUTCOME_METADATA.get(action_name, ACTION_OUTCOME_METADATA.get("keep_as_is", {})),
+            "example_sql": None if action_name in ("keep_as_is", "skip_etl", "noop") else get_remediation_sql(platform_target, ds_name, col, can_type),
+            "example_pandas": get_pandas_code(col, can_type, action_id=action_name),
+            "example_pyspark": get_pyspark_code(col, can_type, action_id=action_name),
+            "risk": f"Contextual transformation requiring decision. Options: {len(catalog_opts)} available.",
+            "recommendation_source": rec_src,
+        })
 
     _CLUSTER_CACHE[cache_key] = recs
     return recs, usage

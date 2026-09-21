@@ -257,12 +257,12 @@ def _emit_spark(
         keys = []
         if plan and ds_name:
             keys = list(plan.get("business_keys", {}).get(ds_name) or [])
-        if col and str(col).lower() not in ("row-level", "[row-level]"):
-            step_cols = [c.strip() for c in str(col).split(",") if c.strip()]
+        if col and str(col).lower() not in ("row-level", "[row-level]", "*", "[*]"):
+            step_cols = [c.strip().strip("[]") for c in str(col).split(",") if c.strip() and c.strip() not in ("*", "[*]")]
             keys.extend(step_cols)
         unique_keys: List[str] = []
         for k in keys:
-            if k not in unique_keys:
+            if k not in unique_keys and k not in ("*", "[*]"):
                 unique_keys.append(k)
         if unique_keys:
             watermark_col = None
@@ -405,7 +405,7 @@ def _emit_spark(
             res.append(f"{df} = {df}.withColumn({neg_flag}, (F.col({repr(clean_col)}).isNotNull() & (F.col({repr(clean_col)}) < 0)).cast('boolean'))")
         return res
 
-    if act in ("parse_dates", "nullify_date", "nullify_dummy_dates"):
+    if act in ("parse_dates", "nullify_date"):
         # Portable date parsing (native PySpark -- no SQL expression or try_cast dependency)
         col_safe = _safe(col or "date")
         flag_col = repr(f"is_invalid_{col_safe}")
@@ -518,7 +518,7 @@ def _emit_spark(
         return [
             f"# Nullify dummy dates (e.g. 1900-01-01)",
             f"{df} = {df}.withColumn('_tmp_date_{col_clean}', F.to_date(F.col({c})))",
-            f"{df} = {df}.withColumn({c}, F.when((F.col('_tmp_date_{col_clean}').eqNullSafe(F.lit('1900-01-01'))) | ((F.month(F.col('_tmp_date_{col_clean}')) == 1) & (F.dayofmonth(F.col('_tmp_date_{col_clean}')) == 1)), F.lit(None)).otherwise(F.col({c})))",
+            f"{df} = {df}.withColumn({c}, F.when((F.col('_tmp_date_{col_clean}').eqNullSafe(F.lit('1900-01-01'))) | ((F.year(F.col('_tmp_date_{col_clean}')) <= 1900) & (F.month(F.col('_tmp_date_{col_clean}')) == 1) & (F.dayofmonth(F.col('_tmp_date_{col_clean}')) == 1)), F.lit(None)).otherwise(F.col({c})))",
             f"{df} = {df}.drop('_tmp_date_{col_clean}')"
         ]
     if act == "nullify_future_dates":
