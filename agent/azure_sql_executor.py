@@ -288,6 +288,13 @@ def _remediate_batch_syntax_error(batch_sql: str, error_msg: str) -> list[str]:
             return [batch_sql[:m_try.end()] + "\n    DECLARE @run_id INT = 1;" + batch_sql[m_try.end():]]
         return ["DECLARE @run_id INT = 1;\n" + batch_sql]
 
+    # Remediation F: Msg 1919 - Column in index is invalid type (NVARCHAR(MAX))
+    if "1919" in err_low or "invalid for use as a key column in an index" in err_low:
+        cleaned = re.sub(r"\[([a-zA-Z0-9_]+)\]\s+NVARCHAR\(MAX\)\s+(NOT\s+NULL|NULL)", r"[\1] NVARCHAR(256) \2", batch_sql, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\bCREATE\s+NONCLUSTERED\s+INDEX\s+idx_[^;]+;", "", cleaned, flags=re.IGNORECASE)
+        if cleaned != batch_sql:
+            return [cleaned]
+
     # Check for keyword 'OR' errors (Msg 156)
     if not any(k in err_low for k in ("keyword 'or'", "near 'or'", "near the keyword 'or'")):
         return []

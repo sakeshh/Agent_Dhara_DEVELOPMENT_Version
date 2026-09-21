@@ -842,6 +842,9 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 c_meta = cols_info.get(c) or {}
                 c_type = c_meta.get("dtype") or c_meta.get("target_dtype") or ""
                 target_type = get_sql_cast_type(c_type, c)
+                # Primary key and index columns cannot be NVARCHAR(MAX) or VARCHAR(MAX) in SQL Server (Msg 1919)
+                if (c == pk_col or c in (index_keys if 'index_keys' in locals() else [])) and "MAX" in target_type.upper():
+                    target_type = "NVARCHAR(256)"
                 
                 # Check nullability
                 non_nullable_cols = business_rules.get("non_nullable") or []
@@ -888,6 +891,9 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 index_keys.append(watermark_col)
             
             for ik in sorted(list(set(index_keys))):
+                ik_type = get_sql_cast_type((cols_info.get(ik) or {}).get("dtype"), ik)
+                if "MAX" in ik_type.upper():
+                    continue
                 lines.append(f"    CREATE NONCLUSTERED INDEX idx_{tbl_base}_{phase_suffix_script}_{ik} ON {clean_tbl}([{ik}]);")
             lines.append("END;")
             lines.append("GO")

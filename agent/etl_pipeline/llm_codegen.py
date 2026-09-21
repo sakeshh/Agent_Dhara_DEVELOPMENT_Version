@@ -1126,27 +1126,20 @@ def _postprocess_tsql_code(code: str) -> str:
     code = "\n".join(lines)
 
     # 2b. Ensure @run_id declaration is not separated or missing (and handle procedure parameter clash Msg 134)
-    has_sp_runid_param = bool(re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)[\s\S]+?@run_id\b", code, re.IGNORECASE))
+    m_proc_sig = re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\s+[\w\.\[\]]+\s*(\([^\)]*\)|[^;]+?)\bAS\b", code, re.IGNORECASE)
+    has_sp_runid_param = bool(m_proc_sig and re.search(r"@run_id\b", m_proc_sig.group(1), re.IGNORECASE))
     if has_sp_runid_param:
         code = re.sub(r"\bDECLARE\s+@run_id\s+INT\s*=\s*SCOPE_IDENTITY\(\)\s*;", "SET @run_id = SCOPE_IDENTITY();", code, flags=re.IGNORECASE)
         code = re.sub(r"\bDECLARE\s+@run_id\s+INT\s*;", "-- @run_id declared as parameter", code, flags=re.IGNORECASE)
-    elif "@run_id" in code:
+    else:
+        # Restore any declaration previously commented out by mistake
+        code = re.sub(r"--\s*@run_id declared as parameter", "DECLARE @run_id INT = 1;", code, flags=re.IGNORECASE)
         m_try = re.search(r"\bBEGIN\s+TRY\b", code, re.IGNORECASE)
         if m_try:
             post_try = code[m_try.end():]
-            if not re.search(r"\bDECLARE\s+@run_id\b", post_try, re.IGNORECASE):
-                pre_try = code[:m_try.start()]
-                last_go = list(re.finditer(r"\bGO\b", pre_try, re.IGNORECASE))
-                has_active = False
-                if last_go:
-                    between = pre_try[last_go[-1].end():]
-                    has_active = bool(re.search(r"\bDECLARE\s+@run_id\b", between, re.IGNORECASE))
-                else:
-                    has_active = bool(re.search(r"\bDECLARE\s+@run_id\b", pre_try, re.IGNORECASE))
-
-                if not has_active:
-                    code = code[:m_try.end()] + "\n        DECLARE @run_id INT = 1;" + code[m_try.end():]
-        elif not re.search(r"\bDECLARE\s+@run_id\b", code, re.IGNORECASE):
+            if re.search(r"@run_id\b", post_try, re.IGNORECASE) and not re.search(r"\bDECLARE\s+@run_id\b", post_try, re.IGNORECASE):
+                code = code[:m_try.end()] + "\n    DECLARE @run_id INT = 1;" + code[m_try.end():]
+        elif "@run_id" in code and not re.search(r"\bDECLARE\s+@run_id\b", code, re.IGNORECASE):
             code = "DECLARE @run_id INT = 1;\n" + code
 
     # 2c. Redirect updates targeting source tables to their staging tables
