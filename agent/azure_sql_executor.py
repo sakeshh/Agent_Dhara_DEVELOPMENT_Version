@@ -255,7 +255,9 @@ def _remediate_batch_syntax_error(batch_sql: str, error_msg: str) -> list[str]:
 
     # Remediation C: Msg 208 - Invalid object name '#..._Staging'
     if "208" in err_low and "_staging" in err_low:
-        if re.search(r"\bINSERT\s+INTO\s+#([a-zA-Z0-9_]+?)_Staging\s+SELECT\b", batch_sql, re.IGNORECASE):
+        m_stg = re.search(r"\bINSERT\s+INTO\s+#([a-zA-Z0-9_]+?)_Staging\s+SELECT\b", batch_sql, re.IGNORECASE)
+        if m_stg:
+            stg_tbl = m_stg.group(1)
             converted = re.sub(
                 r"\bINSERT\s+INTO\s+#([a-zA-Z0-9_]+?)_Staging\s+SELECT\b",
                 r"SELECT",
@@ -269,7 +271,7 @@ def _remediate_batch_syntax_error(batch_sql: str, error_msg: str) -> list[str]:
                 count=1,
                 flags=re.IGNORECASE
             )
-            return [f"IF OBJECT_ID('tempdb..#EmployeeMaster_Staging') IS NOT NULL DROP TABLE #EmployeeMaster_Staging;\n" + converted]
+            return [f"IF OBJECT_ID('tempdb..#{stg_tbl}_Staging') IS NOT NULL DROP TABLE #{stg_tbl}_Staging;\n" + converted]
 
     # Remediation D: Msg 207 - Invalid column name 'Phone'
     if "207" in err_low and "'phone'" in err_low:
