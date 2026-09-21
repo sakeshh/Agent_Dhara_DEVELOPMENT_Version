@@ -214,3 +214,34 @@ def test_remediate_msg_137_run_id_declaration():
     assert "DECLARE @run_id INT = 1;" in remediated[0]
     assert "@run_id" in remediated[0]
 
+
+def test_remediate_msg_1919_invalid_index_key_column():
+    failing_batch = """
+    CREATE TABLE cleanedTables.EmployeeMaster_Clean (
+        [EmployeeID] NVARCHAR(MAX) NOT NULL,
+        [Name] NVARCHAR(MAX) NULL,
+        CONSTRAINT [PK_EmployeeMaster_Clean] PRIMARY KEY ([EmployeeID])
+    );
+    CREATE NONCLUSTERED INDEX idx_EmployeeMaster_Clean_EmployeeID ON cleanedTables.EmployeeMaster_Clean([EmployeeID]);
+    """
+    err = "Column 'EmployeeID' in table 'EmployeeMaster_Clean' is of a type that is invalid for use as a key column in an index. (1919) (SQLExecDirectW)"
+    remediated = ase._remediate_batch_syntax_error(failing_batch, err)
+    assert len(remediated) == 1
+    assert "[EmployeeID] NVARCHAR(256)" in remediated[0]
+    assert "NVARCHAR(MAX)" not in remediated[0].split("[EmployeeID]")[1].split("[Name]")[0]
+
+
+def test_ensure_idempotent_sql_sanitizes_msg_1919():
+    from agent.etl_pipeline.execution_orchestrator import ensure_idempotent_sql
+    raw_sql = """
+    CREATE TABLE [cleanedTables].[EmployeeMaster_Clean] (
+        [EmployeeID] NVARCHAR(MAX) NOT NULL,
+        [Department] NVARCHAR(MAX) NULL,
+        CONSTRAINT [PK_EmployeeMaster_Clean] PRIMARY KEY ([EmployeeID])
+    );
+    """
+    cleaned = ensure_idempotent_sql(raw_sql)
+    assert "[EmployeeID] NVARCHAR(256)" in cleaned
+    assert "NVARCHAR(MAX)" not in cleaned.split("[EmployeeID]")[1].split("[Department]")[0]
+
+

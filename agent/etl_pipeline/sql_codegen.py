@@ -836,6 +836,20 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             if not pk_col and scd_type in ("type1", "type2"):
                 scd_type = "append"
             
+            index_keys = []
+            rel = plan.get("relationships") or {}
+            for j in rel.get("joins") or []:
+                if j.get("parent_dataset") == ds_name:
+                    index_keys.append(j.get("parent_key"))
+                elif j.get("child_dataset") == ds_name:
+                    index_keys.append(j.get("child_key"))
+            
+            # resolve watermark column
+            watermark_col = _resolve_watermark_column(cols_info)
+            if watermark_col:
+                index_keys.append(watermark_col)
+            index_keys = sorted(list(set(index_keys)))
+
             # Explicit CREATE TABLE
             create_cols = []
             for c in cols:
@@ -843,7 +857,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 c_type = c_meta.get("dtype") or c_meta.get("target_dtype") or ""
                 target_type = get_sql_cast_type(c_type, c)
                 # Primary key and index columns cannot be NVARCHAR(MAX) or VARCHAR(MAX) in SQL Server (Msg 1919)
-                if (c == pk_col or c in (index_keys if 'index_keys' in locals() else [])) and "MAX" in target_type.upper():
+                if (c == pk_col or c in index_keys) and "MAX" in target_type.upper():
                     target_type = "NVARCHAR(256)"
                 
                 # Check nullability
@@ -876,21 +890,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             lines.append(",\n".join(create_cols))
             lines.append("    );")
             
-            index_keys = []
-            rel = plan.get("relationships") or {}
-            for j in rel.get("joins") or []:
-                if j.get("parent_dataset") == ds_name:
-                    index_keys.append(j.get("parent_key"))
-                elif j.get("child_dataset") == ds_name:
-                    index_keys.append(j.get("child_key"))
-            
-            # resolve watermark column
-            watermark_col = _resolve_watermark_column(cols_info)
-            
-            if watermark_col:
-                index_keys.append(watermark_col)
-            
-            for ik in sorted(list(set(index_keys))):
+            for ik in index_keys:
                 ik_type = get_sql_cast_type((cols_info.get(ik) or {}).get("dtype"), ik)
                 if "MAX" in ik_type.upper():
                     continue
@@ -1023,20 +1023,19 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             if scd_type not in ("type1", "type2", "append", "truncate"):
                 scd_type = "type1"
             
+            tbl_clean = _get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix)
+            target_tbl_str = tbl_clean if is_clean else tbl_transformed
             src_tbl_expr = tsql_qualified_name(ds_name) if is_clean else tsql_qualified_name(tbl_clean)
             tgt_tbl_expr = tsql_qualified_name(tbl_clean) if is_clean else tsql_qualified_name(tbl_transformed)
             if dialect != "tsql":
                 src_tbl_expr = _brk(ds_name) if is_clean else _brk(tbl_clean)
                 tgt_tbl_expr = _brk(tbl_clean) if is_clean else _brk(tbl_transformed)
                 
-            target_tbl_str = tbl_clean if is_clean else tbl_transformed
             raw_tbl = src_tbl_expr
             clean_tbl = tgt_tbl_expr
-            tbl_clean = target_tbl_str
             tbl_base = ds_name.split(".")[-1].strip("[]")
             stg_base = tbl_base[:-8] if tbl_base.lower().endswith("_staging") else tbl_base
             tbl_staging = f"#{stg_base}_Staging" if is_clean else f"#{stg_base}_Transform_Staging"
-            tbl_clean = _get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix)
         
         
             # Filter steps for current phase
@@ -1250,12 +1249,27 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 lines.append(f"IF OBJECT_ID('{target_tbl_str}', 'U') IS NULL")
                 lines.append("BEGIN")
             
+                # Setup index keys
+                index_keys = []
+                rel = plan.get("relationships") or {}
+                for j in rel.get("joins") or []:
+                    if j.get("parent_dataset") == ds_name:
+                        index_keys.append(j.get("parent_key"))
+                    elif j.get("child_dataset") == ds_name:
+                        index_keys.append(j.get("child_key"))
+                if watermark_col:
+                    index_keys.append(watermark_col)
+                index_keys = sorted(list(set(index_keys)))
+
                 # Explicit CREATE TABLE
                 create_cols = []
                 for c in cols:
                     c_meta = cols_info.get(c) or {}
                     c_type = c_meta.get("dtype") or c_meta.get("target_dtype") or ""
                     target_type = get_sql_cast_type(c_type, c)
+                    # Primary key and index columns cannot be NVARCHAR(MAX) or VARCHAR(MAX) in SQL Server (Msg 1919)
+                    if (c == pk_col or c in index_keys) and "MAX" in target_type.upper():
+                        target_type = "NVARCHAR(256)"
                 
                     # Check nullability
                     if c == pk_col or c in non_nullable_cols:
@@ -1287,18 +1301,10 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 lines.append(",\n".join(create_cols))
                 lines.append("    );")
             
-                # Setup index keys
-                index_keys = []
-                rel = plan.get("relationships") or {}
-                for j in rel.get("joins") or []:
-                    if j.get("parent_dataset") == ds_name:
-                        index_keys.append(j.get("parent_key"))
-                    elif j.get("child_dataset") == ds_name:
-                        index_keys.append(j.get("child_key"))
-                if watermark_col:
-                    index_keys.append(watermark_col)
-                
-                for ik in sorted(list(set(index_keys))):
+                for ik in index_keys:
+                    ik_type = get_sql_cast_type((cols_info.get(ik) or {}).get("dtype"), ik)
+                    if "MAX" in ik_type.upper():
+                        continue
                     lines.append(f"    CREATE NONCLUSTERED INDEX idx_{tbl_base}_{phase_suffix}_{ik} ON {clean_tbl}([{ik}]);")
                 lines.append("END;")
                 lines.append("")

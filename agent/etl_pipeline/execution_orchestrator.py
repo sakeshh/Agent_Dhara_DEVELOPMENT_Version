@@ -275,6 +275,44 @@ def ensure_idempotent_sql(sql: str) -> str:
     except Exception as e:
         logger.warning(f"Failed to postprocess T-SQL code in ensure_idempotent_sql: {e}")
 
+    # 10. Sanitize Msg 1919: Invalid key column in index / primary key (NVARCHAR(MAX) / VARCHAR(MAX))
+    pk_matches = re.finditer(r"\bPRIMARY\s+KEY\s*(?:\([^)]*\))?\s*\(([^)]+)\)", sql, re.IGNORECASE)
+    pk_cols = set()
+    for pkm in pk_matches:
+        cols_raw = pkm.group(1).split(",")
+        for c in cols_raw:
+            col_clean = c.strip().strip("[]").strip()
+            if col_clean:
+                pk_cols.add(col_clean)
+
+    inline_pks = re.findall(r"\[?([a-zA-Z0-9_]+)\]?\s+(?:NVARCHAR|VARCHAR)\(MAX\)\s+PRIMARY\s+KEY", sql, re.IGNORECASE)
+    for c in inline_pks:
+        pk_cols.add(c.strip("[]"))
+
+    for pk in pk_cols:
+        sql = re.sub(
+            rf"(\[?{re.escape(pk)}\]?\s+\[?(?:NVARCHAR|VARCHAR)\]?)\s*\(\s*MAX\s*\)",
+            r"\1(256)",
+            sql,
+            flags=re.IGNORECASE
+        )
+
+    def _sanitize_indexed_max_cols(match):
+        idx_statement = match.group(0)
+        col_match = re.search(r"\(\s*\[?([a-zA-Z0-9_]+)\]?\s*\)", idx_statement)
+        if col_match:
+            idx_col = col_match.group(1)
+            if re.search(rf"\[?{re.escape(idx_col)}\]?\s+\[?(?:NVARCHAR|VARCHAR)\]?\s*\(\s*MAX\s*\)", sql, re.IGNORECASE):
+                return f"-- Omitted index on MAX column to prevent Msg 1919: {idx_statement.strip()}"
+        return idx_statement
+
+    sql = re.sub(
+        r"(?:IF\s+NOT\s+EXISTS\s*\([^;]+\)\s*)?CREATE\s+(?:UNIQUE\s+)?(?:NONCLUSTERED\s+|CLUSTERED\s+)?INDEX\s+[^\n;]+?\s+ON\s+[^\n;]+?\s*\([^)]+\)\s*;?",
+        _sanitize_indexed_max_cols,
+        sql,
+        flags=re.IGNORECASE
+    )
+
     return sql
 
 

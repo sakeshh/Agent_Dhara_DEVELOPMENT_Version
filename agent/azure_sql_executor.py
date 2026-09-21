@@ -288,10 +288,38 @@ def _remediate_batch_syntax_error(batch_sql: str, error_msg: str) -> list[str]:
             return [batch_sql[:m_try.end()] + "\n    DECLARE @run_id INT = 1;" + batch_sql[m_try.end():]]
         return ["DECLARE @run_id INT = 1;\n" + batch_sql]
 
-    # Remediation F: Msg 1919 - Column in index is invalid type (NVARCHAR(MAX))
+    # Remediation F: Msg 1919 - Column in index is invalid type (NVARCHAR(MAX) / VARCHAR(MAX))
     if "1919" in err_low or "invalid for use as a key column in an index" in err_low:
-        cleaned = re.sub(r"\[([a-zA-Z0-9_]+)\]\s+NVARCHAR\(MAX\)\s+(NOT\s+NULL|NULL)", r"[\1] NVARCHAR(256) \2", batch_sql, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\bCREATE\s+NONCLUSTERED\s+INDEX\s+idx_[^;]+;", "", cleaned, flags=re.IGNORECASE)
+        cleaned = batch_sql
+        m_col = re.search(r"Column\s+'([^']+)'\s+in\s+table", error_msg, re.IGNORECASE)
+        bad_cols = set()
+        if m_col:
+            bad_cols.add(m_col.group(1).strip("[]"))
+
+        for pkm in re.finditer(r"\bPRIMARY\s+KEY\s*(?:\([^)]*\))?\s*\(([^)]+)\)", cleaned, re.IGNORECASE):
+            for c in pkm.group(1).split(","):
+                c_clean = c.strip().strip("[]").strip()
+                if c_clean:
+                    bad_cols.add(c_clean)
+        for c in re.findall(r"\[?([a-zA-Z0-9_]+)\]?\s+(?:NVARCHAR|VARCHAR)\(MAX\)\s+PRIMARY\s+KEY", cleaned, re.IGNORECASE):
+            bad_cols.add(c.strip("[]"))
+
+        for bc in bad_cols:
+            if bc:
+                cleaned = re.sub(
+                    rf"(\[?{re.escape(bc)}\]?\s+\[?(?:NVARCHAR|VARCHAR)\]?)\s*\(\s*MAX\s*\)",
+                    r"\1(256)",
+                    cleaned,
+                    flags=re.IGNORECASE
+                )
+                cleaned = re.sub(
+                    rf"(?:IF\s+NOT\s+EXISTS\s*\([^;]+\)\s*)?CREATE\s+(?:UNIQUE\s+)?(?:NONCLUSTERED\s+|CLUSTERED\s+)?INDEX\s+[^\n;]+?\s+ON\s+[^\n;]+?\(\s*\[?{re.escape(bc)}\]?[^;]*\)\s*;?",
+                    "",
+                    cleaned,
+                    flags=re.IGNORECASE
+                )
+        cleaned = re.sub(r"\[?([a-zA-Z0-9_]+)\]?\s+NVARCHAR\(MAX\)\s+(NOT\s+NULL|NULL)", r"[\1] NVARCHAR(256) \2", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\bCREATE\s+(?:NONCLUSTERED\s+)?INDEX\s+[^;]+;", "", cleaned, flags=re.IGNORECASE)
         if cleaned != batch_sql:
             return [cleaned]
 
@@ -514,6 +542,24 @@ def run_transactional_sql(
                         batch_sql = batch_sql[:m_try.end()] + "\n    DECLARE @run_id INT = 1;" + batch_sql[m_try.end():]
                     else:
                         batch_sql = "DECLARE @run_id INT = 1;\n" + batch_sql
+
+            # Proactively sanitize Msg 1919 (NVARCHAR(MAX) on primary key columns)
+            if re.search(r"\bPRIMARY\s+KEY\b", batch_sql, re.IGNORECASE) and re.search(r"\(MAX\)", batch_sql, re.IGNORECASE):
+                pk_cols = set()
+                for pkm in re.finditer(r"\bPRIMARY\s+KEY\s*(?:\([^)]*\))?\s*\(([^)]+)\)", batch_sql, re.IGNORECASE):
+                    for c in pkm.group(1).split(","):
+                        c_clean = c.strip().strip("[]").strip()
+                        if c_clean:
+                            pk_cols.add(c_clean)
+                for c in re.findall(r"\[?([a-zA-Z0-9_]+)\]?\s+(?:NVARCHAR|VARCHAR)\(MAX\)\s+PRIMARY\s+KEY", batch_sql, re.IGNORECASE):
+                    pk_cols.add(c.strip("[]"))
+                for pk in pk_cols:
+                    batch_sql = re.sub(
+                        rf"(\[?{re.escape(pk)}\]?\s+\[?(?:NVARCHAR|VARCHAR)\]?)\s*\(\s*MAX\s*\)",
+                        r"\1(256)",
+                        batch_sql,
+                        flags=re.IGNORECASE
+                    )
 
             # Check if this specific batch is DDL
             is_ddl = bool(ddl_pattern.search(batch_sql))
