@@ -15,26 +15,14 @@ tenants:
       never_drop_rows: false
       outlier_strategy: flag
       clean_schema: cleanedTables
+      include_timestamp: true
     datasets: {}
-
-  # Example tenant — uncomment and customize:
-  # acme:
-  #   defaults:
-  #     never_drop_rows: true
-  #     required_columns: []
-  #   datasets:
-  #     customers:
-  #       required_columns: [customer_id, email]
-  #       non_nullable: [customer_id]
-  #       valid_values:
-  #         status: [ACTIVE, INACTIVE, PENDING]
-  #     orders:
-  #       non_nullable: [order_id, customer_id]
 
 # Legacy flat config (maps to tenant "default" if tenants block is empty)
 defaults:
   never_drop_rows: false
   outlier_strategy: flag
   clean_schema: cleanedTables
+  include_timestamp: true
 
 datasets: {}

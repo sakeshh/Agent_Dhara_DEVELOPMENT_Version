@@ -2041,7 +2041,7 @@ T-SQL REQUIREMENTS:
 - SCRIPT STRUCTURE & IDEMPOTENT DDL (CRITICAL FOR RUNTIME COMPILATION):
   1. ALL table DDL statements MUST be executed FIRST at the top, BEFORE execution or stored procedure bodies:
      - Infrastructure tables: `dbo.etl_log`, `dbo.etl_rejects`, `dbo.etl_watermark`.
-     - Target clean tables: `cleanedTables.<Table>_Clean` (or timestamped `cleanedTables.<Table>_Clean_<timestamp>`) in the `cleanedTables` schema. Ensure `IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'cleanedTables') EXEC('CREATE SCHEMA cleanedTables');` is executed before clean table DDL.
+     - Target clean tables: ALWAYS include the timestamp suffix in the clean table name: `cleanedTables.<Table>_Clean_<timestamp>` (e.g. `cleanedTables.<Table>_Clean_20260921_123000` formatted with date and time YYYYMMDD_HHMMSS) in the `cleanedTables` schema so multiple executions do not overlap or error. Ensure `IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'cleanedTables') EXEC('CREATE SCHEMA cleanedTables');` is executed before clean table DDL.
      - Tables: `IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TableName' AND schema_id = SCHEMA_ID('cleanedTables')) CREATE TABLE cleanedTables.TableName (...);`
      - Indexes: `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IndexName' AND object_id = OBJECT_ID('cleanedTables.TableName')) CREATE NONCLUSTERED INDEX IndexName ON cleanedTables.TableName (...);`
      - If writing a Stored Procedure: `CREATE OR ALTER PROCEDURE dbo.ProcName AS BEGIN ... END; GO`.

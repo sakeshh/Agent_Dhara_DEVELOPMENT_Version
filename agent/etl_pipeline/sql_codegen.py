@@ -539,6 +539,9 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     business_rules: Dict[str, Any] = plan.get("business_rules") or {}
     clean_schema: Optional[str] = business_rules.get("clean_schema") or plan.get("clean_schema") or None
     timestamp_suffix: str = str(plan.get("timestamp_suffix") or business_rules.get("timestamp_suffix") or "")
+    if not timestamp_suffix and bool(business_rules.get("include_timestamp") or plan.get("include_timestamp")):
+        from datetime import datetime
+        timestamp_suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
     excluded_columns: List[str] = business_rules.get("exclude_columns") or []
     valid_values = business_rules.get("valid_values") or {}
 
