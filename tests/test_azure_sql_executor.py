@@ -202,3 +202,15 @@ def test_get_connection_token_auth(mock_cred_cls, mock_connect):
     assert conn is not None
     mock_cred.get_token.assert_called_once_with("https://database.windows.net/.default")
     mock_connect.assert_called_once()
+
+
+def test_remediate_msg_137_run_id_declaration():
+    failing_batch = "INSERT INTO cleanedTables.EmployeeMaster_Clean (id, run_id) VALUES (1, @run_id);"
+    remediated = ase._remediate_batch_syntax_error(
+        failing_batch,
+        'Must declare the scalar variable "@run_id". (137)'
+    )
+    assert len(remediated) == 1
+    assert "DECLARE @run_id INT = 1;" in remediated[0]
+    assert "@run_id" in remediated[0]
+

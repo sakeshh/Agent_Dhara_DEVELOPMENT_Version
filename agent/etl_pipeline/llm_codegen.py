@@ -1130,11 +1130,24 @@ def _postprocess_tsql_code(code: str) -> str:
     if has_sp_runid_param:
         code = re.sub(r"\bDECLARE\s+@run_id\s+INT\s*=\s*SCOPE_IDENTITY\(\)\s*;", "SET @run_id = SCOPE_IDENTITY();", code, flags=re.IGNORECASE)
         code = re.sub(r"\bDECLARE\s+@run_id\s+INT\s*;", "-- @run_id declared as parameter", code, flags=re.IGNORECASE)
-    elif "@run_id" in code and not re.search(r"\bDECLARE\s+@run_id\b", code, re.IGNORECASE):
+    elif "@run_id" in code:
         m_try = re.search(r"\bBEGIN\s+TRY\b", code, re.IGNORECASE)
         if m_try:
-            pos = m_try.start()
-            code = code[:pos] + "DECLARE @run_id INT;\n\n" + code[pos:]
+            post_try = code[m_try.end():]
+            if not re.search(r"\bDECLARE\s+@run_id\b", post_try, re.IGNORECASE):
+                pre_try = code[:m_try.start()]
+                last_go = list(re.finditer(r"\bGO\b", pre_try, re.IGNORECASE))
+                has_active = False
+                if last_go:
+                    between = pre_try[last_go[-1].end():]
+                    has_active = bool(re.search(r"\bDECLARE\s+@run_id\b", between, re.IGNORECASE))
+                else:
+                    has_active = bool(re.search(r"\bDECLARE\s+@run_id\b", pre_try, re.IGNORECASE))
+
+                if not has_active:
+                    code = code[:m_try.end()] + "\n        DECLARE @run_id INT = 1;" + code[m_try.end():]
+        elif not re.search(r"\bDECLARE\s+@run_id\b", code, re.IGNORECASE):
+            code = "DECLARE @run_id INT = 1;\n" + code
 
     # 2c. Redirect updates targeting source tables to their staging tables
     declared_ctes = set(re.findall(r"\bWITH\s+([a-zA-Z0-9_]+)\s+AS\s*\(", code, re.IGNORECASE))

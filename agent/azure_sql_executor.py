@@ -278,6 +278,16 @@ def _remediate_batch_syntax_error(batch_sql: str, error_msg: str) -> list[str]:
         if stripped != batch_sql:
             return [stripped]
 
+    # Remediation E: Msg 137 - Must declare the scalar variable "@run_id"
+    if "137" in err_low and ("@run_id" in err_low or "scalar variable" in err_low):
+        m_proc = re.search(r"\bAS\s+BEGIN\b", batch_sql, re.IGNORECASE)
+        if m_proc:
+            return [batch_sql[:m_proc.end()] + "\n    DECLARE @run_id INT = 1;" + batch_sql[m_proc.end():]]
+        m_try = re.search(r"\bBEGIN\s+TRY\b", batch_sql, re.IGNORECASE)
+        if m_try:
+            return [batch_sql[:m_try.end()] + "\n    DECLARE @run_id INT = 1;" + batch_sql[m_try.end():]]
+        return ["DECLARE @run_id INT = 1;\n" + batch_sql]
+
     # Check for keyword 'OR' errors (Msg 156)
     if not any(k in err_low for k in ("keyword 'or'", "near 'or'", "near the keyword 'or'")):
         return []
@@ -486,6 +496,18 @@ def run_transactional_sql(
         
         _has_open_dml_txn = False  # track if DML transaction needs committing
         for batch_sql in batches:
+            # Proactively ensure @run_id is declared if referenced in this batch
+            if re.search(r"@run_id\b", batch_sql, re.IGNORECASE) and not re.search(r"\bDECLARE\s+@run_id\b", batch_sql, re.IGNORECASE):
+                m_proc = re.search(r"\bAS\s+BEGIN\b", batch_sql, re.IGNORECASE)
+                if m_proc:
+                    batch_sql = batch_sql[:m_proc.end()] + "\n    DECLARE @run_id INT = 1;" + batch_sql[m_proc.end():]
+                else:
+                    m_try = re.search(r"\bBEGIN\s+TRY\b", batch_sql, re.IGNORECASE)
+                    if m_try:
+                        batch_sql = batch_sql[:m_try.end()] + "\n    DECLARE @run_id INT = 1;" + batch_sql[m_try.end():]
+                    else:
+                        batch_sql = "DECLARE @run_id INT = 1;\n" + batch_sql
+
             # Check if this specific batch is DDL
             is_ddl = bool(ddl_pattern.search(batch_sql))
             
