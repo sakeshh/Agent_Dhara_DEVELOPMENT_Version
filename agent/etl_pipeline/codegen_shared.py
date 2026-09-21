@@ -176,17 +176,18 @@ def get_sql_cast_type(col_type: Optional[str], col_name: str) -> str:
             return "DATETIME"
 
     # 2. Numeric checks
+    is_monetary = any(m in col_lower for m in ("amount", "price", "salary", "cost", "fee", "budget", "revenue", "balance", "fare"))
     if not is_generic_string:
+        if is_monetary:
+            return "DECIMAL(18,2)"
         if "int" in t:
             return "BIGINT"
         if "float" in t or "real" in t or "double" in t:
             return "FLOAT"
         if "decimal" in t or "numeric" in t:
-            if "amount" in col_lower or "price" in col_lower:
-                return "DECIMAL(18,2)"
-            return "DECIMAL(18,4)"
+            return "DECIMAL(18,2)" if is_monetary else "DECIMAL(18,4)"
     else:
-        if "amount" in col_lower or "price" in col_lower:
+        if is_monetary:
             return "DECIMAL(18,2)"
         if "quantity" in col_lower or "qty" in col_lower or ("count" in col_lower and not any(x in col_lower for x in ("account", "discount", "counter"))):
             return "DECIMAL(18,4)"

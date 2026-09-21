@@ -1363,7 +1363,7 @@ class PlanBuilder:
             projected_certs = build_projected_column_certificates(plan, assessment)
             plan["projected_column_readiness"] = projected_certs
             
-            joins_list = joins
+            joins_list = (plan.get("relationships") or {}).get("joins") or []
             projected_gates = evaluate_all_operation_gates(projected_certs, joins_list, approved_waivers)
             plan["projected_phase2_gates"] = projected_gates
             
@@ -1398,24 +1398,40 @@ class PlanBuilder:
                 if any(x in dtype for x in ("varchar","nvarchar","char","text","string")):
                     max_order = max((s.get("order", 0) for s in steps_list), default=0)
                     steps_list.append({
+                        "step_id": make_step_id(ds_name, col_name, "trim"),
                         "column": col_name,
                         "action": "trim",
                         "auto_fixable": True,
                         "params": {},
-                        "evidence": {},
+                        "evidence": {"why_this_action": "Baseline: trim whitespace on string column", "confidence": 0.95},
                         "order": max_order + 1,
                         "priority": 5,
+                        "bucket": "cleanse",
+                        "phase": "cleanse",
+                        "source_issue_type": "baseline_string_trim",
+                        "source_issue_types": ["baseline_string_trim"],
+                        "source_issue_ids": [make_issue_id(ds_name, col_name, "baseline_string_trim")],
+                        "severity": "low",
+                        "note": "Baseline B1: trim string column with no detected issues",
                     })
-                
+
                 max_order = max((s.get("order", 0) for s in steps_list), default=0)
                 steps_list.append({
+                    "step_id": make_step_id(ds_name, col_name, "cast_type"),
                     "column": col_name,
                     "action": "cast_type",
                     "auto_fixable": True,
-                    "params": {},
-                    "evidence": {},
+                    "params": {"target_type": "string", "preserve_raw": True},
+                    "evidence": {"why_this_action": "Baseline: enforce schema type on column", "confidence": 0.90},
                     "order": max_order + 1,
                     "priority": 35,
+                    "bucket": "cleanse",
+                    "phase": "cleanse",
+                    "source_issue_type": "baseline_type_enforcement",
+                    "source_issue_types": ["baseline_type_enforcement"],
+                    "source_issue_ids": [make_issue_id(ds_name, col_name, "baseline_type_enforcement")],
+                    "severity": "low",
+                    "note": "Baseline B1: cast_type for column with no detected issues",
                 })
 
         # Consolidate and freeze step specifications (Phase 1 PlanSpec Contract)
@@ -1450,7 +1466,24 @@ class PlanBuilder:
                 plan.get("datasets") or {}, source_metadata_filt, sem_schema_filt, strict_mode=strict
             )
             from agent.etl_pipeline.manual_review_promote import canonicalize_promoted_plan
-            plan = canonicalize_promoted_plan(plan, assessment, rules)
+            # Build a normalised assessment view for canonicalization so that
+            # dataset name differences (e.g. dbo.Table vs Table) don't lose dtype info.
+            normalised_assessment = dict(assessment)
+            normalised_datasets = {}
+            for ds_n, ds_meta_filt in source_metadata_filt.items():
+                orig_meta = (assessment.get("datasets") or {}).get(ds_n) or {}
+                merged_meta = dict(orig_meta)
+                merged_meta["columns"] = {
+                    col: {**((orig_meta.get("columns") or {}).get(col) or {}), **ds_meta_filt.get("columns", {}).get(col, {})}
+                    for col in ds_meta_filt.get("columns", {})
+                }
+                normalised_datasets[ds_n] = merged_meta
+            # Fall back to original dataset entries not present in the filtered view
+            for ds_n, ds_meta in (assessment.get("datasets") or {}).items():
+                if ds_n not in normalised_datasets:
+                    normalised_datasets[ds_n] = ds_meta
+            normalised_assessment["datasets"] = normalised_datasets
+            plan = canonicalize_promoted_plan(plan, normalised_assessment, rules)
         except Exception as e:
             logger.warning(f"Plan step consolidation/canonicalization during build_etl_plan skipped: {e}")
 

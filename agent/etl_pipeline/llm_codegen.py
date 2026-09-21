@@ -2603,7 +2603,7 @@ def _consolidate_and_filter_datasets(
             
             # Type-aware filtering: outlier logic is numeric-only (always enforce regardless of strict_mode)
             if action in ("flag_outliers", "clip_or_flag", "clip_outliers", "cap_outliers"):
-                if col:
+                if col is not None:  # Bug 6 fix: guard against None (row-level/wildcard steps)
                     col_meta = _get_col_meta(col, step)
                     col_str = str(col).lower()
                     is_key = any(k in col_str for k in ("id", "key", "code", "ref", "num", "no", "nbr", "uuid", "guid", "sku", "ean", "isbn", "asin"))
@@ -2611,6 +2611,7 @@ def _consolidate_and_filter_datasets(
                     if is_key or is_cat or not _is_numeric_column(col, col_meta):
                         logger.info(f"[Step Filter] Dropped '{action}' on '{col}' — non-numeric/identifier/categorical (ds={ds_name})")
                         continue
+                # row-level outlier steps (col=None) pass through to deduplication/seen_operations
                         
             # 2. Operation Deduplication / Normalization
             norm_action = action

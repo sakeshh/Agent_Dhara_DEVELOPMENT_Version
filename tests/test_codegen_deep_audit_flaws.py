@@ -371,3 +371,200 @@ def test_validation_conflict_resolution_and_duplicate_suppression():
     # Verify conflict resolution: accumulation pattern is used
     assert "[Email_validation_reason] IS NULL" in sql
     assert "+ '; '" in sql or "+ ';'" in sql, "Validation reason accumulation pattern must be present"
+
+
+def test_watermark_excludes_business_and_birth_dates():
+    """Verify that business dates such as DateOfBirth, HireDate, DueDate are excluded from watermark resolution."""
+    plan = {
+        "plan_id": "test_watermark_selection",
+        "generation_mode": "cleanse_only",
+        "datasets": {
+            "dbo.Employees": {
+                "steps": []
+            }
+        }
+    }
+    assessment = {
+        "datasets": {
+            "dbo.Employees": {
+                "columns": {
+                    "EmployeeID": {"dtype": "int", "candidate_primary_key": True},
+                    "DateOfBirth": {"dtype": "date"},
+                    "HireDate": {"dtype": "date"},
+                    "ModifiedDate": {"dtype": "datetime"}
+                }
+            }
+        }
+    }
+    sql = generate_sql_etl(plan, assessment, dialect="tsql")
+
+    # ModifiedDate should be resolved as watermark
+    assert "[ModifiedDate]" in sql
+    # DateOfBirth and HireDate must NOT be chosen as the watermark index/query filter
+    assert "DateOfBirth > @last_run" not in sql
+    assert "HireDate > @last_run" not in sql
+    assert "idx_Employees_Clean_ModifiedDate" in sql
+    assert "[ModifiedDate], 111)) > @last_run" in sql
+
+
+def test_tristate_boolean_and_validation_status():
+    """Verify that standardize_boolean implements tri-state logic (1, 0, NULL) without converting 'maybe' or NULL to 0."""
+    plan = {
+        "plan_id": "test_boolean_logic",
+        "generation_mode": "cleanse_only",
+        "datasets": {
+            "dbo.Subscriptions": {
+                "steps": [
+                    {"action": "standardize_boolean", "column": "IsActive"}
+                ]
+            }
+        }
+    }
+    assessment = {
+        "datasets": {
+            "dbo.Subscriptions": {
+                "columns": {
+                    "SubID": {"dtype": "int", "candidate_primary_key": True},
+                    "IsActive": {"dtype": "varchar(20)"}
+                }
+            }
+        }
+    }
+    sql = generate_sql_etl(plan, assessment, dialect="tsql")
+
+    # Clean boolean conversion must have 1, 0, and ELSE NULL
+    assert "WHEN LOWER(LTRIM(RTRIM(CAST([IsActive] AS NVARCHAR(MAX))))) IN ('1', 'true', 'yes', 'y', 't') THEN 1" in sql
+    assert "WHEN LOWER(LTRIM(RTRIM(CAST([IsActive] AS NVARCHAR(MAX))))) IN ('0', 'false', 'no', 'n', 'f') THEN 0" in sql
+    assert "ELSE NULL END" in sql
+
+    # Validation status must identify invalid_boolean_format
+    assert "invalid_boolean_format" in sql
+    assert "cannot be parsed as boolean" in sql
+
+
+def test_pre_insert_mandatory_pk_gate():
+    """Verify that a mandatory NOT NULL gate for primary keys exists before inserting into clean table."""
+    plan = {
+        "plan_id": "test_pk_mandatory_gate",
+        "generation_mode": "cleanse_only",
+        "datasets": {
+            "dbo.Customers": {
+                "steps": [
+                    {"action": "trim", "column": "CustomerID"}
+                ]
+            }
+        },
+        "business_rules": {
+            "never_drop_rows": True
+        }
+    }
+    assessment = {
+        "datasets": {
+            "dbo.Customers": {
+                "columns": {
+                    "CustomerID": {"dtype": "nvarchar(100)", "candidate_primary_key": True},
+                    "CustomerName": {"dtype": "nvarchar(200)"}
+                }
+            }
+        }
+    }
+    sql = generate_sql_etl(plan, assessment, dialect="tsql")
+
+    assert "Mandatory Gate: Ensure primary key [CustomerID] is NOT NULL before target clean table insertion" in sql
+    assert "DELETE FROM #Customers_Staging WHERE [CustomerID] IS NULL;" in sql
+    assert "Primary key [CustomerID] cannot be NULL on clean table insert" in sql
+
+
+def test_monetary_decimal_and_no_spurious_int():
+    """Verify that monetary fields map to DECIMAL(18,2) and do not emit spurious _int BIGINT columns."""
+    plan = {
+        "plan_id": "test_monetary_decimal",
+        "generation_mode": "cleanse_only",
+        "datasets": {
+            "dbo.Salaries": {
+                "steps": [
+                    {"action": "cast_type", "column": "Salary", "params": {"target_type": "decimal"}}
+                ]
+            }
+        }
+    }
+    assessment = {
+        "datasets": {
+            "dbo.Salaries": {
+                "columns": {
+                    "EmpID": {"dtype": "int", "candidate_primary_key": True},
+                    "Salary": {"dtype": "float"}
+                }
+            }
+        }
+    }
+    sql = generate_sql_etl(plan, assessment, dialect="tsql")
+
+    # Salary must cast to DECIMAL(18,2)
+    assert "[Salary_clean] DECIMAL(18,2)" in sql
+    # Spurious [Salary_int] BIGINT must NOT be added
+    assert "[Salary_int]" not in sql
+
+
+def test_deterministic_deduplication_order():
+    """Verify deduplication CTE avoids non-deterministic ORDER BY (SELECT NULL)."""
+    plan = {
+        "plan_id": "test_deterministic_dedup",
+        "generation_mode": "cleanse_only",
+        "datasets": {
+            "dbo.Orders": {
+                "steps": [
+                    {"action": "deduplicate", "column": "CustomerID,OrderAmount"}
+                ]
+            }
+        }
+    }
+    assessment = {
+        "datasets": {
+            "dbo.Orders": {
+                "columns": {
+                    "OrderID": {"dtype": "int", "candidate_primary_key": True},
+                    "CustomerID": {"dtype": "int"},
+                    "OrderAmount": {"dtype": "decimal(18,2)"}
+                }
+            }
+        }
+    }
+    sql = generate_sql_etl(plan, assessment, dialect="tsql")
+
+    # Must NOT contain non-deterministic SELECT NULL
+    assert "(SELECT NULL)" not in sql
+    # Must order deterministically by primary key or business column
+    assert "ORDER BY [OrderID] ASC" in sql
+
+
+def test_raw_column_authority_and_placeholder_reject():
+    """Verify raw column snapshot is preserved immediately after data copy and referenced in placeholder rejects."""
+    plan = {
+        "plan_id": "test_raw_snapshot",
+        "generation_mode": "cleanse_only",
+        "datasets": {
+            "dbo.Vendors": {
+                "steps": [
+                    {"action": "replace_sentinel_values", "column": "VendorCode"}
+                ]
+            }
+        }
+    }
+    assessment = {
+        "datasets": {
+            "dbo.Vendors": {
+                "columns": {
+                    "VendorID": {"dtype": "int", "candidate_primary_key": True},
+                    "VendorCode": {"dtype": "varchar(50)"}
+                }
+            }
+        }
+    }
+    sql = generate_sql_etl(plan, assessment, dialect="tsql")
+
+    assert "-- Preserve raw column values before any cleaning or mutation" in sql
+    assert "[VendorCode_raw] = [VendorCode]" in sql
+    # Reject log must check the raw column
+    assert "r.[VendorCode_raw] IS NOT NULL" in sql
+
