@@ -495,10 +495,11 @@ def _real_llm_plan(*, user_text: str, session: Dict[str, Any]) -> Dict[str, Any]
     prompt = json.dumps(payload_for_router, ensure_ascii=False, cls=SessionJSONEncoder)
     try:
         if cfg.provider == "azure_openai":
-            from openai import AzureOpenAI  # type: ignore
+            from agent.model_config import safe_chat_completion
 
             client = AzureOpenAI(api_key=cfg.api_key, api_version=cfg.api_version or "2024-02-01", azure_endpoint=cfg.endpoint)
-            resp = client.chat.completions.create(
+            resp = safe_chat_completion(
+                client,
                 model=cfg.model,
                 messages=[{"role": "system", "content": _MASTER_SYSTEM}, {"role": "user", "content": prompt}],
                 temperature=0.0,
@@ -506,9 +507,11 @@ def _real_llm_plan(*, user_text: str, session: Dict[str, Any]) -> Dict[str, Any]
             )
         else:
             from openai import OpenAI  # type: ignore
+            from agent.model_config import safe_chat_completion
 
             client = OpenAI(api_key=cfg.api_key)
-            resp = client.chat.completions.create(
+            resp = safe_chat_completion(
+                client,
                 model=cfg.model,
                 messages=[{"role": "system", "content": _MASTER_SYSTEM}, {"role": "user", "content": prompt}],
                 temperature=0.0,

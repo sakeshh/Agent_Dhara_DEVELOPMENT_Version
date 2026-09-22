@@ -168,7 +168,10 @@ def _llm_narrate(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if len(payload_json) > 12000:
         payload_json = payload_json[:12000] + "\n... (truncated)"
     try:
-        resp = client.chat.completions.create(
+        from agent.model_config import safe_chat_completion
+
+        resp = safe_chat_completion(
+            client,
             model=os.getenv("AZURE_OPENAI_DEPLOYMENT")
             or os.getenv("OPENAI_MODEL", "gpt-4o"),
             messages=[

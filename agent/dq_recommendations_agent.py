@@ -1440,6 +1440,8 @@ def _process_cluster(
         p_str: str,
         f_cnt: int,
     ) -> Tuple[Dict[str, Any], Optional[Dict[str, int]]]:
+        from agent.model_config import safe_chat_completion
+
         if cfg.provider == "azure_openai":
             from openai import AzureOpenAI  # type: ignore
             client = AzureOpenAI(
@@ -1448,7 +1450,8 @@ def _process_cluster(
                 azure_endpoint=cfg.endpoint,
                 timeout=PER_CLUSTER_TIMEOUT_SECONDS,
             )
-            resp = client.chat.completions.create(
+            resp = safe_chat_completion(
+                client,
                 model=cfg.model,
                 messages=[{"role": "system", "content": _CLUSTER_SYSTEM}, {"role": "user", "content": p_str}],
                 temperature=0.1,
@@ -1458,7 +1461,8 @@ def _process_cluster(
         else:
             from openai import OpenAI  # type: ignore
             client = OpenAI(api_key=cfg.api_key, timeout=PER_CLUSTER_TIMEOUT_SECONDS)
-            resp = client.chat.completions.create(
+            resp = safe_chat_completion(
+                client,
                 model=cfg.model,
                 messages=[{"role": "system", "content": _CLUSTER_SYSTEM}, {"role": "user", "content": p_str}],
                 temperature=0.1,

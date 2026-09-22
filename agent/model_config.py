@@ -80,22 +80,64 @@ LLM_REQUEST_TIMEOUT = int(os.getenv("LLM_REQUEST_TIMEOUT", "120"))
 
 
 _MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    "gpt-5.4":             1_048_576,
     "gpt-5.4-mini":        1_048_576,
-    "gpt-4.1":               1_048_576,
-    "gpt-4.1-mini":          1_048_576,
-    "gpt-4.1-nano":          1_048_576,
-    "gpt-4o":              128_000,
-    "gpt-4o-mini":         128_000,
-    "gpt-4":                 8_192,
-    "gpt-4-turbo":         128_000,
-    "gpt-35-turbo":         16_385,
-    "gpt-4-32k":            32_768,
+    "gpt-5":               1_048_576,
+    "gpt-4.1":             1_048_576,
+    "gpt-4.1-mini":        1_048_576,
+    "gpt-4.1-nano":        1_048_576,
+    "o1":                    200_000,
+    "o3":                    200_000,
+    "o3-mini":               200_000,
+    "gpt-4o":                128_000,
+    "gpt-4o-mini":           128_000,
+    "gpt-4":                   8_192,
+    "gpt-4-turbo":           128_000,
+    "gpt-35-turbo":           16_385,
+    "gpt-4-32k":              32_768,
 }
 
 def get_context_window(model: str) -> int:
+    underlying = (os.environ.get("AZURE_OPENAI_MODEL_NAME") or "").strip().lower()
+    search_str = f"{model.lower()} {underlying}"
     for key, window in _MODEL_CONTEXT_WINDOWS.items():
-        if key in model.lower():
+        if key in search_str:
             return window
     return 128_000  # safe default for unknown models
+
+
+def safe_chat_completion(client, **kwargs):
+    """
+    Executes client.chat.completions.create with adaptive parameter handling
+    between older models (which require max_tokens) and newer models like
+    GPT-5.4-mini, GPT-5, o1, o3, and API versions 2025+ (which require max_completion_tokens).
+    """
+    call_kwargs = dict(kwargs)
+    api_version = (os.getenv("AZURE_OPENAI_API_VERSION") or "").strip()
+    model_name = str(call_kwargs.get("model") or "").lower()
+
+    # Pre-emptively translate max_tokens -> max_completion_tokens for models/APIs known to reject max_tokens
+    prefer_max_completion = (
+        "2025-" in api_version
+        or any(k in model_name for k in ("gpt-5", "o1", "o3", "gpt-4.1"))
+    )
+
+    if "max_tokens" in call_kwargs and prefer_max_completion:
+        call_kwargs["max_completion_tokens"] = call_kwargs.pop("max_tokens")
+
+    try:
+        return client.chat.completions.create(**call_kwargs)
+    except Exception as exc:
+        err_msg = str(exc)
+        # Case 1: Model rejects max_tokens and requests max_completion_tokens
+        if "max_tokens" in call_kwargs and ("max_completion_tokens" in err_msg or "unsupported_parameter" in err_msg):
+            call_kwargs["max_completion_tokens"] = call_kwargs.pop("max_tokens")
+            return client.chat.completions.create(**call_kwargs)
+        # Case 2: Older model or proxy rejects max_completion_tokens and requests max_tokens
+        if "max_completion_tokens" in call_kwargs and "max_tokens" in err_msg and "unsupported" in err_msg:
+            call_kwargs["max_tokens"] = call_kwargs.pop("max_completion_tokens")
+            return client.chat.completions.create(**call_kwargs)
+        raise
+
 
 

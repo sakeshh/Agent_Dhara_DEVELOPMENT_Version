@@ -182,6 +182,8 @@ class MasterAgent:
                 )
                 prompt = json.dumps({"user_request": user_request}, ensure_ascii=False)
 
+                from agent.model_config import safe_chat_completion
+
                 if cfg.provider == "azure_openai":
                     from openai import AzureOpenAI  # type: ignore
 
@@ -190,7 +192,8 @@ class MasterAgent:
                         api_version=cfg.api_version or "2024-02-01",
                         azure_endpoint=cfg.endpoint,
                     )
-                    resp = client.chat.completions.create(
+                    resp = safe_chat_completion(
+                        client,
                         model=cfg.model,
                         messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
                         temperature=0.0,
@@ -200,7 +203,8 @@ class MasterAgent:
                     from openai import OpenAI  # type: ignore
 
                     client = OpenAI(api_key=cfg.api_key)
-                    resp = client.chat.completions.create(
+                    resp = safe_chat_completion(
+                        client,
                         model=cfg.model,
                         messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
                         temperature=0.0,

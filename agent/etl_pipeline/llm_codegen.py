@@ -30,7 +30,7 @@ except ImportError:
     APITimeoutError = None
 
 from agent.errors import ConnectorConfigError, GeneratedCodeIncompleteError, MechanicalRepairViolation
-from agent.model_config import load_llm_config, LLM_REQUEST_TIMEOUT, get_context_window
+from agent.model_config import load_llm_config, LLM_REQUEST_TIMEOUT, get_context_window, safe_chat_completion
 from agent.etl_pipeline.codegen_policy import llm_codegen_extra_context, plan_policy_block
 from agent.etl_pipeline.io_snippets import (
     resolve_path_pyspark_helper,
@@ -2393,7 +2393,9 @@ def _safe_max_tokens(prompt_text: str, engine_key: str) -> int:
     
     # Model-specific caps to prevent out-of-limits API errors
     cap_map = {
+        "gpt-5.4": 32000,
         "gpt-5.4-mini": 16000,
+        "gpt-5": 32000,
         "gpt-4.1": 32000,
         "gpt-4.1-mini": 16000,
         "gpt-4.1-nano": 16000,
@@ -3441,7 +3443,8 @@ def _call_llm(
     last_err = None
     for attempt in range(max_attempts):
         try:
-            response = client.chat.completions.create(
+            response = safe_chat_completion(
+                client,
                 model=model,
                 messages=[
                     {"role": "system", "content": system},

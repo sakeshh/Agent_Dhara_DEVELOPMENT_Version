@@ -83,9 +83,11 @@ User question: {question}
 
     if cfg_az:
         from openai import AzureOpenAI  # type: ignore
+        from agent.model_config import safe_chat_completion
 
         client = AzureOpenAI(api_key=cfg_az["key"], api_version=cfg_az["api_version"], azure_endpoint=cfg_az["endpoint"])
-        resp = client.chat.completions.create(
+        resp = safe_chat_completion(
+            client,
             model=cfg_az["deployment"],
             messages=[
                 {"role": "system", "content": _SYSTEM},
@@ -96,9 +98,11 @@ User question: {question}
         )
     else:
         from openai import OpenAI  # type: ignore
+        from agent.model_config import safe_chat_completion
 
         client = OpenAI(api_key=cfg_oai["key"])
-        resp = client.chat.completions.create(
+        resp = safe_chat_completion(
+            client,
             model=cfg_oai["model"],
             messages=[
                 {"role": "system", "content": _SYSTEM},
