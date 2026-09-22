@@ -325,6 +325,26 @@ def validate_sql_assembly(sql: str, execution_target: Optional[str] = None) -> T
     cleaned_no_comments = re.sub(r"--.*$", "", sql, flags=re.MULTILINE)
     cleaned_no_comments = re.sub(r"/\*.*?\*/", "", cleaned_no_comments, flags=re.DOTALL)
 
+    # 0. Unresolved dynamic SQL generator tokens
+    forbidden_patterns = [
+        "+ @clean_table_name +",
+        "+ @target_table +",
+        "+ @table_name +",
+        "'+ @clean_table_name",
+        "'+ @target_table",
+        "'+ @table_name",
+        "' + @clean_table_name",
+        "' + @target_table",
+        "' + @table_name",
+        "@clean_table_name",
+        "@target_table",
+        "+ N'",
+        "N' +",
+    ]
+    for fp in forbidden_patterns:
+        if fp in sql:
+            issues.append(f"Dynamic SQL Syntax Bug: Unresolved generator token '{fp}' detected outside dynamic execution block")
+
     # 1. Duplicate CREATE TABLE
     # Match CREATE TABLE [dbo].[Table] or CREATE TABLE dbo.Table or CREATE TABLE #Table
     table_creations = re.findall(r"\bCREATE\s+TABLE\s+([^\s\(]+)", cleaned_no_comments, re.IGNORECASE)

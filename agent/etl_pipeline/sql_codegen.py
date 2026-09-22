@@ -823,7 +823,32 @@ def generate_master_orchestrator(
     lines.append("GO")
     lines.append("")
 
-    return "\n".join(lines)
+    result_sql = "\n".join(lines)
+    _check_forbidden_generator_tokens(result_sql)
+    return result_sql
+
+
+def _check_forbidden_generator_tokens(sql: str) -> None:
+    """Validate that no unresolved generator variables or dynamic SQL fragments leak into final SQL."""
+    forbidden_patterns = [
+        "+ @clean_table_name +",
+        "+ @target_table +",
+        "+ @table_name +",
+        "'+ @clean_table_name",
+        "'+ @target_table",
+        "'+ @table_name",
+        "' + @clean_table_name",
+        "' + @target_table",
+        "' + @table_name",
+        "@clean_table_name",
+        "@target_table",
+        "+ N'",
+    ]
+    detected = [p for p in forbidden_patterns if p in sql]
+    if detected:
+        raise ValueError(
+            f"Unresolved dynamic SQL generator token(s) {detected} detected in generated SQL. Generation failed."
+        )
 
 
 def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialect: str = "tsql", execution_target: Optional[str] = None, target_dataset: Optional[str] = None) -> str:
@@ -1114,98 +1139,7 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             lines.append("GO")
             lines.append("")
 
-    # Emit reusable stored procedure for IQR outlier flagging (DRY pattern)
-    has_outlier_steps = any(
-        any(str(st.get("action") or "") in ("flag_outliers", "clip_or_flag") for st in (b.get("steps") or []))
-        for b in ds_plan.values()
-    )
-    if has_outlier_steps and dialect == "tsql" and "sp_flag_outliers_iqr" not in emitted_objects:
-        emitted_objects.add("sp_flag_outliers_iqr")
-        emitted_objects.add("dbo.sp_flag_outliers_iqr")
-        lines.append("-- ============================================================")
-        lines.append("-- Reusable stored procedure: IQR outlier flagging")
-        lines.append("-- Usage: EXEC sp_flag_outliers_iqr 'dbo.Orders_Clean', 'CustomerID'")
-        lines.append("-- ============================================================")
-        lines.append("CREATE OR ALTER PROCEDURE sp_flag_outliers_iqr")
-        lines.append("    @table_name NVARCHAR(256),")
-        lines.append("    @column_name NVARCHAR(256)")
-        lines.append("AS BEGIN")
-        lines.append("    SET NOCOUNT ON;")
-        lines.append("    DECLARE @flag_col NVARCHAR(270) = @column_name + N'_outlier_flagged';")
-        lines.append("    DECLARE @sql NVARCHAR(MAX);")
-        lines.append("    DECLARE @obj_id INT;")
-        lines.append("")
-        lines.append("    -- Support temporary tables in tempdb or permanent tables in current DB")
-        lines.append("    IF LEFT(@table_name, 1) = '#'")
-        lines.append("        SET @obj_id = OBJECT_ID('tempdb..' + @table_name);")
-        lines.append("    ELSE")
-        lines.append("        SET @obj_id = OBJECT_ID(@table_name);")
-        lines.append("")
-        lines.append("    IF @obj_id IS NULL")
-        lines.append("    BEGIN")
-        lines.append("        RAISERROR('Table %s does not exist.', 16, 1, @table_name);")
-        lines.append("        RETURN;")
-        lines.append("    END")
-        lines.append("")
-        lines.append("    -- Validate column existence")
-        lines.append("    DECLARE @col_exists BIT = 0;")
-        lines.append("    IF LEFT(@table_name, 1) = '#'")
-        lines.append("        SELECT @col_exists = 1 FROM tempdb.sys.columns WHERE object_id = @obj_id AND name = @column_name;")
-        lines.append("    ELSE")
-        lines.append("        SELECT @col_exists = 1 FROM sys.columns WHERE object_id = @obj_id AND name = @column_name;")
-        lines.append("")
-        lines.append("    IF @col_exists = 0")
-        lines.append("    BEGIN")
-        lines.append("        RAISERROR('Column %s does not exist in table %s.', 16, 1, @column_name, @table_name);")
-        lines.append("        RETURN;")
-        lines.append("    END")
-        lines.append("")
-        lines.append("    -- Add flag column if missing")
-        lines.append("    IF LEFT(@table_name, 1) = '#'")
-        lines.append("    BEGIN")
-        lines.append("        SET @sql = N'IF NOT EXISTS (SELECT 1 FROM tempdb.sys.columns WHERE object_id = OBJECT_ID(''tempdb..' + @table_name + ''') AND name = ''' + @flag_col + ''')'")
-        lines.append("            + N' ALTER TABLE ' + @table_name + N' ADD ' + QUOTENAME(@flag_col) + N' BIT NOT NULL DEFAULT 0;';")
-        lines.append("    END")
-        lines.append("    ELSE")
-        lines.append("    BEGIN")
-        lines.append("        SET @sql = N'IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(''' + @table_name + ''') AND name = ''' + @flag_col + ''')'")
-        lines.append("            + N' ALTER TABLE ' + QUOTENAME(PARSENAME(@table_name,2)) + N'.' + QUOTENAME(PARSENAME(@table_name,1))")
-        lines.append("            + N' ADD ' + QUOTENAME(@flag_col) + N' BIT NOT NULL DEFAULT 0;';")
-        lines.append("    END")
-        lines.append("    EXEC sp_executesql @sql;")
-        lines.append("")
-        lines.append("    -- Compute IQR and flag")
-        lines.append("    IF LEFT(@table_name, 1) = '#'")
-        lines.append("    BEGIN")
-        lines.append("        SET @sql = N'DECLARE @q1 FLOAT, @q3 FLOAT; '")
-        lines.append("            + N'SELECT @q1 = PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY ' + QUOTENAME(@column_name) + N'), '")
-        lines.append("            + N'       @q3 = PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY ' + QUOTENAME(@column_name) + N') '")
-        lines.append("            + N'FROM ' + @table_name + N' WHERE ' + QUOTENAME(@column_name) + N' IS NOT NULL; '")
-        lines.append("            + N'UPDATE ' + @table_name")
-        lines.append("            + N' SET ' + QUOTENAME(@flag_col) + N' = CASE'")
-        lines.append("            + N' WHEN ' + QUOTENAME(@column_name) + N' < (@q1 - 1.5 * (@q3 - @q1)) THEN 1'")
-        lines.append("            + N' WHEN ' + QUOTENAME(@column_name) + N' > (@q3 + 1.5 * (@q3 - @q1)) THEN 1'")
-        lines.append("            + N' ELSE 0 END'")
-        lines.append("            + N' WHERE ' + QUOTENAME(@column_name) + N' IS NOT NULL;';")
-        lines.append("    END")
-        lines.append("    ELSE")
-        lines.append("    BEGIN")
-        lines.append("        SET @sql = N'DECLARE @q1 FLOAT, @q3 FLOAT; '")
-        lines.append("            + N'SELECT @q1 = PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY ' + QUOTENAME(@column_name) + N'), '")
-        lines.append("            + N'       @q3 = PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY ' + QUOTENAME(@column_name) + N') '")
-        lines.append("            + N'FROM ' + QUOTENAME(PARSENAME(@table_name,2)) + N'.' + QUOTENAME(PARSENAME(@table_name,1))")
-        lines.append("            + N' WHERE ' + QUOTENAME(@column_name) + N' IS NOT NULL; '")
-        lines.append("            + N'UPDATE ' + QUOTENAME(PARSENAME(@table_name,2)) + N'.' + QUOTENAME(PARSENAME(@table_name,1))")
-        lines.append("            + N' SET ' + QUOTENAME(@flag_col) + N' = CASE'")
-        lines.append("            + N' WHEN ' + QUOTENAME(@column_name) + N' < (@q1 - 1.5 * (@q3 - @q1)) THEN 1'")
-        lines.append("            + N' WHEN ' + QUOTENAME(@column_name) + N' > (@q3 + 1.5 * (@q3 - @q1)) THEN 1'")
-        lines.append("            + N' ELSE 0 END'")
-        lines.append("            + N' WHERE ' + QUOTENAME(@column_name) + N' IS NOT NULL;';")
-        lines.append("    END")
-        lines.append("    EXEC sp_executesql @sql;")
-        lines.append("END;")
-        lines.append("GO")
-        lines.append("")
+    # Outlier handling uses static compile-time CTE expressions directly in stored procedures
 
     if not ds_plan:
         lines.append("-- No datasets found in plan.")
@@ -2354,7 +2288,20 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                     else:
                         step_lines.append(f"-- Flag IQR outliers for {col}")
                         if dialect == "tsql":
-                            step_lines.append(f"EXEC dbo.sp_flag_outliers_iqr '{tbl_staging}', '{col_clean}';")
+                            step_lines.append(f"IF EXISTS (SELECT 1 FROM tempdb.sys.columns WHERE object_id = OBJECT_ID('tempdb..{tbl_staging}') AND name = '{col_clean}_outlier_flagged')")
+                            step_lines.append("BEGIN")
+                            step_lines.append("    WITH OutlierStats AS (")
+                            step_lines.append(f"        SELECT PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY TRY_CAST([{col_clean}] AS FLOAT)) OVER () AS q1,")
+                            step_lines.append(f"               PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY TRY_CAST([{col_clean}] AS FLOAT)) OVER () AS q3")
+                            step_lines.append(f"        FROM {tbl_staging} WHERE [{col_clean}] IS NOT NULL")
+                            step_lines.append("    )")
+                            step_lines.append(f"    UPDATE s SET s.[{col_clean}_outlier_flagged] = CASE")
+                            step_lines.append(f"        WHEN TRY_CAST(s.[{col_clean}] AS FLOAT) < (o.q1 - 1.5 * (o.q3 - o.q1)) THEN 1")
+                            step_lines.append(f"        WHEN TRY_CAST(s.[{col_clean}] AS FLOAT) > (o.q3 + 1.5 * (o.q3 - o.q1)) THEN 1")
+                            step_lines.append("        ELSE 0 END")
+                            step_lines.append(f"    FROM {tbl_staging} s CROSS JOIN (SELECT TOP 1 q1, q3 FROM OutlierStats) o")
+                            step_lines.append(f"    WHERE s.[{col_clean}] IS NOT NULL;")
+                            step_lines.append("END;")
                         else:
                             step_lines.append(f"-- ANSI outlier flagging placeholder")
 
@@ -3052,4 +2999,6 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     full_sql = "\n".join(badge_lines) + full_sql
     full_sql = re.sub(r"#([a-zA-Z0-9_]+?)_Staging_Staging\b", r"#\1_Staging", full_sql, flags=re.IGNORECASE)
     full_sql = re.sub(r"#([a-zA-Z0-9_]+?)_staging_staging\b", r"#\1_Staging", full_sql, flags=re.IGNORECASE)
-    return full_sql.strip() + "\n"
+    final_output = full_sql.strip() + "\n"
+    _check_forbidden_generator_tokens(final_output)
+    return final_output

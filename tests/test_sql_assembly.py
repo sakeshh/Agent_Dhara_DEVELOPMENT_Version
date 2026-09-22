@@ -387,3 +387,60 @@ def test_executive_script_execution_simulation(multi_dataset_plan, multi_dataset
         # Check balanced parens in each batch
         exec_val = validate_for_execution(batch, execution_target="AZURE_SQL_EXECUTOR")
         assert exec_val["valid"], f"Batch {idx} failed validation: {exec_val['issues']}"
+
+
+# ==============================================================================
+# 8. FORBIDDEN GENERATOR TOKENS & DYNAMIC SQL LEAK PREVENTION
+# ==============================================================================
+
+def test_forbidden_generator_tokens_rejected_by_validator():
+    """Verify validate_sql_assembly strictly rejects SQL containing raw generator tokens."""
+    forbidden_samples = [
+        "INSERT INTO ' + @clean_table_name + N' (id, val) VALUES (1, 'test')",
+        "SELECT * FROM ' + @target_table + ' WHERE id = 1",
+        "EXEC sp_executesql @sql = N'SELECT * FROM ' + @table_name + N';'",
+        "INSERT INTO dbo.Users (Name) VALUES ('+ @clean_table_name +')",
+        "UPDATE dbo.Orders SET val = 1 WHERE name = '+ @target_table'",
+        "SELECT * FROM + @table_name +",
+        "SELECT * FROM tbl WHERE col = 'abc' + N'",
+    ]
+
+    for sample in forbidden_samples:
+        valid, issues = validate_sql_assembly(sample)
+        assert not valid, f"Expected validator to reject SQL containing token, but passed: {sample}"
+        assert any("Dynamic SQL Syntax Bug" in iss or "Unresolved generator token" in iss for iss in issues)
+
+
+def test_forbidden_generator_tokens_raises_error_in_codegen():
+    """Verify _check_forbidden_generator_tokens raises ValueError when raw generator tokens exist."""
+    from agent.etl_pipeline.sql_codegen import _check_forbidden_generator_tokens
+
+    bad_sql = "INSERT INTO ' + @clean_table_name + N' (id) VALUES (1);"
+    with pytest.raises(ValueError, match="Unresolved dynamic SQL generator token"):
+        _check_forbidden_generator_tokens(bad_sql)
+
+
+def test_generated_sql_contains_no_raw_generator_tokens(multi_dataset_plan, multi_dataset_assessment):
+    """Verify that end-to-end generated SQL for any dataset contains no raw generator tokens."""
+    for ds_name in multi_dataset_plan["datasets"].keys():
+        sql = generate_dataset_sql(
+            ds_name,
+            multi_dataset_plan,
+            multi_dataset_assessment,
+            dialect="tsql",
+            execution_target="AZURE_SQL_EXECUTOR",
+        )
+        assert "+ @clean_table_name +" not in sql
+        assert "+ @target_table +" not in sql
+        assert "+ @table_name +" not in sql
+        assert "+ N'" not in sql
+        assert "'+ @clean_table_name" not in sql
+        assert "'+ @target_table" not in sql
+        assert "'+ @table_name" not in sql
+        assert "' + @clean_table_name" not in sql
+        assert "' + @target_table" not in sql
+        assert "' + @table_name" not in sql
+        assert "@clean_table_name" not in sql
+        assert "@target_table" not in sql
+        assert "@table_name" not in sql
+
