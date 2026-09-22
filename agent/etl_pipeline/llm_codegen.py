@@ -3431,7 +3431,7 @@ def _call_llm(
         max_tokens = _safe_max_tokens(user_message, engine_key)
 
     # 1.3 OpenAI/Azure retry & timeout handling loop
-    call_timeout = timeout if timeout is not None else float(os.getenv("LLM_REQUEST_TIMEOUT", "60"))
+    call_timeout = timeout if timeout is not None else float(os.getenv("LLM_REQUEST_TIMEOUT", "120"))
     max_attempts = 2
     response = None
     last_err = None
@@ -3720,8 +3720,8 @@ def _generate_etl_with_llm_impl(
     max_retries = _RETRY_BUDGET.get(engine_key, 2)
     
     start_time = time.time()
-    # Enforce safety deadline (default 75s) to guarantee HTTP response completes well within Azure App Service's 230s limit
-    SAFETY_DEADLINE_SECONDS = float(os.getenv("DHARA_CODEGEN_DEADLINE_SECONDS", "75"))
+    # Enforce safety deadline to guarantee HTTP response completes well within Azure App Service's 230s limit
+    SAFETY_DEADLINE_SECONDS = float(os.getenv("DHARA_CODEGEN_DEADLINE_SECONDS", "180"))
 
     code = ""
     for attempt in range(max_retries + 1):
@@ -3767,7 +3767,7 @@ def _generate_etl_with_llm_impl(
         else:
             prev = None
 
-        current_call_timeout = min(float(os.getenv("LLM_REQUEST_TIMEOUT", "60")), max(15.0, remaining))
+        current_call_timeout = min(float(os.getenv("LLM_REQUEST_TIMEOUT", "120")), max(15.0, remaining))
         try:
             raw_code, stripped_code = _call_llm(
                 engine_key,
@@ -3778,7 +3778,8 @@ def _generate_etl_with_llm_impl(
             )
         except (LLMInfraError, ConnectorConfigError) as exc:
             last_error = str(exc)
-            _write_failure_cache(cache_key, last_error)
+            ttl = 10 if "timed out" in last_error.lower() else 30
+            _write_failure_cache(cache_key, last_error, ttl_seconds=ttl)
             if isinstance(exc, ConnectorConfigError):
                 return None, f"Connector configuration error: {exc}. Check your source connection settings."
             if "truncated" in last_error.lower() and attempt < max_retries and (time.time() - start_time < SAFETY_DEADLINE_SECONDS - 15.0):
