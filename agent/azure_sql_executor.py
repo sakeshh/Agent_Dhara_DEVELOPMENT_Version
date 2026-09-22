@@ -290,6 +290,20 @@ def _remediate_batch_syntax_error(batch_sql: str, error_msg: str) -> list[str]:
             return [batch_sql[:m_try.end()] + "\n    DECLARE @run_id INT = 1;" + batch_sql[m_try.end():]]
         return ["DECLARE @run_id INT = 1;\n" + batch_sql]
 
+    # Remediation G: Msg 134 - The variable name '@run_id' has already been declared
+    if "134" in err_low and ("@run_id" in err_low or "already been declared" in err_low):
+        decls = list(re.finditer(r"\bDECLARE\s+@run_id\b\s*(?:BIGINT|INT)?(?:\s*=\s*[^;]+)?\s*;", batch_sql, re.IGNORECASE))
+        if len(decls) > 1:
+            cleaned = batch_sql[:decls[1].start()] + "-- (duplicate @run_id removed)\n" + batch_sql[decls[1].end():]
+            return [cleaned]
+
+    # Remediation H: Msg 208 - Invalid object name '#s_Staging' or short staging alias
+    if "208" in err_low and ("#s_staging" in err_low or "invalid object name '#" in err_low):
+        cleaned = re.sub(r"\bUPDATE\s+#([a-zA-Z])_Staging\s+SET\b", r"UPDATE \1 SET", batch_sql, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\bUPDATE\s+#s_Staging\s+SET\b", r"UPDATE s SET", cleaned, flags=re.IGNORECASE)
+        if cleaned != batch_sql:
+            return [cleaned]
+
     # Remediation F: Msg 1919 - Column in index is invalid type (NVARCHAR(MAX) / VARCHAR(MAX))
     if "1919" in err_low or "invalid for use as a key column in an index" in err_low:
         cleaned = batch_sql
@@ -533,17 +547,28 @@ def run_transactional_sql(
         
         _has_open_dml_txn = False  # track if DML transaction needs committing
         for batch_sql in batches:
-            # Proactively ensure @run_id is declared if referenced in this batch
-            if re.search(r"@run_id\b", batch_sql, re.IGNORECASE) and not re.search(r"\bDECLARE\s+@run_id\b", batch_sql, re.IGNORECASE):
-                m_proc = re.search(r"\bAS\s+BEGIN\b", batch_sql, re.IGNORECASE)
-                if m_proc:
-                    batch_sql = batch_sql[:m_proc.end()] + "\n    DECLARE @run_id INT = 1;" + batch_sql[m_proc.end():]
-                else:
-                    m_try = re.search(r"\bBEGIN\s+TRY\b", batch_sql, re.IGNORECASE)
-                    if m_try:
-                        batch_sql = batch_sql[:m_try.end()] + "\n    DECLARE @run_id INT = 1;" + batch_sql[m_try.end():]
+            # Proactively ensure @run_id is declared and not duplicated if referenced in this batch
+            if re.search(r"@run_id\b", batch_sql, re.IGNORECASE):
+                decls = list(re.finditer(r"\bDECLARE\s+@run_id\b\s*(?:BIGINT|INT)?(?:\s*=\s*[^;]+)?\s*;", batch_sql, re.IGNORECASE))
+                if len(decls) > 1:
+                    for d in reversed(decls[1:]):
+                        batch_sql = batch_sql[:d.start()] + batch_sql[d.end():]
+                elif len(decls) == 0:
+                    m_proc = re.search(r"\bAS\s+BEGIN\b", batch_sql, re.IGNORECASE)
+                    if m_proc:
+                        batch_sql = batch_sql[:m_proc.end()] + "\n    DECLARE @run_id INT = 1;" + batch_sql[m_proc.end():]
                     else:
-                        batch_sql = "DECLARE @run_id INT = 1;\n" + batch_sql
+                        m_try = re.search(r"\bBEGIN\s+TRY\b", batch_sql, re.IGNORECASE)
+                        if m_try:
+                            batch_sql = batch_sql[:m_try.end()] + "\n    DECLARE @run_id INT = 1;" + batch_sql[m_try.end():]
+                        else:
+                            batch_sql = "DECLARE @run_id INT = 1;\n" + batch_sql
+
+            # Sanitize any #s_Staging alias corruptions and logger.info calls
+            batch_sql = re.sub(r"\bUPDATE\s+#([a-zA-Z])_Staging\s+SET\b", r"UPDATE \1 SET", batch_sql, flags=re.IGNORECASE)
+            batch_sql = re.sub(r"\bUPDATE\s+#s_Staging\s+SET\b", r"UPDATE s SET", batch_sql, flags=re.IGNORECASE)
+            batch_sql = re.sub(r"^\s*logger\.(?:info|warning|error|debug)\([^;\n]*\);?\s*$", "", batch_sql, flags=re.MULTILINE | re.IGNORECASE)
+            batch_sql = re.sub(r"\blogger\.(?:info|warning|error|debug)\([^;]*\);?", "", batch_sql, flags=re.IGNORECASE)
 
             # Proactively sanitize Msg 1919 (NVARCHAR(MAX) on primary key columns)
             if re.search(r"\bPRIMARY\s+KEY\b", batch_sql, re.IGNORECASE) and re.search(r"\(MAX\)", batch_sql, re.IGNORECASE):

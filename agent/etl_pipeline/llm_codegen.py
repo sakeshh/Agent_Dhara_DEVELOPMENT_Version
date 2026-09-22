@@ -1125,27 +1125,38 @@ def _postprocess_tsql_code(code: str) -> str:
 
     code = "\n".join(lines)
 
-    # 2b. Ensure @run_id declaration is not separated or missing (and handle procedure parameter clash Msg 134)
+    # 2a. Strip any Python logging calls that leaked into T-SQL
+    code = re.sub(r"^\s*logger\.(?:info|warning|error|debug)\([^;\n]*\);?\s*$", "", code, flags=re.MULTILINE | re.IGNORECASE)
+    code = re.sub(r"\blogger\.(?:info|warning|error|debug)\([^;]*\);?", "", code, flags=re.IGNORECASE)
+
+    # 2b. Ensure @run_id declaration is not separated, missing, or duplicated (and handle Msg 134)
     m_proc_sig = re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\s+[\w\.\[\]]+\s*(\([^\)]*\)|[^;]+?)\bAS\b", code, re.IGNORECASE)
     has_sp_runid_param = bool(m_proc_sig and re.search(r"@run_id\b", m_proc_sig.group(1), re.IGNORECASE))
     if has_sp_runid_param:
         code = re.sub(r"\bDECLARE\s+@run_id\s+INT\s*=\s*SCOPE_IDENTITY\(\)\s*;", "SET @run_id = SCOPE_IDENTITY();", code, flags=re.IGNORECASE)
         code = re.sub(r"\bDECLARE\s+@run_id\s+INT\s*;", "-- @run_id declared as parameter", code, flags=re.IGNORECASE)
     else:
-        # Restore any declaration previously commented out by mistake
-        code = re.sub(r"--\s*@run_id declared as parameter", "DECLARE @run_id INT = 1;", code, flags=re.IGNORECASE)
-        m_try = re.search(r"\bBEGIN\s+TRY\b", code, re.IGNORECASE)
-        if m_try:
-            post_try = code[m_try.end():]
-            if re.search(r"@run_id\b", post_try, re.IGNORECASE) and not re.search(r"\bDECLARE\s+@run_id\b", post_try, re.IGNORECASE):
+        # Check if @run_id is already declared anywhere in the script/procedure
+        decls = list(re.finditer(r"\bDECLARE\s+@run_id\b\s*(?:BIGINT|INT)?(?:\s*=\s*[^;]+)?\s*;", code, re.IGNORECASE))
+        if len(decls) > 1:
+            # Deduplicate: keep the first declaration, remove any subsequent ones to prevent Msg 134
+            for d in reversed(decls[1:]):
+                code = code[:d.start()] + "-- duplicate @run_id declaration removed" + code[d.end():]
+        elif len(decls) == 0:
+            m_try = re.search(r"\bBEGIN\s+TRY\b", code, re.IGNORECASE)
+            if m_try:
                 code = code[:m_try.end()] + "\n    DECLARE @run_id INT = 1;" + code[m_try.end():]
-        elif "@run_id" in code and not re.search(r"\bDECLARE\s+@run_id\b", code, re.IGNORECASE):
-            code = "DECLARE @run_id INT = 1;\n" + code
+            elif "@run_id" in code:
+                code = "DECLARE @run_id INT = 1;\n" + code
 
     # 2c. Redirect updates targeting source tables to their staging tables
     declared_ctes = set(re.findall(r"\bWITH\s+([a-zA-Z0-9_]+)\s+AS\s*\(", code, re.IGNORECASE))
     declared_ctes.update(re.findall(r",\s*([a-zA-Z0-9_]+)\s+AS\s*\(", code, re.IGNORECASE))
     declared_ctes_lower = {c.lower() for c in declared_ctes}
+
+    # Extract all table aliases used in FROM or JOIN clauses so aliases (e.g. UPDATE s SET ... FROM #Table s) are never corrupted into #s_Staging
+    from_aliases = set(re.findall(r"(?:FROM|JOIN)\s+[#\w\.\[\]]+\s+(?:AS\s+)?([a-zA-Z0-9_]+)\b", code, re.IGNORECASE))
+    from_aliases_lower = {a.lower() for a in from_aliases}
 
     def _redirect_source_updates(match):
         prefix = match.group(1) or ""
@@ -1153,7 +1164,8 @@ def _postprocess_tsql_code(code: str) -> str:
         suffix = match.group(4)
         clean_tbl = tbl_raw.strip("[]")
         low = clean_tbl.lower()
-        if low.startswith("#") or low.endswith("_clean") or low in ("etl_log", "etl_rejects", "etl_watermark") or low in declared_ctes_lower or "cte" in low:
+        if (low.startswith("#") or low.endswith("_clean") or low in ("etl_log", "etl_rejects", "etl_watermark") 
+            or low in declared_ctes_lower or "cte" in low or low in from_aliases_lower or len(clean_tbl) <= 3):
             return match.group(0)
         if low.endswith("_staging"):
             clean_tbl = clean_tbl[:-8]
@@ -1165,9 +1177,11 @@ def _postprocess_tsql_code(code: str) -> str:
         code,
         flags=re.IGNORECASE
     )
-    # Sanitize any double staging temporary table references
+    # Sanitize any double staging temporary table references or corrupted single-letter staging tables
     code = re.sub(r"#([a-zA-Z0-9_]+?)_Staging_Staging\b", r"#\1_Staging", code, flags=re.IGNORECASE)
     code = re.sub(r"#([a-zA-Z0-9_]+?)_staging_staging\b", r"#\1_Staging", code, flags=re.IGNORECASE)
+    code = re.sub(r"\bUPDATE\s+#([a-zA-Z])_Staging\s+SET\b", r"UPDATE \1 SET", code, flags=re.IGNORECASE)
+    code = re.sub(r"\bUPDATE\s+#s_Staging\s+SET\b", r"UPDATE s SET", code, flags=re.IGNORECASE)
 
     # 2d. Fix pseudo-column [Row-level] / [row-level] anywhere in the script
     code = re.sub(
@@ -2061,7 +2075,7 @@ UNIVERSAL RULES (mandatory):
 12. ROW COUNT INTEGRITY (MANDATORY): The output row count must equal the input row count,
     UNLESS the plan explicitly includes a "deduplicate" step or an explicit filtering step.
     NEVER use .filter()/.where()/dropna()/inner-join to clean invalid formatting (nullify/flag instead).
-13. Every dataset's transformation/write pipeline must log its row counts:
+13. Every dataset's transformation/write pipeline must log its row counts (Python/PySpark only; NEVER emit python logger calls in T-SQL):
     logger.info("<dataset>: row_count=%s", df.count())
 """
 
