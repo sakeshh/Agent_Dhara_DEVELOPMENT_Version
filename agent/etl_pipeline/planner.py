@@ -1176,7 +1176,11 @@ class PlanBuilder:
                 else:
                     step_identity_map[s_ident] = st
             steps = list(step_identity_map.values())
-            steps.sort(key=lambda x: (x["priority"], str(x.get("column") or "")))
+            # Ensure all steps have priority field (default to 50 for supplemented steps)
+            for st in steps:
+                if "priority" not in st:
+                    st["priority"] = 50
+            steps.sort(key=lambda x: (x.get("priority", 50), str(x.get("column") or "")))
             enriched_steps: List[Dict[str, Any]] = []
             for i, st in enumerate(steps, start=1):
                 st["order"] = i
