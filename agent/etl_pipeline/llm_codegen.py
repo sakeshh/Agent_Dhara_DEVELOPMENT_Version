@@ -2393,13 +2393,17 @@ def _safe_max_tokens(prompt_text: str, engine_key: str) -> int:
     
     # Model-specific caps to prevent out-of-limits API errors
     cap_map = {
+        "gpt-5.4-mini": 16000,
+        "gpt-4.1": 32000,
+        "gpt-4.1-mini": 16000,
+        "gpt-4.1-nano": 16000,
         "gpt-4o-mini": 16000,
-        "gpt-4o": 4096,
-        "gpt-4": 4096,
+        "gpt-4o": 16000,
+        "gpt-4": 8192,
         "gpt-35-turbo": 4096,
     }
     model_name = (cfg.model.lower() if cfg else "gpt-4o")
-    cap = 4096
+    cap = 16000
     for k, v in cap_map.items():
         if k in model_name:
             cap = v

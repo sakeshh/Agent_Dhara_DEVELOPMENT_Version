@@ -31,13 +31,26 @@ def load_llm_config(*, purpose: str = "general") -> Optional[LLMConfig]:
         OPENAI_API_KEY
         OPENAI_MODEL (optional)
 
-    `purpose` allows future per-purpose overrides (router vs nl2sql), but currently
-    reads the same env vars.
+    `purpose` allows per-purpose overrides. Set AZURE_OPENAI_CODEGEN_DEPLOYMENT
+    to use a separate (faster) model for ETL code generation (e.g. gpt-4o).
+    Falls back to the default deployment if not set.
     """
-    _ = purpose  # reserved for future override map
-
     az_endpoint = (os.environ.get("AZURE_OPENAI_ENDPOINT") or "").strip().rstrip("/")
     az_key = (os.environ.get("AZURE_OPENAI_API_KEY") or "").strip()
+
+    # Allow a dedicated deployment for code generation (heavier, needs faster model)
+    if purpose == "etl_codegen":
+        codegen_deployment = (os.environ.get("AZURE_OPENAI_CODEGEN_DEPLOYMENT") or "").strip()
+        if codegen_deployment and az_endpoint and az_key:
+            az_version = (os.environ.get("AZURE_OPENAI_API_VERSION") or "").strip() or "2024-02-01"
+            return LLMConfig(
+                provider="azure_openai",
+                api_key=az_key,
+                endpoint=az_endpoint,
+                api_version=az_version,
+                model=codegen_deployment,
+            )
+
     az_deployment = (
         (os.environ.get("AZURE_OPENAI_DEPLOYMENT") or os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME") or "").strip()
     )
@@ -67,6 +80,10 @@ LLM_REQUEST_TIMEOUT = int(os.getenv("LLM_REQUEST_TIMEOUT", "120"))
 
 
 _MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    "gpt-5.4-mini":        1_048_576,
+    "gpt-4.1":               1_048_576,
+    "gpt-4.1-mini":          1_048_576,
+    "gpt-4.1-nano":          1_048_576,
     "gpt-4o":              128_000,
     "gpt-4o-mini":         128_000,
     "gpt-4":                 8_192,
