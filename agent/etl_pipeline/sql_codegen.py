@@ -12,6 +12,15 @@ from agent.etl_pipeline.codegen_shared import (
     tsql_qualified_name,
 )
 from agent.etl_pipeline.join_emitters import emit_sql_joins
+from agent.etl_pipeline.sql_templates.infrastructure import (
+    ETL_DEFAULT_VALUES_SCHEMA,
+    ETL_INVALID_VALUES_SCHEMA,
+    ETL_LOG_SCHEMA,
+    ETL_REJECT_SCHEMA,
+    ETL_REJECTS_SCHEMA,
+    ETL_WATERMARK_SCHEMA,
+    get_infrastructure_ddl,
+)
 
 
 def quote_sql_server_identifier(identifier: str) -> str:
@@ -641,7 +650,184 @@ def _supplement_steps_with_dq_issues(
     return steps
 
 
-def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialect: str = "tsql") -> str:
+
+def generate_dataset_sql(
+    dataset_name: str,
+    plan: Dict[str, Any],
+    assessment: Dict[str, Any],
+    *,
+    dialect: str = "tsql",
+    execution_target: Optional[str] = None,
+    clean_schema: Optional[str] = None,
+    timestamp_suffix: str = "",
+) -> str:
+    """
+    Generate isolated, independent ETL SQL for a single dataset.
+    Does not merge multiple dataset pipelines into one script.
+    """
+    import copy
+    isolated_plan = copy.deepcopy(plan)
+    norm_target = dataset_name.replace("dbo.", "").strip("[]").lower()
+    matching_datasets = {}
+    for k, v in (plan.get("datasets") or {}).items():
+        if k.replace("dbo.", "").strip("[]").lower() == norm_target:
+            matching_datasets[k] = v
+
+    if not matching_datasets:
+        matching_datasets[dataset_name] = {"steps": []}
+
+    isolated_plan["datasets"] = matching_datasets
+    isolated_plan["relationships"] = {}
+
+    isolated_assessment = copy.deepcopy(assessment) if assessment else {}
+    if isolated_assessment and isinstance(isolated_assessment.get("datasets"), dict):
+        matching_assess = {}
+        for k, v in isolated_assessment["datasets"].items():
+            if k.replace("dbo.", "").strip("[]").lower() == norm_target:
+                matching_assess[k] = v
+        isolated_assessment["datasets"] = matching_assess
+
+    if clean_schema:
+        isolated_plan.setdefault("business_rules", {})["clean_schema"] = clean_schema
+    if timestamp_suffix:
+        isolated_plan["timestamp_suffix"] = timestamp_suffix
+
+    return generate_sql_etl(
+        isolated_plan,
+        isolated_assessment,
+        dialect=dialect,
+        execution_target=execution_target,
+        target_dataset=dataset_name,
+    )
+
+
+def generate_master_orchestrator(
+    plan: Dict[str, Any],
+    assessment: Dict[str, Any] = None,
+    *,
+    dialect: str = "tsql",
+    execution_target: Optional[str] = None,
+    dataset_names: Optional[List[str]] = None,
+) -> str:
+    """
+    Generate a standalone master orchestrator package that coordinates
+    independent dataset ETL procedures (etl_clean_*, etl_transform_*).
+    """
+    assessment = assessment or {}
+    dialect = (dialect or "tsql").lower()
+    is_odbc_or_azure = (
+        (execution_target and str(execution_target).upper() in ("AZURE_SQL_EXECUTOR", "ODBC", "AZURE_SQL"))
+        or (str((plan.get("business_rules") or {}).get("execution_target") or "").upper() in ("AZURE_SQL_EXECUTOR", "ODBC", "AZURE_SQL"))
+        or (str(plan.get("execution_target") or "").upper() in ("AZURE_SQL_EXECUTOR", "ODBC", "AZURE_SQL"))
+    )
+
+    datasets = dataset_names or list((plan.get("datasets") or {}).keys())
+    if not datasets and assessment and isinstance(assessment.get("datasets"), dict):
+        datasets = list(assessment["datasets"].keys())
+
+    emitted_objects: Set[str] = set()
+    lines: List[str] = [
+        f"-- Master ETL Orchestrator — Agent Dhara — plan_id={plan.get('plan_id', 'unknown')}",
+        f"-- dialect={dialect} — execution_target={execution_target or 'default'}",
+        "",
+    ]
+
+    # Infrastructure
+    infra_ddl = get_infrastructure_ddl(
+        include_rejects=True,
+        include_watermark=True,
+        dialect=dialect,
+        include_go=True,
+        emitted_objects=emitted_objects,
+    )
+    if infra_ddl:
+        lines.append("-- ============================================================")
+        lines.append("-- Infrastructure Tables")
+        lines.append("-- ============================================================")
+        lines.append(infra_ddl)
+
+    # Master procedure
+    lines.append("-- ============================================================")
+    lines.append("-- Master Orchestrator Stored Procedure")
+    lines.append("-- ============================================================")
+    lines.append("CREATE OR ALTER PROCEDURE dbo.etl_main")
+    lines.append("    @load_type VARCHAR(20) = 'FULL',")
+    lines.append("    @last_run DATETIME = NULL")
+    lines.append("AS BEGIN")
+    lines.append("    SET NOCOUNT ON;")
+    lines.append("    -- Retrieve last run watermark if not provided")
+    lines.append("    IF @load_type = 'INCREMENTAL' AND @last_run IS NULL")
+    lines.append("    BEGIN")
+    lines.append("        SELECT @last_run = last_run_time FROM dbo.etl_watermark WHERE process_name = 'etl_main';")
+    lines.append("    END;")
+    lines.append("")
+    lines.append("    INSERT INTO dbo.etl_log (process_name, start_time, status)")
+    lines.append("    VALUES ('etl_main', GETDATE(), 'RUNNING');")
+    lines.append("    DECLARE @run_id INT = SCOPE_IDENTITY();")
+    lines.append("")
+    lines.append("    BEGIN TRY")
+
+    generation_mode = str(plan.get("generation_mode") or "full").lower()
+    for ds_name in datasets:
+        tbl_base = ds_name.split(".")[-1].strip("[]")
+        if generation_mode in ("cleanse", "cleanse_only", "phase1", "full"):
+            lines.append(f"        EXEC dbo.etl_clean_{tbl_base} @load_type = @load_type, @last_run = @last_run;")
+        if generation_mode in ("transform", "transform_only", "phase2", "full"):
+            lines.append(f"        EXEC dbo.etl_transform_{tbl_base} @load_type = @load_type, @last_run = @last_run;")
+
+    lines.append("        -- Update master process watermark")
+    lines.append("        IF @load_type = 'INCREMENTAL' OR @last_run IS NULL")
+    lines.append("        BEGIN")
+    lines.append("            MERGE INTO dbo.etl_watermark WITH (HOLDLOCK) AS target")
+    lines.append("            USING (SELECT 'etl_main' AS process_name) AS source")
+    lines.append("            ON target.process_name = source.process_name")
+    master_wm = "COALESCE((SELECT MAX(last_run_time) FROM dbo.etl_watermark WHERE process_name LIKE 'etl_clean_%' OR process_name LIKE 'etl_transform_%'), GETDATE())"
+    lines.append("            WHEN MATCHED THEN")
+    lines.append(f"                UPDATE SET last_run_time = {master_wm}")
+    lines.append("            WHEN NOT MATCHED THEN")
+    lines.append(f"                INSERT (process_name, last_run_time) VALUES (source.process_name, {master_wm});")
+    lines.append("        END")
+    lines.append("")
+    lines.append("        UPDATE dbo.etl_log")
+    lines.append("        SET end_time = GETDATE(), status = 'SUCCESS'")
+    lines.append("        WHERE id = @run_id;")
+    lines.append("    END TRY")
+    lines.append("    BEGIN CATCH")
+    lines.append("        IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;")
+    if is_odbc_or_azure:
+        lines.append("        DECLARE @err_msg NVARCHAR(4000);")
+        lines.append("        SET @err_msg = ERROR_MESSAGE();")
+        lines.append("")
+        lines.append("        UPDATE dbo.etl_log")
+        lines.append("        SET status = 'FAILED',")
+        lines.append("            error_message = @err_msg")
+        lines.append("        WHERE id = @run_id;")
+        lines.append("")
+        lines.append("        RAISERROR(@err_msg, 16, 1);")
+    else:
+        lines.append("        DECLARE @err VARCHAR(MAX) = ERROR_MESSAGE();")
+        lines.append("        UPDATE dbo.etl_log")
+        lines.append("        SET end_time = GETDATE(), status = 'FAILED', error_message = @err")
+        lines.append("        WHERE id = @run_id;")
+        lines.append("        THROW;")
+    lines.append("    END CATCH;")
+    lines.append("END;")
+    lines.append("GO")
+    lines.append("")
+    lines.append("-- ============================================================")
+    lines.append("-- Auto-Execute: Run Master ETL pipeline")
+    lines.append("-- ============================================================")
+    lines.append("PRINT 'Starting Master ETL pipeline execution...';")
+    lines.append("EXEC dbo.etl_main @load_type = 'FULL';")
+    lines.append("PRINT 'Master ETL pipeline execution complete.';")
+    lines.append("GO")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialect: str = "tsql", execution_target: Optional[str] = None, target_dataset: Optional[str] = None) -> str:
+
     """
     Generate commented SQL scripts (T-SQL biased: UPDATE / TRY_CAST / QUOTENAME patterns).
     `dialect`: 'tsql' | 'ansi' (ansi uses portable comments only for risky bits).
@@ -660,6 +846,12 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         plan = transform_plan
 
     dialect = (dialect or "tsql").lower()
+    is_odbc_or_azure = (
+        (execution_target and str(execution_target).upper() in ("AZURE_SQL_EXECUTOR", "ODBC", "AZURE_SQL"))
+        or (str((plan.get("business_rules") or {}).get("execution_target") or "").upper() in ("AZURE_SQL_EXECUTOR", "ODBC", "AZURE_SQL"))
+        or (str(plan.get("execution_target") or "").upper() in ("AZURE_SQL_EXECUTOR", "ODBC", "AZURE_SQL"))
+    )
+    emitted_objects: Set[str] = set()
     default_values_to_seed = {}
     invalid_values_to_seed = {}
     plan_id = str(plan.get("plan_id") or "unknown")
@@ -771,7 +963,12 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         lines.append("")
 
     ds_plan = dict(plan.get("datasets") or {})
-    if assessment and isinstance(assessment.get("datasets"), dict):
+    if target_dataset:
+        norm_target = target_dataset.replace("dbo.", "").strip("[]").lower()
+        ds_plan = {k: v for k, v in ds_plan.items() if k.replace("dbo.", "").strip("[]").lower() == norm_target}
+        if not ds_plan:
+            ds_plan[target_dataset] = {"steps": []}
+    elif assessment and isinstance(assessment.get("datasets"), dict):
         for ds_k in assessment["datasets"].keys():
             norm_k = ds_k.replace("dbo.", "").strip("[]").lower()
             matched = any(k.replace("dbo.", "").strip("[]").lower() == norm_k for k in ds_plan)
@@ -781,55 +978,20 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     # Emit logging table definition for T-SQL dialect
     if dialect == "tsql":
         lines.append("-- ============================================================")
-        lines.append("-- Create configuration, watermark and logging tables if not exists")
+        lines.append("-- Infrastructure Section: Logging, rejects, watermark, configuration")
         lines.append("-- ============================================================")
-        lines.append("IF OBJECT_ID('dbo.etl_log', 'U') IS NULL")
-        lines.append("BEGIN")
-        lines.append("    CREATE TABLE dbo.etl_log (")
-        lines.append("        id INT IDENTITY(1,1) PRIMARY KEY,")
-        lines.append("        process_name VARCHAR(100) NOT NULL,")
-        lines.append("        start_time DATETIME NOT NULL,")
-        lines.append("        end_time DATETIME NULL,")
-        lines.append("        status VARCHAR(20) NOT NULL,")
-        lines.append("        error_message VARCHAR(MAX) NULL")
-        lines.append("    );")
-        lines.append("END;")
-        lines.append("GO")
-        lines.append("")
+        infra_ddl = get_infrastructure_ddl(
+            include_rejects=not bool(business_rules.get("never_drop_rows")),
+            include_watermark=True,
+            include_defaults=bool(default_values_to_seed),
+            include_invalid=True,
+            dialect=dialect,
+            include_go=True,
+            emitted_objects=emitted_objects,
+        )
+        if infra_ddl:
+            lines.append(infra_ddl)
         lines.append("-- __DEFAULT_VALUES_DDL_PLACEHOLDER__")
-        lines.append("IF OBJECT_ID('dbo.etl_invalid_values', 'U') IS NULL")
-        lines.append("BEGIN")
-        lines.append("    CREATE TABLE dbo.etl_invalid_values (")
-        lines.append("        column_name VARCHAR(256),")
-        lines.append("        invalid_value VARCHAR(256),")
-        lines.append("        PRIMARY KEY (column_name, invalid_value)")
-        lines.append("    );")
-        lines.append("END;")
-        lines.append("GO")
-        lines.append("")
-        if not bool(business_rules.get("never_drop_rows")):
-            lines.append("IF OBJECT_ID('dbo.etl_rejects', 'U') IS NULL")
-            lines.append("BEGIN")
-            lines.append("    CREATE TABLE dbo.etl_rejects (")
-            lines.append("        id INT IDENTITY(1,1) PRIMARY KEY,")
-            lines.append("        process_name VARCHAR(100) NOT NULL,")
-            lines.append("        table_name VARCHAR(100) NOT NULL,")
-            lines.append("        row_data VARCHAR(MAX) NOT NULL,")
-            lines.append("        error_reason VARCHAR(MAX) NOT NULL,")
-            lines.append("        rejected_at DATETIME DEFAULT GETDATE()")
-            lines.append("    );")
-            lines.append("END;")
-            lines.append("GO")
-            lines.append("")
-        lines.append("IF OBJECT_ID('dbo.etl_watermark', 'U') IS NULL")
-        lines.append("BEGIN")
-        lines.append("    CREATE TABLE dbo.etl_watermark (")
-        lines.append("        process_name VARCHAR(256) PRIMARY KEY,")
-        lines.append("        last_run_time DATETIME NOT NULL")
-        lines.append("    );")
-        lines.append("END;")
-        lines.append("GO")
-        lines.append("")
         lines.append("-- __DEFAULT_VALUES_SEED_PLACEHOLDER__")
         lines.append("")
 
@@ -852,6 +1014,11 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             tbl_clean = _get_clean_table_name(ds_name, target_schema=clean_schema, timestamp_suffix=timestamp_suffix) if is_clean_script else _get_transformed_table_name(ds_name)
             tbl_base = ds_name.split(".")[-1].strip("[]")
             clean_tbl = tsql_qualified_name(tbl_clean)
+            tbl_norm = tbl_clean.lower().strip("[]")
+            if tbl_norm in emitted_objects or f"dbo.{tbl_norm.split('.')[-1]}" in emitted_objects:
+                continue
+            emitted_objects.add(tbl_norm)
+            emitted_objects.add(f"dbo.{tbl_norm.split('.')[-1]}")
             
             # Get columns info
             ds_info = assessment.get("datasets", {}).get(ds_name) or {} if assessment else {}
@@ -952,7 +1119,9 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         any(str(st.get("action") or "") in ("flag_outliers", "clip_or_flag") for st in (b.get("steps") or []))
         for b in ds_plan.values()
     )
-    if has_outlier_steps and dialect == "tsql":
+    if has_outlier_steps and dialect == "tsql" and "sp_flag_outliers_iqr" not in emitted_objects:
+        emitted_objects.add("sp_flag_outliers_iqr")
+        emitted_objects.add("dbo.sp_flag_outliers_iqr")
         lines.append("-- ============================================================")
         lines.append("-- Reusable stored procedure: IQR outlier flagging")
         lines.append("-- Usage: EXEC sp_flag_outliers_iqr 'dbo.Orders_Clean', 'CustomerID'")
@@ -1292,7 +1461,10 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
             lines.append(f"-- === dataset: {ds_name} === ")
 
             # Pre-procedure One-Time DDL Setup (Executed outside procedure to avoid Sch-M locks)
-            if dialect == "tsql":
+            tbl_norm_phase = target_tbl_str.lower().strip("[]")
+            if dialect == "tsql" and (tbl_norm_phase not in emitted_objects and f"dbo.{tbl_norm_phase.split('.')[-1]}" not in emitted_objects):
+                emitted_objects.add(tbl_norm_phase)
+                emitted_objects.add(f"dbo.{tbl_norm_phase.split('.')[-1]}")
                 lines.append(f"-- Initialize Clean Table Structure")
                 lines.append(f"IF OBJECT_ID('{target_tbl_str}', 'U') IS NULL")
                 lines.append("BEGIN")
@@ -2622,18 +2794,29 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 lines.append("        COMMIT TRANSACTION;")
                 lines.append("    END TRY")
                 lines.append("    BEGIN CATCH")
-                lines.append("        DECLARE @err_msg NVARCHAR(4000) = ERROR_MESSAGE();")
-                lines.append("        DECLARE @err_num INT = ERROR_NUMBER();")
                 lines.append("        IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;")
-                lines.append("        BEGIN TRY")
-                lines.append("            UPDATE dbo.etl_log")
-                lines.append("            SET end_time = GETDATE(), status = 'FAILED', error_message = @err_msg")
-                lines.append(where_id_str)
-                lines.append("        END TRY")
-                lines.append("        BEGIN CATCH")
-                lines.append("            -- Secondary telemetry exception ignored so original THROW is preserved")
-                lines.append("        END CATCH;")
-                lines.append("        THROW;")
+                if is_odbc_or_azure:
+                    lines.append("        DECLARE @err_msg NVARCHAR(4000);")
+                    lines.append("        SET @err_msg = ERROR_MESSAGE();")
+                    lines.append("")
+                    lines.append("        UPDATE dbo.etl_log")
+                    lines.append("        SET status = 'FAILED',")
+                    lines.append("            error_message = @err_msg")
+                    lines.append(where_id_str)
+                    lines.append("")
+                    lines.append("        RAISERROR(@err_msg, 16, 1);")
+                else:
+                    lines.append("        DECLARE @err_msg NVARCHAR(4000) = ERROR_MESSAGE();")
+                    lines.append("        DECLARE @err_num INT = ERROR_NUMBER();")
+                    lines.append("        BEGIN TRY")
+                    lines.append("            UPDATE dbo.etl_log")
+                    lines.append("            SET end_time = GETDATE(), status = 'FAILED', error_message = @err_msg")
+                    lines.append(where_id_str)
+                    lines.append("        END TRY")
+                    lines.append("        BEGIN CATCH")
+                    lines.append("            -- Secondary telemetry exception ignored so original THROW is preserved")
+                    lines.append("        END CATCH;")
+                    lines.append("        THROW;")
                 lines.append("    END CATCH;")
                 lines.append("END;")
                 lines.append("GO")
@@ -2643,7 +2826,9 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
                 lines.append("")
 
     # Generate master orchestrator procedure for T-SQL
-    if dialect == "tsql":
+    if dialect == "tsql" and "etl_main" not in emitted_objects:
+        emitted_objects.add("etl_main")
+        emitted_objects.add("dbo.etl_main")
         lines.append("-- ============================================================")
         lines.append("-- Master Orchestrator Stored Procedure")
         lines.append("-- ============================================================")
@@ -2698,11 +2883,22 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         lines.append("    END TRY")
         lines.append("    BEGIN CATCH")
         lines.append("        IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;")
-        lines.append("        DECLARE @err VARCHAR(MAX) = ERROR_MESSAGE();")
-        lines.append("        UPDATE dbo.etl_log")
-        lines.append("        SET end_time = GETDATE(), status = 'FAILED', error_message = @err")
-        lines.append("        WHERE id = @run_id;")
-        lines.append("        THROW;")
+        if is_odbc_or_azure:
+            lines.append("        DECLARE @err_msg NVARCHAR(4000);")
+            lines.append("        SET @err_msg = ERROR_MESSAGE();")
+            lines.append("")
+            lines.append("        UPDATE dbo.etl_log")
+            lines.append("        SET status = 'FAILED',")
+            lines.append("            error_message = @err_msg")
+            lines.append("        WHERE id = @run_id;")
+            lines.append("")
+            lines.append("        RAISERROR(@err_msg, 16, 1);")
+        else:
+            lines.append("        DECLARE @err VARCHAR(MAX) = ERROR_MESSAGE();")
+            lines.append("        UPDATE dbo.etl_log")
+            lines.append("        SET end_time = GETDATE(), status = 'FAILED', error_message = @err")
+            lines.append("        WHERE id = @run_id;")
+            lines.append("        THROW;")
         lines.append("    END CATCH;")
         lines.append("END;")
         lines.append("GO")
@@ -2713,14 +2909,16 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
         # Without this, the script only defines procedures but
         # never runs them, leaving Customers_Clean with 0 rows.
         # -------------------------------------------------------
-        lines.append("-- ============================================================")
-        lines.append("-- Auto-Execute: Run ETL pipeline to populate Clean tables")
-        lines.append("-- ============================================================")
-        lines.append("PRINT 'Starting ETL pipeline execution...';")
-        lines.append("EXEC dbo.etl_main @load_type = 'FULL';")
-        lines.append("PRINT 'ETL pipeline execution complete.';")
-        lines.append("GO")
-        lines.append("")
+        if "exec_dbo.etl_main" not in emitted_objects:
+            emitted_objects.add("exec_dbo.etl_main")
+            lines.append("-- ============================================================")
+            lines.append("-- Auto-Execute: Run ETL pipeline to populate Clean tables")
+            lines.append("-- ============================================================")
+            lines.append("PRINT 'Starting ETL pipeline execution...';")
+            lines.append("EXEC dbo.etl_main @load_type = 'FULL';")
+            lines.append("PRINT 'ETL pipeline execution complete.';")
+            lines.append("GO")
+            lines.append("")
 
     for st in plan.get("global_steps") or []:
         lines.append(f"-- global: {st.get('action')} {st.get('column') or ''}")
@@ -2802,10 +3000,12 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     full_sql = full_sql.replace("-- __DEFAULT_VALUES_SEED_PLACEHOLDER__", seed_sql)
     
     # S3-05: SQL Quality assessment badge
-    from agent.etl_pipeline.validate_sql import validate_sql_basic_dict
+    from agent.etl_pipeline.validate_sql import validate_sql_basic_dict, validate_sql_assembly
     val_res = validate_sql_basic_dict(full_sql)
     issues = list(val_res.get("issues") or [])
     warnings = list(val_res.get("warnings") or [])
+    asm_ok, asm_issues = validate_sql_assembly(full_sql, execution_target=execution_target)
+    issues.extend(asm_issues)
 
     # Check for hard syntax smells
     clean_code = re.sub(r"'(?:''|[^'])*'", "''", full_sql)

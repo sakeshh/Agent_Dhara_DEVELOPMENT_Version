@@ -304,12 +304,112 @@ def validate_sql_basic(source: str) -> Tuple[bool, List[str], List[str]]:
     return hard_pass, hard_errors, advisory_warnings
 
 
-def validate_for_execution(sql: str) -> dict:
-    """Stricter pre-execution gate checking only security issues."""
+def validate_sql_assembly(sql: str, execution_target: Optional[str] = None) -> Tuple[bool, List[str]]:
+    """
+    Validates the structure and assembly of generated SQL scripts before execution.
+    Checks for:
+    1. Duplicate CREATE TABLE
+    2. Duplicate CREATE PROCEDURE / CREATE OR ALTER PROCEDURE
+    3. Duplicate etl_main definition
+    4. Multiple EXEC dbo.etl_main invocations
+    5. Multiple infrastructure definitions (etl_log, etl_rejects, etl_watermark)
+    6. Multiple ETL pipelines concatenated
+    7. Invalid THROW usage for ODBC / Azure SQL executor
+    8. Residual GO statements for Azure executor (when target specifies single batch execution)
+    """
+    issues: List[str] = []
+    if not sql or not sql.strip():
+        return False, ["SQL script is empty"]
+
+    # Remove comments and strings for parsing
+    cleaned_no_comments = re.sub(r"--.*$", "", sql, flags=re.MULTILINE)
+    cleaned_no_comments = re.sub(r"/\*.*?\*/", "", cleaned_no_comments, flags=re.DOTALL)
+
+    # 1. Duplicate CREATE TABLE
+    # Match CREATE TABLE [dbo].[Table] or CREATE TABLE dbo.Table or CREATE TABLE #Table
+    table_creations = re.findall(r"\bCREATE\s+TABLE\s+([^\s\(]+)", cleaned_no_comments, re.IGNORECASE)
+    seen_tables = set()
+    dup_tables = set()
+    for tbl in table_creations:
+        norm_tbl = tbl.replace("[", "").replace("]", "").strip().lower()
+        if norm_tbl in seen_tables:
+            dup_tables.add(norm_tbl)
+        else:
+            seen_tables.add(norm_tbl)
+    for dt in sorted(dup_tables):
+        issues.append(f"Assembly Conflict: Duplicate CREATE TABLE statement for '{dt}'")
+
+    # 2. Duplicate CREATE PROCEDURE / CREATE OR ALTER PROCEDURE
+    proc_creations = re.findall(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\s+([^\s\(]+)", cleaned_no_comments, re.IGNORECASE)
+    seen_procs = set()
+    dup_procs = set()
+    for proc in proc_creations:
+        norm_proc = proc.replace("[", "").replace("]", "").strip().lower()
+        if norm_proc in seen_procs:
+            dup_procs.add(norm_proc)
+        else:
+            seen_procs.add(norm_proc)
+    for dp in sorted(dup_procs):
+        issues.append(f"Assembly Conflict: Duplicate procedure definition for '{dp}'")
+
+    # 3. Duplicate etl_main
+    etl_main_procs = [p for p in proc_creations if "etl_main" in p.lower()]
+    if len(etl_main_procs) > 1:
+        issues.append(f"Assembly Conflict: Multiple ({len(etl_main_procs)}) etl_main procedure definitions found")
+
+    # 4. Multiple EXEC dbo.etl_main
+    exec_main_matches = re.findall(r"\bEXEC\s+(?:\[?dbo\]?\.)?\[?etl_main\]?", cleaned_no_comments, re.IGNORECASE)
+    if len(exec_main_matches) > 1:
+        issues.append(f"Assembly Conflict: Multiple ({len(exec_main_matches)}) EXEC dbo.etl_main invocations found in script")
+
+    # 5. Multiple infrastructure definitions
+    etl_log_count = len(re.findall(r"\bCREATE\s+TABLE\s+(?:\[?dbo\]?\.)?\[?etl_log\]?", cleaned_no_comments, re.IGNORECASE))
+    if etl_log_count > 1:
+        issues.append(f"Assembly Conflict: Duplicate dbo.etl_log infrastructure definitions ({etl_log_count} found, expected <= 1)")
+
+    etl_rejects_count = len(re.findall(r"\bCREATE\s+TABLE\s+(?:\[?dbo\]?\.)?\[?etl_rejects\]?", cleaned_no_comments, re.IGNORECASE))
+    if etl_rejects_count > 1:
+        issues.append(f"Assembly Conflict: Duplicate dbo.etl_rejects infrastructure definitions ({etl_rejects_count} found, expected <= 1)")
+
+    etl_watermark_count = len(re.findall(r"\bCREATE\s+TABLE\s+(?:\[?dbo\]?\.)?\[?etl_watermark\]?", cleaned_no_comments, re.IGNORECASE))
+    if etl_watermark_count > 1:
+        issues.append(f"Assembly Conflict: Duplicate dbo.etl_watermark infrastructure definitions ({etl_watermark_count} found, expected <= 1)")
+
+    # 6. Multiple ETL pipelines concatenated
+    header_count = len(re.findall(r"--\s*ETL\s+SQL\s*—\s*Agent\s+Dhara", sql, re.IGNORECASE))
+    if header_count > 1:
+        issues.append(f"Assembly Conflict: Multiple ETL pipeline scripts ({header_count}) concatenated into single output")
+
+    auto_exec_markers = len(re.findall(r"--\s*Auto-Execute:\s*Run\s+ETL\s+pipeline", sql, re.IGNORECASE))
+    if auto_exec_markers > 1:
+        issues.append(f"Assembly Conflict: Multiple concatenated Auto-Execute orchestrator blocks ({auto_exec_markers} found)")
+
+    # 7. Invalid THROW usage for ODBC / Azure SQL executor
+    is_odbc_or_azure = (
+        execution_target and execution_target.upper() in ("AZURE_SQL_EXECUTOR", "ODBC", "AZURE_SQL")
+    )
+    if is_odbc_or_azure:
+        throw_matches = re.findall(r"\bTHROW\s*;", cleaned_no_comments, re.IGNORECASE)
+        if throw_matches:
+            issues.append(f"Compatibility Violation: THROW syntax detected ({len(throw_matches)} occurrence(s)). Execution target '{execution_target}' requires RAISERROR compatibility pattern.")
+
+    # 8. Residual GO statements for Azure executor (when checking single-batch execution mode)
+    if execution_target and execution_target.upper() in ("AZURE_SQL_SINGLE_BATCH", "AZURE_SQL_NO_GO"):
+        go_matches = re.findall(r"^\s*GO\s*(?:--.*)?$", sql, flags=re.MULTILINE | re.IGNORECASE)
+        if go_matches:
+            issues.append(f"Compatibility Violation: Residual GO statement ({len(go_matches)} found) not supported in single-batch execution mode")
+
+    return len(issues) == 0, issues
+
+
+def validate_for_execution(sql: str, execution_target: Optional[str] = None) -> dict:
+    """Stricter pre-execution gate checking security and assembly issues."""
     ok, issues = validate_security(sql)
+    asm_ok, asm_issues = validate_sql_assembly(sql, execution_target=execution_target)
+    issues.extend(asm_issues)
     warnings = validate_style(sql)
     return {
-        "valid": ok,
+        "valid": ok and asm_ok,
         "issues": issues,
         "warnings": warnings,
     }
@@ -358,4 +458,5 @@ def validate_issue_coverage(sql: str, manifest: List[dict]) -> dict:
         "total": total,
         "missing": missing,
     }
+
 
