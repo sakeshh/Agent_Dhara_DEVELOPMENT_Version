@@ -123,7 +123,7 @@ def build_step_params(
     elif act in ("lowercase", "uppercase"):
         params["case_mode"] = act.replace("case", "")
 
-    elif act == "zero_to_null":
+    elif act in ("zero_to_null", "replace_values", "replace_sentinel_values"):
         import yaml
         import os
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -134,9 +134,17 @@ def build_step_params(
             sentinels = cfg.get("sentinels", sentinels)
         except Exception:
             pass
-        
-        # Merge sentinels with typical punctuation values
-        params["replace_values"] = list(set([str(s) for s in sentinels] + ["0", "###", "nan", "null"]))
+
+        # Merge sentinels with typical placeholder values
+        default_replacements = list(set([str(s) for s in sentinels] + ["0", "###", "nan", "null"]))
+
+        # For text columns (email, phone, name, etc.) add common text placeholders
+        semantic = str(col_stats.get("semantic_type") or "").lower()
+        if _is_text_dtype(dtype, col_stats) or semantic in ("email", "phone", "name", "text", "address"):
+            default_replacements.extend(["N/A", "n/a", "NA", "na", "???", "unknown", "UNKNOWN", "none", "None", "NULL", "-", "--", "TBD", "tbd"])
+            default_replacements = list(set(default_replacements))
+
+        params["replace_values"] = default_replacements
         params["execution_mode"] = "in_place"
 
     return params

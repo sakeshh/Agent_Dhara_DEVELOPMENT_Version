@@ -574,6 +574,11 @@ def validate_promoted_plan(
                     params["lower_bound"] = params["min_value"]
                 params.setdefault("min_value", 0.0)
 
+            if action in ("replace_values", "replace_sentinel_values") and "replace_values" not in params:
+                params["replace_values"] = ["N/A", "n/a", "NA", "na", "???", "unknown", "UNKNOWN",
+                                            "none", "None", "NULL", "null", "nan", "-", "--", "0",
+                                            "###", "TBD", "tbd"]
+
             req_params = meta.get("required_params") or []
             for rp in req_params:
                 if rp not in params:
