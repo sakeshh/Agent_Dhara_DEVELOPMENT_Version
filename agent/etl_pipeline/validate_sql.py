@@ -14,8 +14,14 @@ _DANGEROUS = [
 
 def _bracket_balance(source: str) -> List[str]:
     issues: List[str] = []
+    # Strip block comments, single-line comments, string literals, and bracketed identifiers
+    cleaned = re.sub(r"/\*[\s\S]*?\*/", "", source)
+    cleaned = re.sub(r"--[^\n]*", "", cleaned)
+    cleaned = re.sub(r"'(?:''|[^'])*'", "''", cleaned)
+    cleaned = re.sub(r"\[[^\]\n]*\]", "[]", cleaned)
+
     depth = 0
-    for ch in source:
+    for ch in cleaned:
         if ch == "(":
             depth += 1
         elif ch == ")":
@@ -23,8 +29,10 @@ def _bracket_balance(source: str) -> List[str]:
             if depth < 0:
                 issues.append("unbalanced parentheses")
                 break
-    if depth != 0:
+    if depth > 0:
         issues.append("unclosed parentheses")
+    elif depth < 0 and "unbalanced parentheses" not in issues:
+        issues.append("unbalanced parentheses")
     return issues
 
 

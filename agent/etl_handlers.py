@@ -1160,6 +1160,11 @@ def _generate_for_engine(
         from agent.etl_pipeline.validate_sql import validate_sql_basic
 
         dialect = "ansi" if eng == "ansi" else (sql_dialect or "tsql")
+
+        def validate_fn_sql(source: str, never_drop_rows: bool = False):
+            ok, hard_errors, warnings = validate_sql_basic(source)
+            return ok, hard_errors, warnings
+
         coro = generate_etl_with_llm(
             plan,
             assess,
@@ -1167,6 +1172,7 @@ def _generate_for_engine(
             sql_dialect=dialect,
             output_mode=output_mode,
             validation_errors=inject_errors,
+            validate_fn=validate_fn_sql,
         )
         code, err = run_codegen_sync(coro)
         if err:
