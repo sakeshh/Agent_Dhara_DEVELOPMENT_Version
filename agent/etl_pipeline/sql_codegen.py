@@ -352,6 +352,47 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
                 f"OR TRY_CAST({expr} AS FLOAT) IN (999, -999, 999999, 9999999, -9999, 99999) "
                 f"THEN NULL ELSE {expr} END"
             )
+        elif action in ("fill_nulls_simple", "fill_or_drop"):
+            # ✅ CRITICAL FIX: Implement fill null logic
+            params = st.get("params") or {}
+            evidence = st.get("evidence") or {}
+            fill_val = params.get("fill_value") or evidence.get("recommended_fill")
+
+            # Try to get statistical fill values
+            if fill_val == "median" or (not fill_val and evidence.get("median") is not None):
+                fill_val = evidence.get("median")
+            elif fill_val == "mean" or (not fill_val and evidence.get("mean") is not None and not evidence.get("median")):
+                fill_val = evidence.get("mean")
+
+            if fill_val is not None and str(fill_val).replace(".", "").replace("-", "").isdigit():
+                # Numeric fill value
+                expr = f"COALESCE({expr}, {fill_val})"
+            elif fill_val is not None:
+                # String fill value
+                fill_str = str(fill_val).replace("'", "''")
+                expr = f"COALESCE({expr}, N'{fill_str}')"
+            else:
+                # Fallback: fill with type-appropriate default
+                if _is_numeric_column(col_name, col_meta):
+                    expr = f"COALESCE({expr}, 0)"
+                else:
+                    expr = f"COALESCE({expr}, N'unknown')"
+        elif action == "cast_type":
+            # ✅ CRITICAL FIX: Implement type casting
+            params = st.get("params") or {}
+            target_type = params.get("target_type") or col_meta.get("target_dtype")
+            if not target_type:
+                # Infer target type from semantic type
+                semantic = col_meta.get("semantic_type") or ""
+                if "date" in semantic.lower() or "time" in semantic.lower():
+                    target_type = "DATE"
+                elif "int" in semantic.lower() or "id" in col_name.lower():
+                    target_type = "BIGINT"
+                elif "float" in semantic.lower() or "decimal" in semantic.lower():
+                    target_type = "DECIMAL(18, 2)"
+                else:
+                    target_type = "NVARCHAR(256)"
+            expr = f"TRY_CAST({expr} AS {target_type})"
         elif action == "coerce_numeric":
             is_decimal = False
             col_lower = col_name.lower()
@@ -388,19 +429,26 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
             cval = str(params.get("constant_value", params.get("fill_value", "unknown"))).replace("'", "''")
             expr = f"COALESCE({expr}, N'{cval}')"
         elif action in (
-            "noop", "keep_as_is", "fill_nulls_simple", "fill_or_drop", "cast_type",
+            # Actions that are handled at row-level or table-level, not column expression level
             "deduplicate", "flag_business_key_duplicate", "flag_duplicate_candidates",
             "flag_near_duplicate_cluster", "validate_referential_integrity_or_stage",
             "at_least_one", "validate_and_partition_relationship", "drop_column", "exclude_column",
+            "join_datasets", "drop_rows",
+            # Flag-only actions (add flag columns, not transform values)
             "preserve_null_and_flag", "preserve_and_flag", "preserve_null",
             "preserve_missing_suspected_key", "accept_null_as_optional",
             "fill_nulls_flag", "flag_only", "nullify_clean_value",
             "flag_missing_key", "flag_missing_declared_key", "flag_domain_violation",
             "flag_range_violation", "flag_cross_field_violation", "flag_high_null_key",
+            # Quarantine actions (handled at row routing level)
             "quarantine_row", "quarantine_null_rows", "quarantine_missing_key",
-            "quarantine_orphan_fk", "quarantine_key_null", "drop_rows",
+            "quarantine_orphan_fk", "quarantine_key_null",
+            # Imputation actions (TODO: implement statistical imputation)
             "impute_numeric", "impute_date", "create_normalized_match_key",
-            "skip_etl", "skip_requirement", "review_manually", "force_unlock", "join_datasets",
+            # Administrative actions
+            "skip_etl", "skip_requirement", "review_manually", "force_unlock",
+            # True no-ops
+            "noop", "keep_as_is",
         ):
             pass
         else:

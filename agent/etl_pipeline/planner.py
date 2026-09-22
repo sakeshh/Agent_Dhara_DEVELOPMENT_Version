@@ -1153,6 +1153,20 @@ class PlanBuilder:
             st["order"] = i
 
         for ds_name, steps in datasets_out.items():
+            # ✅ CRITICAL FIX: Supplement steps with DQ issues from assessment BEFORE finalization
+            # This ensures ALL assessment findings are translated to plan steps at planning time
+            from agent.etl_pipeline.sql_codegen import _supplement_steps_with_dq_issues
+            ds_info = (assessment.get("datasets") or {}).get(ds_name) or {}
+            if not ds_info:
+                ds_clean = ds_name.replace("dbo.", "").strip()
+                ds_info = (assessment.get("datasets") or {}).get(ds_clean) or {}
+            cols_info = ds_info.get("columns") or {}
+            known_cols = set(c.strip("[]").lower() for c in cols_info.keys())
+
+            # Ensure plan dictionary exists before passing to _supplement
+            temp_plan = {"datasets": datasets_out, "manual_review": manual_review}
+            steps = _supplement_steps_with_dq_issues(steps, ds_name, assessment, temp_plan, known_cols=known_cols)
+
             # Deduplicate steps using merge_steps if any duplicate identities still exist
             step_identity_map = {}
             for st in steps:
