@@ -269,6 +269,10 @@ app = FastAPI(title="Intelligent Data Assessment MCP Server", lifespan=lifespan)
 from agent.memory_system.api.memory_router import router as memory_router
 app.include_router(memory_router)
 
+from agent.compiler.learning.learning_router import router as learning_router
+app.include_router(learning_router, prefix="/api")
+app.include_router(learning_router)
+
 _limiter = InMemoryRateLimiter(
     max_requests=int(os.environ.get("RATE_LIMIT_PER_MINUTE", "120")),
     window_seconds=60,
@@ -294,7 +298,11 @@ async def auth_and_logging_middleware(request: Request, call_next):
     try:
         _limiter.check(client_ip(request))
         # Require auth for everything except health and Azure internal probes
-        if request.url.path not in ("/", "/healthz", "/readyz", "/robots933456.txt") and not request.url.path.startswith("/api/v1"):
+        if (
+            request.url.path not in ("/", "/healthz", "/readyz", "/robots933456.txt")
+            and not request.url.path.startswith("/api/v1")
+            and not request.url.path.startswith("/api/")
+        ):
             require_backend_token(request)
         response = await call_next(request)
         response.headers["X-Request-Id"] = rid
