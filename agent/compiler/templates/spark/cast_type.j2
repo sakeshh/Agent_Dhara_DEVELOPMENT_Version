@@ -1,0 +1,4 @@
+# Step: {{ step_id }} ({{ description }})
+{% for col in columns %}
+df_clean = df_clean.withColumn("{{ col }}", F.col("{{ col }}").cast("{{ target_type | default('string') }}"))
+{% endfor %}

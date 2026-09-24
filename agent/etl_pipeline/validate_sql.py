@@ -338,8 +338,14 @@ def validate_sql_assembly(sql: str, execution_target: Optional[str] = None) -> T
         "' + @table_name",
         "@clean_table_name",
         "@target_table",
+        "@clean_table",
+        "@clean_suffix",
         "+ N'",
         "N' +",
+        "_Clean_]",
+        "_clean_]",
+        "_Clean_ ",
+        "_clean_ ",
     ]
     for fp in forbidden_patterns:
         if fp in sql:

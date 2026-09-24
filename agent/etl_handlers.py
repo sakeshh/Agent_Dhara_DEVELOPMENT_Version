@@ -1525,16 +1525,19 @@ def etl_generate_code(
     flow = ctx.setdefault("etl_flow", {})
     gen_mode = str(generation_mode or "full").lower()
     combined_code = code
+    current_plan_id = str(plan.get("plan_id") or "")
     if gen_mode == "cleanse_only":
         flow["code_cleanse"] = code
-        if "code_transform" in flow and flow["code_transform"]:
+        flow["code_cleanse_plan_id"] = current_plan_id
+        if "code_transform" in flow and flow["code_transform"] and flow.get("code_transform_plan_id") == current_plan_id:
             if eng in ("sql", "tsql", "ansi"):
                 combined_code = code + "\nGO\n\n" + flow["code_transform"]
             elif eng in ("python", "pyspark", "spark"):
                 combined_code = code
     elif gen_mode == "transform_only":
         flow["code_transform"] = code
-        if "code_cleanse" in flow and flow["code_cleanse"]:
+        flow["code_transform_plan_id"] = current_plan_id
+        if "code_cleanse" in flow and flow["code_cleanse"] and flow.get("code_cleanse_plan_id") == current_plan_id:
             if eng in ("sql", "tsql", "ansi"):
                 combined_code = flow["code_cleanse"] + "\nGO\n\n" + code
             elif eng in ("python", "pyspark", "spark"):
@@ -1544,7 +1547,9 @@ def etl_generate_code(
         # cleanse and clear transform so that /etl/update-code recombination
         # does not accidentally concatenate two complete scripts.
         flow["code_cleanse"] = code
+        flow["code_cleanse_plan_id"] = current_plan_id
         flow.pop("code_transform", None)
+        flow.pop("code_transform_plan_id", None)
 
     ext_map = {
         "python": "py",

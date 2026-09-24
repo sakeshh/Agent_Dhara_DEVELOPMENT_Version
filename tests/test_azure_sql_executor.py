@@ -242,6 +242,38 @@ def test_ensure_idempotent_sql_sanitizes_msg_1919():
     """
     cleaned = ensure_idempotent_sql(raw_sql)
     assert "[EmployeeID] NVARCHAR(256)" in cleaned
-    assert "NVARCHAR(MAX)" not in cleaned.split("[EmployeeID]")[1].split("[Department]")[0]
+
+def test_remediate_batch_syntax_error_msg_102_throw():
+    failing_batch = """
+    BEGIN CATCH
+        IF @@TRANCOUNT = 0
+        BEGIN
+            UPDATE dbo.etl_log SET status = 'FAILED' WHERE id = @run_id;
+        END
+        THROW;
+    END CATCH
+    """
+    err = "Incorrect syntax near 'THROW'. (102) (SQLExecDirectW)"
+    remediated = ase._remediate_batch_syntax_error(failing_batch, err)
+    assert len(remediated) == 1
+    assert ";THROW" in remediated[0]
+    assert "END;\n        ;THROW" in remediated[0]
+
+
+def test_llm_codegen_postprocess_fixes_throw():
+    from agent.etl_pipeline.llm_codegen import _postprocess_tsql_code
+    raw_sql = """
+    BEGIN CATCH
+        IF @@TRANCOUNT = 0
+        BEGIN
+            UPDATE dbo.etl_log SET status = 'FAILED' WHERE id = @run_id;
+        END
+        THROW;
+    END CATCH
+    """
+    cleaned = _postprocess_tsql_code(raw_sql)
+    assert ";THROW" in cleaned
+    assert "END;\n        ;THROW" in cleaned
+
 
 

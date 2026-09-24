@@ -304,6 +304,13 @@ def _remediate_batch_syntax_error(batch_sql: str, error_msg: str) -> list[str]:
         if cleaned != batch_sql:
             return [cleaned]
 
+    # Remediation I: Msg 102 - Incorrect syntax near 'THROW' (requires preceding semicolon)
+    if "102" in err_low and ("throw" in err_low or "syntax near 'throw'" in err_low):
+        cleaned = re.sub(r"\bEND\s*\n\s*;?\s*THROW\b", "END;\n        ;THROW", batch_sql, flags=re.IGNORECASE)
+        cleaned = re.sub(r"(?<!;)\bTHROW\b", ";THROW", cleaned, flags=re.IGNORECASE)
+        if cleaned != batch_sql:
+            return [cleaned]
+
     # Remediation F: Msg 1919 - Column in index is invalid type (NVARCHAR(MAX) / VARCHAR(MAX))
     if "1919" in err_low or "invalid for use as a key column in an index" in err_low:
         cleaned = batch_sql
@@ -566,9 +573,12 @@ def run_transactional_sql(
 
             # Sanitize any #s_Staging alias corruptions and logger.info calls
             batch_sql = re.sub(r"\bUPDATE\s+#([a-zA-Z])_Staging\s+SET\b", r"UPDATE \1 SET", batch_sql, flags=re.IGNORECASE)
-            batch_sql = re.sub(r"\bUPDATE\s+#s_Staging\s+SET\b", r"UPDATE s SET", batch_sql, flags=re.IGNORECASE)
             batch_sql = re.sub(r"^\s*logger\.(?:info|warning|error|debug)\([^;\n]*\);?\s*$", "", batch_sql, flags=re.MULTILINE | re.IGNORECASE)
             batch_sql = re.sub(r"\blogger\.(?:info|warning|error|debug)\([^;]*\);?", "", batch_sql, flags=re.IGNORECASE)
+
+            # Proactively ensure THROW has a preceding semicolon (Msg 102 prevention)
+            batch_sql = re.sub(r"\bEND\s*\n\s*;?\s*THROW\b", "END;\n        ;THROW", batch_sql, flags=re.IGNORECASE)
+            batch_sql = re.sub(r"(?<!;)\bTHROW\b", ";THROW", batch_sql, flags=re.IGNORECASE)
 
             # Proactively sanitize Msg 1919 (NVARCHAR(MAX) on primary key columns)
             if re.search(r"\bPRIMARY\s+KEY\b", batch_sql, re.IGNORECASE) and re.search(r"\(MAX\)", batch_sql, re.IGNORECASE):

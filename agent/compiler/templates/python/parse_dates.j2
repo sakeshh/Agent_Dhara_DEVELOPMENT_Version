@@ -1,0 +1,5 @@
+# Step: {{ step_id }} ({{ description }})
+{% for col in columns %}
+if "{{ col }}" in df_clean.columns:
+    df_clean["{{ col }}"] = pd.to_datetime(df_clean["{{ col }}"], errors="coerce", format={{ date_format | default(None) | tojson }})
+{% endfor %}

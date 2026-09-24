@@ -1,0 +1,4 @@
+# Step: {{ step_id }} ({{ description }})
+{% for col in columns %}
+df_clean = df_clean.withColumn("{{ col }}", F.when((F.col("{{ col }}") == 0) | (F.col("{{ col }}") == "0") | (F.col("{{ col }}") == ""), F.lit(None)).otherwise(F.col("{{ col }}")))
+{% endfor %}

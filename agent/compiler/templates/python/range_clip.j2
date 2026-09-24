@@ -1,0 +1,12 @@
+# Step: {{ step_id }} ({{ description }})
+{% for col in columns %}
+if "{{ col }}" in df_clean.columns:
+    df_clean["{{ col }}"] = pd.to_numeric(df_clean["{{ col }}"], errors="coerce")
+    {% if min_value is defined and max_value is defined %}
+    df_clean["{{ col }}"] = df_clean["{{ col }}"].clip(lower={{ min_value }}, upper={{ max_value }})
+    {% elif min_value is defined %}
+    df_clean["{{ col }}"] = df_clean["{{ col }}"].clip(lower={{ min_value }})
+    {% elif max_value is defined %}
+    df_clean["{{ col }}"] = df_clean["{{ col }}"].clip(upper={{ max_value }})
+    {% endif %}
+{% endfor %}

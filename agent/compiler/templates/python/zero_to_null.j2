@@ -1,0 +1,5 @@
+# Step: {{ step_id }} ({{ description }})
+{% for col in columns %}
+if "{{ col }}" in df_clean.columns:
+    df_clean["{{ col }}"] = df_clean["{{ col }}"].replace({0: np.nan, "0": np.nan, "": np.nan})
+{% endfor %}

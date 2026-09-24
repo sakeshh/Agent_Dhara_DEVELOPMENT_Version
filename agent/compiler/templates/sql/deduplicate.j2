@@ -1,0 +1,18 @@
+-- Step: {{ step_id }} ({{ description }})
+WITH [DedupCTE] AS (
+    SELECT *,
+           ROW_NUMBER() OVER (
+               PARTITION BY {% for col in columns %}[{{ col }}]{% if not loop.last %}, {% endif %}{% endfor %}
+               ORDER BY (SELECT NULL)
+           ) AS [__RowNumber]
+    FROM [dbo].[{{ dataset_name }}_Staging]
+)
+{% if never_drop_rows %}
+-- Quarantine duplicate rows to Rejection_Log
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
+SELECT '{{ pipeline_id | default("adhoc") }}', '{{ dataset_name }}', 'Duplicate record', (SELECT * FROM [DedupCTE] c WHERE c.[__RowNumber] > 1 FOR JSON PATH);
+
+DELETE FROM [DedupCTE] WHERE [__RowNumber] > 1;
+{% else %}
+DELETE FROM [DedupCTE] WHERE [__RowNumber] > 1;
+{% endif %}

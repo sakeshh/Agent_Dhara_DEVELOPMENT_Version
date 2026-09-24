@@ -1,0 +1,6 @@
+# Step: {{ step_id }} ({{ description }})
+{% if columns %}
+df_clean = df_clean.dropDuplicates(subset={{ columns | tojson }})
+{% else %}
+df_clean = df_clean.dropDuplicates()
+{% endif %}

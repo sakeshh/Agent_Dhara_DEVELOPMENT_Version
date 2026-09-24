@@ -1,0 +1,10 @@
+# Step: {{ step_id }} ({{ description }})
+{% for col in columns %}
+{% if min_value is defined and max_value is defined %}
+df_clean = df_clean.withColumn("{{ col }}", F.when(F.col("{{ col }}") < {{ min_value }}, {{ min_value }}).when(F.col("{{ col }}") > {{ max_value }}, {{ max_value }}).otherwise(F.col("{{ col }}")))
+{% elif min_value is defined %}
+df_clean = df_clean.withColumn("{{ col }}", F.when(F.col("{{ col }}") < {{ min_value }}, {{ min_value }}).otherwise(F.col("{{ col }}")))
+{% elif max_value is defined %}
+df_clean = df_clean.withColumn("{{ col }}", F.when(F.col("{{ col }}") > {{ max_value }}, {{ max_value }}).otherwise(F.col("{{ col }}")))
+{% endif %}
+{% endfor %}

@@ -1,0 +1,13 @@
+# Step: {{ step_id }} ({{ description }})
+# Referential Integrity check with broadcast join
+{% if parent_dataset and parent_key and child_key %}
+if "{{ parent_dataset }}" in data_sources:
+    parent_df = data_sources["{{ parent_dataset }}"].select(F.col("{{ parent_key }}").alias("__parent_key")).distinct()
+    joined = df_clean.join(F.broadcast(parent_df), df_clean["{{ child_key }}"] == F.col("__parent_key"), "left")
+    quarantine_df = joined.filter(F.col("__parent_key").isNull() & df_clean["{{ child_key }}"].isNotNull()).drop("__parent_key")
+    {% if not never_drop_rows %}
+    df_clean = joined.filter(F.col("__parent_key").isNotNull()).drop("__parent_key")
+    {% else %}
+    df_clean = joined.drop("__parent_key")
+    {% endif %}
+{% endif %}

@@ -924,6 +924,49 @@ def test_validate_sql_basic_catches_procname_and_undeclared_columns():
     assert any("FakeCol_validation_status" in err for err in hard_errs)
 
 
+def test_postprocess_tsql_sanitizes_dynamic_clean_table_and_suffix():
+    from agent.etl_pipeline.llm_codegen import _postprocess_tsql_code
+
+    raw_sql = """
+DECLARE @clean_suffix VARCHAR(15) = CONVERT(VARCHAR(8), GETDATE(), 112) + '_' + REPLACE(CONVERT(VARCHAR(8), GETDATE(), 108), ':', '');
+DECLARE @clean_table SYSNAME = QUOTENAME('cleanedTables') + '.' + QUOTENAME('TrainingCourseMaster_Clean_' + @clean_suffix);
+
+IF OBJECT_ID(@clean_table, 'U') IS NULL
+BEGIN
+    DECLARE @ddl NVARCHAR(MAX) = N'
+    CREATE TABLE ' + @clean_table + N' (
+        [CourseID] NVARCHAR(MAX) NULL,
+        [etl_batch_id] BIGINT NOT NULL
+    );';
+    EXEC sys.sp_executesql @ddl;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_TrainingCourseMaster_Clean_Batch' AND object_id = OBJECT_ID(@clean_table))
+BEGIN
+    DECLARE @idx NVARCHAR(MAX) = N'CREATE NONCLUSTERED INDEX IX_TrainingCourseMaster_Clean_Batch ON ' + @clean_table + N' ([etl_batch_id]);';
+    EXEC sys.sp_executesql @idx;
+END
+GO
+
+BEGIN TRY
+    INSERT INTO [cleanedTables].[TrainingCourseMaster_Clean_] (CourseID, etl_batch_id)
+    SELECT src.CourseID, 1 FROM dbo.TrainingCourseMaster src;
+END TRY
+BEGIN CATCH
+    THROW;
+END CATCH;
+"""
+    processed = _postprocess_tsql_code(raw_sql)
+    assert "@clean_table" not in processed
+    assert "@clean_suffix" not in processed
+    assert "sys.sp_executesql" not in processed
+    assert "CREATE TABLE [cleanedTables].[TrainingCourseMaster_Clean]" in processed
+    assert "CREATE NONCLUSTERED INDEX IX_TrainingCourseMaster_Clean_Batch ON [cleanedTables].[TrainingCourseMaster_Clean]" in processed
+    assert "INSERT INTO [cleanedTables].[TrainingCourseMaster_Clean]" in processed
+
+
+
 
 
 

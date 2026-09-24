@@ -1,0 +1,7 @@
+-- Step: {{ step_id }} ({{ description }})
+UPDATE [dbo].[{{ dataset_name }}_Staging]
+SET
+{% for col in columns %}
+    [{{ col }}] = TRY_CONVERT(DATETIME2, [{{ col }}]){% if not loop.last %},{% endif %}
+{% endfor %}
+;

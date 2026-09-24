@@ -1,0 +1,8 @@
+# Step: {{ step_id }} ({{ description }})
+{% for col in columns %}
+{% if date_format %}
+df_clean = df_clean.withColumn("{{ col }}", F.to_date(F.col("{{ col }}"), "{{ date_format }}"))
+{% else %}
+df_clean = df_clean.withColumn("{{ col }}", F.to_date(F.col("{{ col }}")))
+{% endif %}
+{% endfor %}

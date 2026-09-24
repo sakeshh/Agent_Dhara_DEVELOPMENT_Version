@@ -995,6 +995,43 @@ def _postprocess_tsql_code(code: str) -> str:
         ansi_prefix += "SET QUOTED_IDENTIFIER ON;\n"
     if ansi_prefix:
         code = ansi_prefix + "GO\n\n" + code
+
+    # 0b. Sanitize dynamic @clean_table / @clean_suffix DDL patterns into static clean tables
+    if "@clean_table" in code or "@clean_suffix" in code:
+        tbl_match = re.search(r"QUOTENAME\s*\(\s*'([a-zA-Z0-9_]+?)(?:_Clean)?_?'\s*\+\s*@clean_suffix", code, re.IGNORECASE)
+        if not tbl_match:
+            tbl_match = re.search(r"\+\s*QUOTENAME\s*\(\s*'([a-zA-Z0-9_]+?)(?:_Clean)?(?:_?'\s*\+\s*@clean_suffix|\s*')\s*\)", code, re.IGNORECASE)
+        if not tbl_match:
+            tbl_match = re.search(r"IX_([a-zA-Z0-9_]+?)_Clean", code, re.IGNORECASE)
+
+        base_tbl = tbl_match.group(1).replace("_Clean", "") if tbl_match else "Dataset"
+        static_clean_tbl = f"[cleanedTables].[{base_tbl}_Clean]"
+        static_obj_id = f"cleanedTables.{base_tbl}_Clean"
+
+        # Remove DECLARE @clean_suffix / DECLARE @clean_table lines
+        code = re.sub(r"DECLARE\s+@clean_suffix\s+[^;]+;\s*", "", code, flags=re.IGNORECASE)
+        code = re.sub(r"DECLARE\s+@clean_table\s+[^;]+;\s*", "", code, flags=re.IGNORECASE)
+
+        # Replace dynamic CREATE TABLE DDL block with static DDL block
+        code = re.sub(
+            r"IF\s+OBJECT_ID\s*\(\s*@clean_table\s*,\s*'U'\s*\)\s*IS\s+NULL\s*BEGIN\s*DECLARE\s+@ddl\s+NVARCHAR\(MAX\)\s*=\s*N'[\s\n]*CREATE\s+TABLE\s+'\s*\+\s*@clean_table\s*\+\s*N'\s*\(([\s\S]+?)\)\s*;?'\s*;\s*EXEC\s+(?:sys\.)?sp_executesql\s+@ddl\s*;\s*END;?",
+            rf"IF OBJECT_ID('{static_obj_id}', 'U') IS NULL\nBEGIN\n    CREATE TABLE {static_clean_tbl} (\1);\nEND;",
+            code,
+            flags=re.IGNORECASE
+        )
+        # Replace dynamic index block with static index block
+        code = re.sub(
+            r"IF\s+NOT\s+EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+sys\.indexes\s+WHERE\s+name\s*=\s*'([^']+)'\s+AND\s+object_id\s*=\s*OBJECT_ID\s*\(\s*@clean_table\s*\)\s*\)\s*BEGIN\s*DECLARE\s+@idx\s+NVARCHAR\(MAX\)\s*=\s*N'[\s\n]*CREATE\s+NONCLUSTERED\s+INDEX\s+\w+\s+ON\s+'\s*\+\s*@clean_table\s*\+\s*N'\s*\(([^)]+)\)\s*;?'\s*;\s*EXEC\s+(?:sys\.)?sp_executesql\s+@idx\s*;\s*END;?",
+            rf"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = '\1' AND object_id = OBJECT_ID('{static_obj_id}'))\nBEGIN\n    CREATE NONCLUSTERED INDEX \1 ON {static_clean_tbl} (\2);\nEND;",
+            code,
+            flags=re.IGNORECASE
+        )
+        # Replace any residual @clean_table with static_clean_tbl
+        code = code.replace("@clean_table", static_clean_tbl)
+        # Replace any incomplete table name in INSERT INTO like [cleanedTables].[TableName_Clean_] -> static_clean_tbl
+        code = re.sub(rf"\[?cleanedTables\]?\.\[?{re.escape(base_tbl)}_Clean_\]?", static_clean_tbl, code, flags=re.IGNORECASE)
+        code = re.sub(rf"\[?cleanedTables\]?\.\[?{re.escape(base_tbl)}_Clean_\s*", static_clean_tbl + " ", code, flags=re.IGNORECASE)
+
     try_match = re.search(r"\bBEGIN\s+TRY\b", code, re.IGNORECASE)
     if try_match:
         post_try = code[try_match.end():]
@@ -1179,9 +1216,12 @@ def _postprocess_tsql_code(code: str) -> str:
     )
     # Sanitize any double staging temporary table references or corrupted single-letter staging tables
     code = re.sub(r"#([a-zA-Z0-9_]+?)_Staging_Staging\b", r"#\1_Staging", code, flags=re.IGNORECASE)
-    code = re.sub(r"#([a-zA-Z0-9_]+?)_staging_staging\b", r"#\1_Staging", code, flags=re.IGNORECASE)
     code = re.sub(r"\bUPDATE\s+#([a-zA-Z])_Staging\s+SET\b", r"UPDATE \1 SET", code, flags=re.IGNORECASE)
     code = re.sub(r"\bUPDATE\s+#s_Staging\s+SET\b", r"UPDATE s SET", code, flags=re.IGNORECASE)
+
+    # Ensure THROW statement is preceded by semicolon (T-SQL Msg 102: Incorrect syntax near 'THROW')
+    code = re.sub(r"\bEND\s*\n\s*;?\s*THROW\b", "END;\n        ;THROW", code, flags=re.IGNORECASE)
+    code = re.sub(r"(?<!;)\bTHROW\b", ";THROW", code, flags=re.IGNORECASE)
 
     # 2d. Fix pseudo-column [Row-level] / [row-level] anywhere in the script
     code = re.sub(
@@ -2110,9 +2150,10 @@ T-SQL REQUIREMENTS:
 - SCRIPT STRUCTURE & IDEMPOTENT DDL (CRITICAL FOR RUNTIME COMPILATION):
   1. ALL table DDL statements MUST be executed FIRST at the top, BEFORE execution or stored procedure bodies:
      - Infrastructure tables: `dbo.etl_log`, `dbo.etl_rejects`, `dbo.etl_watermark`.
-     - Target clean tables: ALWAYS include the timestamp suffix in the clean table name: `cleanedTables.<Table>_Clean_<timestamp>` (e.g. `cleanedTables.<Table>_Clean_20260921_123000` formatted with date and time YYYYMMDD_HHMMSS) in the `cleanedTables` schema so multiple executions do not overlap or error. Ensure `IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'cleanedTables') EXEC('CREATE SCHEMA cleanedTables');` is executed before clean table DDL.
-     - Tables: `IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TableName' AND schema_id = SCHEMA_ID('cleanedTables')) CREATE TABLE cleanedTables.TableName (...);`
-     - Indexes: `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IndexName' AND object_id = OBJECT_ID('cleanedTables.TableName')) CREATE NONCLUSTERED INDEX IndexName ON cleanedTables.TableName (...);`
+     - Target clean tables: ALWAYS use static table names in the `cleanedTables` schema: `[cleanedTables].[<Table>_Clean]`. Ensure `IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'cleanedTables') EXEC('CREATE SCHEMA cleanedTables');` is executed before clean table DDL.
+     - Tables: `IF OBJECT_ID('cleanedTables.<TableName>_Clean', 'U') IS NULL CREATE TABLE [cleanedTables].[<TableName>_Clean] (...);`
+     - Indexes: `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_<TableName>_Clean_Batch' AND object_id = OBJECT_ID('cleanedTables.<TableName>_Clean')) CREATE NONCLUSTERED INDEX IX_<TableName>_Clean_Batch ON [cleanedTables].[<TableName>_Clean] ([etl_batch_id]);`
+     - NEVER declare or use dynamic runtime SQL variables (like `@clean_table`, `@clean_suffix`, or `sys.sp_executesql`) for DDL. `CREATE TABLE`, `CREATE INDEX`, and `INSERT INTO` MUST all reference the EXACT SAME static table identifier `[cleanedTables].[<TableName>_Clean]`.
      - If writing a Stored Procedure: `CREATE OR ALTER PROCEDURE dbo.etl_clean_<TableName> AS BEGIN ... END; GO`.
        CRITICAL: The procedure MUST close with `END;` on its own line, followed by `GO`, and MUST immediately be followed by an auto-execution call:
        `EXEC dbo.etl_clean_<TableName>; GO`
@@ -2123,9 +2164,9 @@ T-SQL REQUIREMENTS:
 - MULTI-DATASET ISOLATION (CRITICAL FOR MULTI-TABLE PLANS):
   When a plan includes multiple tables/datasets:
   1. Process each table/dataset in its own isolated block with its own dedicated staging table: `#<Table>_Staging`.
-  2. For each table, create `#<Table>_Staging`, run ONLY that table's column validation updates, and execute its `INSERT INTO cleanedTables.<Table>_Clean`.
+  2. For each table, create `#<Table>_Staging`, run ONLY that table's column validation updates, and execute its `INSERT INTO [cleanedTables].[<Table>_Clean]`.
   3. NEVER execute an UPDATE or rule for Table B against `#TableA_Staging`!
-  2. ABSOLUTE FORBIDDEN: NEVER output `GO` inside `BEGIN TRY ... END TRY`, inside `BEGIN CATCH ... END CATCH`, or inside procedure execution bodies:
+  4. ABSOLUTE FORBIDDEN: NEVER output `GO` inside `BEGIN TRY ... END TRY`, inside `BEGIN CATCH ... END CATCH`, or inside procedure execution bodies:
      Once an execution block begins (`SET NOCOUNT ON; SET XACT_ABORT ON; DECLARE @run_id INT; BEGIN TRY...`), NEVER emit `GO` inside the TRY or CATCH blocks!
      In T-SQL, `GO` ends the batch and destroys local variables like `@run_id`, causing fatal compilation errors (`Must declare the scalar variable "@run_id"`).
 - STRICTLY IMMUTABLE SOURCE TABLES (CRITICAL):

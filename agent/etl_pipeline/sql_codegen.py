@@ -842,7 +842,13 @@ def _check_forbidden_generator_tokens(sql: str) -> None:
         "' + @table_name",
         "@clean_table_name",
         "@target_table",
+        "@clean_table",
+        "@clean_suffix",
         "+ N'",
+        "_Clean_]",
+        "_clean_]",
+        "_Clean_ ",
+        "_clean_ ",
     ]
     detected = [p for p in forbidden_patterns if p in sql]
     if detected:

@@ -1,0 +1,15 @@
+# Step: {{ step_id }} ({{ description }})
+{% for col in columns %}
+if "{{ col }}" in df_clean.columns:
+    {% if target_type == "int" or target_type == "integer" %}
+    df_clean["{{ col }}"] = pd.to_numeric(df_clean["{{ col }}"], errors="coerce").astype("Int64")
+    {% elif target_type == "float" or target_type == "numeric" %}
+    df_clean["{{ col }}"] = pd.to_numeric(df_clean["{{ col }}"], errors="coerce")
+    {% elif target_type == "str" or target_type == "string" %}
+    df_clean["{{ col }}"] = df_clean["{{ col }}"].astype(str)
+    {% elif target_type == "bool" or target_type == "boolean" %}
+    df_clean["{{ col }}"] = df_clean["{{ col }}"].astype(bool)
+    {% else %}
+    df_clean["{{ col }}"] = df_clean["{{ col }}"].astype("{{ target_type | default('string') }}")
+    {% endif %}
+{% endfor %}

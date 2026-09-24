@@ -1,0 +1,19 @@
+-- Step: {{ step_id }} ({{ description }})
+-- Referential Integrity check: [{{ dataset_name }}].[{{ child_key }}] -> [{{ parent_dataset }}].[{{ parent_key }}]
+{% if parent_dataset and parent_key and child_key %}
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
+SELECT '{{ pipeline_id | default("adhoc") }}', '{{ dataset_name }}', 'Orphan foreign key in {{ child_key }}', (
+    SELECT c.*
+    FROM [dbo].[{{ dataset_name }}_Staging] c
+    LEFT JOIN [dbo].[{{ parent_dataset }}] p ON c.[{{ child_key }}] = p.[{{ parent_key }}]
+    WHERE p.[{{ parent_key }}] IS NULL AND c.[{{ child_key }}] IS NOT NULL
+    FOR JSON PATH
+);
+
+{% if not never_drop_rows %}
+DELETE c
+FROM [dbo].[{{ dataset_name }}_Staging] c
+LEFT JOIN [dbo].[{{ parent_dataset }}] p ON c.[{{ child_key }}] = p.[{{ parent_key }}]
+WHERE p.[{{ parent_key }}] IS NULL AND c.[{{ child_key }}] IS NOT NULL;
+{% endif %}
+{% endif %}

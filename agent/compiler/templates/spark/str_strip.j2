@@ -1,0 +1,10 @@
+# Step: {{ step_id }} ({{ description }})
+{% for col in columns %}
+{% if "lowercase" in fused_operations %}
+df_clean = df_clean.withColumn("{{ col }}", F.lower(F.trim(F.col("{{ col }}"))))
+{% elif "uppercase" in fused_operations %}
+df_clean = df_clean.withColumn("{{ col }}", F.upper(F.trim(F.col("{{ col }}"))))
+{% else %}
+df_clean = df_clean.withColumn("{{ col }}", F.trim(F.col("{{ col }}")))
+{% endif %}
+{% endfor %}

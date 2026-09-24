@@ -1,0 +1,8 @@
+# Step: {{ step_id }} ({{ description }})
+{% for col in columns %}
+{% if "trim" in fused_operations %}
+df_clean = df_clean.withColumn("{{ col }}", F.lower(F.trim(F.col("{{ col }}"))))
+{% else %}
+df_clean = df_clean.withColumn("{{ col }}", F.lower(F.col("{{ col }}")))
+{% endif %}
+{% endfor %}

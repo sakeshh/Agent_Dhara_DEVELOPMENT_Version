@@ -1,0 +1,6 @@
+# Step: {{ step_id }} ({{ description }})
+df_clean = df_clean.fillna({
+{% for col in columns %}
+    "{{ col }}": {{ fill_value | default('""') | tojson }}{% if not loop.last %},{% endif %}
+{% endfor %}
+})

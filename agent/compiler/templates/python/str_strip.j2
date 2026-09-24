@@ -1,0 +1,11 @@
+# Step: {{ step_id }} ({{ description }})
+{% for col in columns %}
+if "{{ col }}" in df_clean.columns:
+    {% if "lowercase" in fused_operations %}
+    df_clean["{{ col }}"] = df_clean["{{ col }}"].astype(str).str.strip().str.lower()
+    {% elif "uppercase" in fused_operations %}
+    df_clean["{{ col }}"] = df_clean["{{ col }}"].astype(str).str.strip().str.upper()
+    {% else %}
+    df_clean["{{ col }}"] = df_clean["{{ col }}"].astype(str).str.strip()
+    {% endif %}
+{% endfor %}

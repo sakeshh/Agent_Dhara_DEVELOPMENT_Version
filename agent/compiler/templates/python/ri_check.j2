@@ -1,0 +1,11 @@
+# Step: {{ step_id }} ({{ description }})
+# Referential Integrity check
+{% if parent_dataset and parent_key and child_key %}
+if "{{ parent_dataset }}" in data_sources and "{{ child_key }}" in df_clean.columns:
+    parent_keys = set(data_sources["{{ parent_dataset }}"]["{{ parent_key }}"].dropna())
+    valid_mask = df_clean["{{ child_key }}"].isin(parent_keys)
+    quarantine_df = df_clean[~valid_mask].copy()
+    {% if not never_drop_rows %}
+    df_clean = df_clean[valid_mask].copy()
+    {% endif %}
+{% endif %}

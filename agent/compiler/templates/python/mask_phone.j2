@@ -1,0 +1,5 @@
+# Step: {{ step_id }} ({{ description }})
+{% for col in columns %}
+if "{{ col }}" in df_clean.columns:
+    df_clean["{{ col }}"] = df_clean["{{ col }}"].astype(str).str.replace(r"\d(?=\d{4})", "*", regex=True)
+{% endfor %}
