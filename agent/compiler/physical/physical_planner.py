@@ -158,8 +158,14 @@ class PhysicalPlanner(BaseAgent):
                         sql_cond = f"[{col_name}] {op_str}"
                     else:
                         if (val_part.startswith("'") and val_part.endswith("'")) or (val_part.startswith('"') and val_part.endswith('"')):
-                            val_part = val_part[1:-1]
-                        sql_cond = f"[{col_name}] {op_str} {render_literal(val_part)}"
+                            val_to_render = val_part[1:-1]
+                        elif re.match(r"^-?\d+$", val_part):
+                            val_to_render = int(val_part)
+                        elif re.match(r"^-?\d+\.\d+$", val_part):
+                            val_to_render = float(val_part)
+                        else:
+                            val_to_render = val_part
+                        sql_cond = f"[{col_name}] {op_str} {render_literal(val_to_render)}"
                 else:
                     raise UnsupportedCapabilityError("Conditional update requires a valid condition.", engine="sql", action="conditional_update")
 

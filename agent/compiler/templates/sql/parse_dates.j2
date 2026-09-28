@@ -1,4 +1,5 @@
 -- Step: {{ step_id }} ({{ description }})
+{% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
 {% set d_type = target_type | default('DATETIME2') | upper %}
 {% if 'SMALLDATETIME' in d_type %}
     {% set min_bound = '1900-01-01' %}
@@ -15,7 +16,7 @@
 {% for col in columns %}
 INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData])
 SELECT @PipelineId, @RunId, '{{ dataset_name }}', '{{ issue_id | default("") }}', '{{ step_id }}', '{{ col }}', 'Date conversion failure: unable to parse [{{ col }}] as {{ d_type }}', 'REJECT', CAST([{{ col }}] AS NVARCHAR(MAX)), CAST([{{ col }}] AS NVARCHAR(MAX))
-FROM [dbo].[{{ dataset_name }}_Staging]
+FROM {{ target_table }}
 WHERE [{{ col }}] IS NOT NULL AND (
     TRY_CONVERT({{ d_type }}, [{{ col }}]) IS NULL
     OR TRY_CONVERT({{ d_type }}, [{{ col }}]) < '{{ min_bound }}'
@@ -33,7 +34,7 @@ END;
 {% endfor %}
 {% endif %}
 
-UPDATE [dbo].[{{ dataset_name }}_Staging]
+UPDATE {{ target_table }}
 SET
 {% for col in columns %}
     [{{ col }}] = CASE 
@@ -43,3 +44,4 @@ SET
     END{% if not loop.last %},{% endif %}
 {% endfor %}
 ;
+

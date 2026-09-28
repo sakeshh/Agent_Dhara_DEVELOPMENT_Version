@@ -1,6 +1,7 @@
 -- Step: {{ step_id }} ({{ description }})
+{% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
 {% set map_dict = mappings | default(mapping | default({})) %}
-UPDATE [dbo].[{{ dataset_name }}_Staging]
+UPDATE {{ target_table }}
 SET
 {% for col in columns %}
     [{{ col }}] = CASE 

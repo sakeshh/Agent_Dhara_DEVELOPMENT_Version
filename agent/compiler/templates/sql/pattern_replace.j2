@@ -1,5 +1,6 @@
 -- Step: {{ step_id }} ({{ description }})
-UPDATE [dbo].[{{ dataset_name }}_Staging]
+{% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
+UPDATE {{ target_table }}
 SET
 {% for col in columns %}
     [{{ col }}] = CASE 
@@ -8,3 +9,4 @@ SET
     END{% if not loop.last %},{% endif %}
 {% endfor %}
 ;
+

@@ -196,14 +196,21 @@ class SQLCodegenAgent(BaseCodegenAgent):
                     params["fill_character"] = params["pad_char"]
 
                 if "disposition" not in params:
-                    params["disposition"] = "CORRECT"
+                    action_val = str(getattr(step, "action_type", "") or getattr(step, "strategy_name", "")).lower()
+                    if any(k in action_val for k in ("email", "phone", "boolean")):
+                        params["disposition"] = "NULLIFY"
+                    else:
+                        params["disposition"] = "CORRECT"
 
                 if "target_column" not in params and step.target_columns:
                     params["target_column"] = step.target_columns[0]
 
                 # 1. Parameter contract validation
-                required_params = STRATEGY_PARAMETER_CONTRACTS.get(step.strategy_name, set())
+                required_params = set(STRATEGY_PARAMETER_CONTRACTS.get(step.strategy_name, set()))
                 missing_params = required_params - set(params.keys())
+                if step.strategy_name in ("clip_min_max", "tsql_case_when_clip"):
+                    if "min_value" not in params and "max_value" not in params:
+                        missing_params.add("min_value or max_value")
                 if missing_params:
                     err_msg = f"Missing required parameter(s) for strategy {step.strategy_name}: {sorted(missing_params)}"
                     logger.error("[SQLCodegenAgent] %s (step=%s)", err_msg, step.step_id)
@@ -371,7 +378,7 @@ class SQLCodegenAgent(BaseCodegenAgent):
             unsupported_step_count=unsupported_step_count,
             infrastructure_statement_count=infrastructure_statement_count,
             projection_statement_count=projection_statement_count,
-            fallback_projection_used=bool(clean_columns and rendered_transformation_count == 0),
+            fallback_projection_used=bool(projection_statement_count > 0 and rendered_transformation_count == 0),
             planner_input_source=planner_input_source,
             coverage=coverage_dict,
             step_results=compilation_results,
@@ -459,6 +466,17 @@ class SQLCodegenAgent(BaseCodegenAgent):
             timestamp=datetime.now(timezone.utc).isoformat(),
             dataset_transforms=dataset_transforms,
         )
+
+        # Invariant Gate: Never generate malformed double schema prefixes
+        if "[dbo].[dbo." in sql_code:
+            telemetry.ok = False
+            telemetry.executable = False
+            telemetry.failure_stage = "rendering_validation"
+            raise CodeGenerationError(
+                "Internal compiler error: Malformed double schema prefix '[dbo].[dbo.' detected in generated SQL.",
+                telemetry=telemetry.to_dict(),
+                failure_stage="rendering_validation",
+            )
 
         artifact = CodeArtifact(
             artifact_id=f"art_{physical_plan.plan_id}_sql",

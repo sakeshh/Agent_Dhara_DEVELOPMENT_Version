@@ -1,7 +1,9 @@
 -- Step: {{ step_id }} ({{ description }})
-UPDATE [dbo].[{{ dataset_name }}_Staging]
+{% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
+UPDATE {{ target_table }}
 SET
 {% for col in columns %}
     [{{ col }}] = {% if "trim" in fused_operations %}LOWER(RTRIM(LTRIM([{{ col }}]))){% else %}LOWER([{{ col }}]){% endif %}{% if not loop.last %},{% endif %}
 {% endfor %}
 ;
+

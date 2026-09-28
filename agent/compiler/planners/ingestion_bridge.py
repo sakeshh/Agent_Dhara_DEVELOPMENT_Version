@@ -309,11 +309,68 @@ class IngestionBridge:
             final_params = dict(params)
             if action == ActionType.RANGE_CLIP:
                 if "min_value" not in final_params and "max_value" not in final_params:
-                    if any(w in itype.lower() for w in ("negative", "non_negative", "min_zero")):
+                    itype_l = itype.lower()
+                    col_l = (col_clean or "").lower()
+                    msg_l = (msg or "").lower()
+                    sug_l = (sug or "").lower()
+
+                    # Domain semantic classification
+                    unsafe_neg_cols = (
+                        "adjustment", "adjustments", "variance", "temperature", "temp",
+                        "profit", "loss", "balance", "coordinates", "coord", "refund", "delta"
+                    )
+                    safe_non_neg_cols = (
+                        "salary", "wage", "compensation", "price", "amount", "total_amount",
+                        "cost", "fee", "rate", "qty", "quantity", "count", "age", "tenure", "units", "bonus"
+                    )
+                    explicit_non_neg_types = (
+                        "negative_salary", "negative_currency", "negative_quantity", "negative_price",
+                        "non_negative", "min_zero"
+                    )
+
+                    if any(u in col_l for u in unsafe_neg_cols):
+                        # Negative values may be legitimate in this domain; clamping to 0 risks silent data corruption.
+                        action = None
+                        res_path = "unsupported_ambiguous_negative_policy"
+                    elif any(t in itype_l for t in explicit_non_neg_types):
                         final_params["min_value"] = 0.0
+                        final_params["parameter_source"] = f"issue_type:{itype}"
+                        final_params["parameter_confidence"] = "high"
+                    elif any(c in col_l for c in safe_non_neg_cols) and (
+                        "negative" in itype_l or "negative" in msg_l or "clip" in sug_l or "range" in itype_l or "outlier" in itype_l
+                    ):
+                        final_params["min_value"] = 0.0
+                        final_params["parameter_source"] = f"column_semantic:{col_clean}"
+                        final_params["parameter_confidence"] = "high"
+                    elif "clip" in sug_l and "0" in sug_l:
+                        final_params["min_value"] = 0.0
+                        final_params["parameter_source"] = "suggested_action:clip_zero"
+                        final_params["parameter_confidence"] = "high"
+                    else:
+                        action = None
+                        res_path = "unsupported_ambiguous_negative_domain"
+
             elif action == ActionType.REPLACE_SENTINELS:
                 if "sentinel_values" not in final_params:
-                    final_params["sentinel_values"] = ['NA', 'N/A', 'NULL', 'None', '-999', '?', '-', 'UNKNOWN']
+                    # Require explicit detected evidence from assessment
+                    detected = (
+                        final_params.get("detected_values")
+                        or final_params.get("sentinels")
+                        or final_params.get("values")
+                        or final_params.get("placeholders")
+                    )
+                    if detected and isinstance(detected, (list, set, tuple)):
+                        final_params["sentinel_values"] = list(detected)
+                        final_params["parameter_source"] = "assessment_evidence"
+                        final_params["parameter_confidence"] = "high"
+                    else:
+                        # Distinguish explicitly detected vs assumed standard sentinels
+                        # Mark clearly with parameter_source and flag for approval
+                        final_params["sentinel_values"] = ['NA', 'N/A', 'NULL', 'None', '-999', '?', '-', 'UNKNOWN']
+                        final_params["parameter_source"] = "assumed_standard_sentinels"
+                        final_params["parameter_confidence"] = "low"
+                        final_params["requires_approval"] = True
+
             elif action == ActionType.TRIM:
                 final_params.setdefault("side", "both")
 

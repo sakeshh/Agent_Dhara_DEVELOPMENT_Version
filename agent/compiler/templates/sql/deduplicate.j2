@@ -1,11 +1,12 @@
 -- Step: {{ step_id }} ({{ description }})
+{% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
 WITH [DedupCTE] AS (
     SELECT *,
            ROW_NUMBER() OVER (
                PARTITION BY {% for col in columns %}[{{ col }}]{% if not loop.last %}, {% endif %}{% endfor %}
                ORDER BY {{ survivor_order | default(order_by_clause) | default("[" ~ columns[0] ~ "] ASC" if columns else "(SELECT 1)") }}
            ) AS [__duplicate_rank]
-    FROM [dbo].[{{ dataset_name }}_Staging]
+    FROM {{ target_table }}
 )
 {% if never_drop_rows %}
 -- Quarantine duplicate rows to Rejection_Log
@@ -16,3 +17,4 @@ DELETE FROM [DedupCTE] WHERE [__duplicate_rank] > 1;
 {% else %}
 DELETE FROM [DedupCTE] WHERE [__duplicate_rank] > 1;
 {% endif %}
+

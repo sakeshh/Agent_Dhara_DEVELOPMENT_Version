@@ -1,5 +1,6 @@
 -- Step: {{ step_id }} ({{ description }})
-UPDATE [dbo].[{{ dataset_name }}_Staging]
+{% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
+UPDATE {{ target_table }}
 SET
 {% for col in columns %}
     [{{ col }}] = COALESCE([{{ col }}], '{{ fill_value | default("") }}'){% if not loop.last %},{% endif %}
@@ -9,3 +10,4 @@ WHERE
     [{{ col }}] IS NULL{% if not loop.last %} OR {% endif %}
 {% endfor %}
 ;
+

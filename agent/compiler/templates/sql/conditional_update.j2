@@ -1,29 +1,42 @@
 -- Step: {{ step_id }} ({{ description }})
+{% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
 {% set disp = disposition | default('CORRECT') | upper %}
 {% if disp == 'REJECT' and not never_drop_rows %}
--- 1. Quarantine / Reject rows matching condition
-INSERT INTO [ETL_REJECT].[Rejection_Log] (
-    [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
-)
-SELECT 
-    @PipelineId,
-    @RunId,
-    '{{ dataset_name }}',
-    '{{ issue_id | default("") }}',
-    '{{ step_id }}',
-    '{{ columns | join(", ") }}',
-    'Conditional rule violation: {{ description | default(sql_condition) }}',
-    'REJECT',
-    CAST(s.[{{ columns[0] }}] AS NVARCHAR(MAX)),
-    (SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
-FROM [dbo].[{{ dataset_name }}_Staging] s
+-- 1. Quarantine & Reject rows matching condition atomically
+IF OBJECT_ID('tempdb..#Rejected_{{ step_id | replace("-", "_") }}') IS NOT NULL DROP TABLE #Rejected_{{ step_id | replace("-", "_") }};
+
+SELECT *
+INTO #Rejected_{{ step_id | replace("-", "_") }}
+FROM {{ target_table }} s
 WHERE {{ sql_condition }};
 
-DELETE FROM [dbo].[{{ dataset_name }}_Staging]
-WHERE {{ sql_condition }};
+IF EXISTS (SELECT 1 FROM #Rejected_{{ step_id | replace("-", "_") }})
+BEGIN
+    INSERT INTO [ETL_REJECT].[Rejection_Log] (
+        [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
+    )
+    SELECT 
+        @PipelineId,
+        @RunId,
+        '{{ dataset_name }}',
+        '{{ issue_id | default("") }}',
+        '{{ step_id }}',
+        '{{ columns | join(", ") }}',
+        'Conditional rule violation: {{ description | default(sql_condition) }}',
+        'REJECT',
+        CAST(r.[{{ columns[0] }}] AS NVARCHAR(MAX)),
+        (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+    FROM #Rejected_{{ step_id | replace("-", "_") }} r;
+
+    DELETE s
+    FROM {{ target_table }} s
+    WHERE {{ sql_condition }};
+END;
+
+IF OBJECT_ID('tempdb..#Rejected_{{ step_id | replace("-", "_") }}') IS NOT NULL DROP TABLE #Rejected_{{ step_id | replace("-", "_") }};
 
 {% else %}
-UPDATE [dbo].[{{ dataset_name }}_Staging]
+UPDATE {{ target_table }}
 SET
 {% for col in columns %}
     [{{ col }}] = CASE 
@@ -37,3 +50,4 @@ SET
 {% endfor %}
 ;
 {% endif %}
+

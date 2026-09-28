@@ -1,10 +1,11 @@
 -- Step: {{ step_id }} ({{ description }})
+{% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
 {% if track_failures | default(true) %}
 -- Defensive Conversion Tracking: Log silent conversion failures before mutating values
 {% for col in columns %}
 INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData])
 SELECT @PipelineId, @RunId, '{{ dataset_name }}', '{{ issue_id | default("") }}', '{{ step_id }}', '{{ col }}', 'Conversion failure: unable to cast [{{ col }}] to {{ target_type | default("NVARCHAR(255)") }}', 'REJECT', CAST([{{ col }}] AS NVARCHAR(MAX)), CAST([{{ col }}] AS NVARCHAR(MAX))
-FROM [dbo].[{{ dataset_name }}_Staging]
+FROM {{ target_table }}
 WHERE [{{ col }}] IS NOT NULL AND TRY_CAST([{{ col }}] AS {{ target_type | default("NVARCHAR(255)") }}) IS NULL;
 
 {% if max_failed_rows is defined and max_failed_rows is not none %}
@@ -18,9 +19,10 @@ END;
 {% endfor %}
 {% endif %}
 
-UPDATE [dbo].[{{ dataset_name }}_Staging]
+UPDATE {{ target_table }}
 SET
 {% for col in columns %}
     [{{ col }}] = TRY_CAST([{{ col }}] AS {{ target_type | default('NVARCHAR(255)') }}){% if not loop.last %},{% endif %}
 {% endfor %}
 ;
+

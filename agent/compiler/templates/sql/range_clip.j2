@@ -1,10 +1,11 @@
 -- Step: {{ step_id }} ({{ description }})
-UPDATE [dbo].[{{ dataset_name }}_Staging]
+{% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
+UPDATE {{ target_table }}
 SET
 {% for col in columns %}
     [{{ col }}] = CASE
-        {% if min_value is defined %}WHEN [{{ col }}] < {{ min_value }} THEN {{ min_value }}{% endif %}
-        {% if max_value is defined %}WHEN [{{ col }}] > {{ max_value }} THEN {{ max_value }}{% endif %}
+        {% if min_value is defined and min_value is not none %}WHEN [{{ col }}] < {{ min_value }} THEN {{ min_value }}{% endif %}
+        {% if max_value is defined and max_value is not none %}WHEN [{{ col }}] > {{ max_value }} THEN {{ max_value }}{% endif %}
         ELSE [{{ col }}]
     END{% if not loop.last %},{% endif %}
 {% endfor %}
