@@ -51,6 +51,10 @@ def generate_sweetviz_comparison(
 
     try:
         import sweetviz as sv  # type: ignore
+        try:
+            sv.config_parser.set("General", "default_verbosity", "off")
+        except Exception:
+            pass
 
         if output_path is None:
             tmp = tempfile.NamedTemporaryFile(
@@ -95,6 +99,10 @@ def generate_sweetviz_single(df, name: str = "Dataset", output_path: Optional[st
 
     try:
         import sweetviz as sv  # type: ignore
+        try:
+            sv.config_parser.set("General", "default_verbosity", "off")
+        except Exception:
+            pass
 
         if output_path is None:
             tmp = tempfile.NamedTemporaryFile(

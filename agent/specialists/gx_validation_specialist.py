@@ -244,6 +244,11 @@ def run_gx_validation(
 
     try:
         context = gx.get_context()
+        try:
+            if hasattr(context, "progress_bars"):
+                context.progress_bars = {"globally": False, "metric_calculations": False}
+        except Exception:
+            pass
 
         for name, df in datasets.items():
             if df is None or (isinstance(df, pd.DataFrame) and df.empty):

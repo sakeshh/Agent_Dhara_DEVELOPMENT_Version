@@ -51,3 +51,29 @@ def test_gating_override_blocked():
 
     assert res.readiness == "BLOCKED"
     assert any("Missing primary key" in b for b in res.gating_blockers)
+
+
+def test_translated_gx_results_missing_element_count_do_not_skew_dimension_scorer():
+    """Verify that GX/custom results without element_count default to n_rows / unexp_count and do not produce negative scores."""
+    from agent.profiling.gx_result_translator import translate_gx_result_list
+
+    raw_custom_result = {
+        "expectation": "whitespace",
+        "column": "Status",
+        "success": False,
+        "unexpected_count": 15,
+        # Notice element_count is deliberately omitted here, mimicking custom GX checks
+    }
+
+    translated = translate_gx_result_list([raw_custom_result], dataset_id="dbo.test", n_rows=24)
+    assert len(translated) == 1
+    assert translated[0].evaluated_count == 24
+    assert translated[0].failed_count == 15
+
+    # Run through dimension scorer
+    score = calculate_dimension_quality_scores(translated, minimum_score_coverage=0.0)
+    assert score is not None
+    # 100 * (1 - 15/24) = 37.5
+    assert score.dimension_scores["validity"].score == 37.5
+    assert len(score.score_calculation_warnings) == 0
+

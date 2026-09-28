@@ -258,6 +258,10 @@ def _run_compiler_codegen(
         flow["compilation_telemetry"] = cge.telemetry
         logger.warning("[_run_compiler_codegen] Compilation halted: %s (telemetry: %s)", cge, cge.telemetry)
         return "", False, [str(cge)], "compiler"
+    except Exception as exc:
+        flow["ingestion_telemetry"] = telemetry
+        logger.warning("[_run_compiler_codegen] Compilation halted with unexpected error: %s", exc, exc_info=True)
+        return "", False, [str(exc)], "compiler"
 
 
 # ── Phase state machine ───────────────────────────────────────────────────────
