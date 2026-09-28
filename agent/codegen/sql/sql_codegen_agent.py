@@ -9,6 +9,7 @@ from agent.compiler.events.event_bus import CompilerEventType, EventBus
 from agent.compiler.models.artifacts import CodeArtifact
 from agent.compiler.models.context import CompilerContext
 from agent.compiler.models.physical import PhysicalPlan
+from agent.compiler.schema.sql_identifier import parse_table_identifier
 from agent.compiler.templates.engine import TemplateEngine
 
 
@@ -23,15 +24,17 @@ class SQLCodegenAgent(BaseCodegenAgent):
         never_drop = context.options.get("never_drop_rows", False)
 
         for ds_name in physical_plan.dataset_names:
+            table_ident = parse_table_identifier(ds_name)
             steps = physical_plan.get_steps_for_dataset(ds_name)
             rendered_steps: List[str] = []
 
             # Add staging table preparation header
-            staging_table = f"[dbo].[{ds_name}_Staging]"
+            staging_table = table_ident.staging_name
+            source_table = table_ident.qualified_name
             prep_ddl = (
                 f"-- Ensure Staging table exists\n"
                 f"IF OBJECT_ID('{staging_table}', 'U') IS NOT NULL DROP TABLE {staging_table};\n"
-                f"SELECT * INTO {staging_table} FROM [dbo].[{ds_name}];"
+                f"SELECT * INTO {staging_table} FROM {source_table};"
             )
             rendered_steps.append(prep_ddl)
 
@@ -41,7 +44,18 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 params["step_id"] = step.step_id
                 params["description"] = step.description or step.strategy_name
                 params["columns"] = step.target_columns
-                params["dataset_name"] = ds_name
+                params["dataset_name"] = table_ident.table
+                params["schema_name"] = table_ident.schema
+                params["staging_table"] = table_ident.staging_name
+                params["source_table"] = table_ident.qualified_name
+                params["clean_table"] = table_ident.clean_name
+                if "parent_dataset" in params and params["parent_dataset"]:
+                    try:
+                        p_ident = parse_table_identifier(params["parent_dataset"])
+                        params["parent_dataset"] = p_ident.table
+                        params["parent_qualified_name"] = p_ident.qualified_name
+                    except Exception:
+                        pass
                 params["never_drop_rows"] = never_drop
                 params["pipeline_id"] = physical_plan.plan_id
 
@@ -55,12 +69,13 @@ class SQLCodegenAgent(BaseCodegenAgent):
             contract_data = output_contracts.get(ds_name) or {}
             clean_columns = contract_data.get("clean_columns") or []
 
+            clean_table = table_ident.clean_name
             if clean_columns:
                 cols_quoted = ",\n    ".join(f"[{c}]" for c in clean_columns)
                 projection_sql = (
                     f"-- Strict Final Clean Projection (Output Contract Conformance)\n"
-                    f"IF OBJECT_ID('[dbo].[{ds_name}_Clean]', 'U') IS NOT NULL DROP TABLE [dbo].[{ds_name}_Clean];\n"
-                    f"SELECT\n    {cols_quoted}\nINTO [dbo].[{ds_name}_Clean]\nFROM {staging_table};"
+                    f"IF OBJECT_ID('{clean_table}', 'U') IS NOT NULL DROP TABLE {clean_table};\n"
+                    f"SELECT\n    {cols_quoted}\nINTO {clean_table}\nFROM {staging_table};"
                 )
                 rendered_steps.append(projection_sql)
 
