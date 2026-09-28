@@ -41,8 +41,22 @@ class IngestionBridge:
     PSEUDO_COLUMNS: Set[str] = {
         "row-level", "[row-level]", "table-level", "[table-level]",
         "dataset-level", "[dataset-level]", "dataset", "table",
-        "unknown", "none", "null", "all", "[all]", "-", "global", "*", "[*]", ""
+        "unknown", "none", "null", "all", "[all]", "-", "global", "*", "[*]", "",
+        "__row__", "[__row__]",
     }
+
+    DATASET_LEVEL_ACTIONS: Set[ActionType] = {
+        ActionType.DEDUPLICATE,
+        ActionType.VALIDATE_REFERENTIAL_INTEGRITY,
+    }
+
+    @classmethod
+    def is_pseudo_column(cls, col: Any) -> bool:
+        if col is None:
+            return True
+        raw = str(col).strip()
+        clean = raw.lower().strip("[]").strip()
+        return clean in cls.PSEUDO_COLUMNS or raw.lower() in cls.PSEUDO_COLUMNS or not clean
 
     # Tier 1 & 2 Action mapping
     EXPLICIT_ACTION_MAP: Dict[str, ActionType] = {
@@ -135,6 +149,9 @@ class IngestionBridge:
         "pii_phone": ActionType.MASK_PHONE,
         "mask_phone": ActionType.MASK_PHONE,
         "range_violation": ActionType.RANGE_CLIP,
+        "range_outlier": ActionType.RANGE_CLIP,
+        "range_outliers": ActionType.RANGE_CLIP,
+        "outlier": ActionType.RANGE_CLIP,
         "outliers": ActionType.RANGE_CLIP,
         "negative_values": ActionType.RANGE_CLIP,
         "non_negative": ActionType.RANGE_CLIP,
@@ -306,7 +323,7 @@ class IngestionBridge:
             norm_ds = self.normalize_dataset_name(ds_name, known_datasets=known_datasets)
             if col:
                 col_str = str(col).strip()
-                if col_str.lower() in self.PSEUDO_COLUMNS or col_str.strip("[]").lower() in self.PSEUDO_COLUMNS:
+                if self.is_pseudo_column(col_str):
                     col_clean = None
                 else:
                     col_clean = col_str.strip("[]")
@@ -322,10 +339,29 @@ class IngestionBridge:
                 message=msg,
             )
 
+            # GUARD: Column-bound actions require a real target column
+            if action is not None and action not in self.DATASET_LEVEL_ACTIONS and not col_clean:
+                action = None
+                res_path = "unsupported_missing_target_columns"
+
             # Parameter enrichment for Tier 2 decomposable primitives
             final_params = dict(params)
             if action == ActionType.RANGE_CLIP:
-                if "min_value" not in final_params and "max_value" not in final_params:
+                if "min_value" not in final_params:
+                    if "lower_bound" in final_params:
+                        final_params["min_value"] = final_params["lower_bound"]
+                    elif "min" in final_params:
+                        final_params["min_value"] = final_params["min"]
+                if "max_value" not in final_params:
+                    if "upper_bound" in final_params:
+                        final_params["max_value"] = final_params["upper_bound"]
+                    elif "max" in final_params:
+                        final_params["max_value"] = final_params["max"]
+
+                has_min = final_params.get("min_value") is not None
+                has_max = final_params.get("max_value") is not None
+
+                if not has_min and not has_max:
                     itype_l = itype.lower()
                     col_l = (col_clean or "").lower()
                     msg_l = (msg or "").lower()
@@ -338,10 +374,6 @@ class IngestionBridge:
                         "adjustment", "adjustments", "variance", "temperature", "temp",
                         "profit", "loss", "balance", "coordinates", "coord", "refund", "delta",
                         "amount", "total_amount", "cost", "fee", "rate", "discount", "margin"
-                    )
-                    # Columns where negative values are categorically invalid (base compensation, age, physical counts).
-                    strict_non_neg_cols = (
-                        "salary", "wage", "compensation", "age", "tenure", "quantity", "qty", "count", "units"
                     )
                     explicit_non_neg_types = (
                         "negative_salary", "negative_currency", "negative_quantity", "negative_price",
@@ -366,18 +398,12 @@ class IngestionBridge:
                         final_params["parameter_source"] = "suggested_action:clip_zero"
                         final_params["parameter_confidence"] = "high"
                         final_params["requires_approval"] = False
-                    elif any(c in col_l for c in strict_non_neg_cols) and (
-                        "negative" in itype_l or "negative" in msg_l or "clip" in sug_l or "range" in itype_l or "outlier" in itype_l
-                    ):
-                        final_params["min_value"] = 0.0
-                        final_params["parameter_source"] = f"column_name_heuristic:{col_clean}"
-                        final_params["parameter_confidence"] = "medium"
-                        # Column-name heuristic alone requires approval unless explicitly approved
-                        if not final_params.get("approved"):
-                            final_params["requires_approval"] = True
-                    elif is_negative_issue:
+                    else:
+                        # CRITICAL GUARD: Both bounds missing, do NOT infer bounds merely because
+                        # column is Salary, Quantity, Age, etc. Bounds must come from assessment evidence,
+                        # an approved business rule, approved catalogue metadata, or an approved Tier 3 proposal.
                         action = None
-                        res_path = "unsupported_ambiguous_negative_domain"
+                        res_path = "unsupported_missing_range_bounds"
 
             elif action == ActionType.REPLACE_SENTINELS:
                 if "sentinel_values" not in final_params:
@@ -654,6 +680,9 @@ class IngestionBridge:
                     iss.issue_type,
                 )
 
+        missing_range_bounds_count = sum(1 for iss in deduped if iss.resolution_path == "unsupported_missing_range_bounds")
+        missing_target_cols_count = sum(1 for iss in deduped if iss.resolution_path == "unsupported_missing_target_columns")
+
         telemetry = {
             "assessment_discovered_count": total_assessment_discovered,
             "plan_discovered_count": total_plan_discovered,
@@ -662,6 +691,8 @@ class IngestionBridge:
             "mapped_issue_count": mapped_count,
             "mapped_action_count": mapped_count,
             "unsupported_issue_count": len(unsupported_issues),
+            "unsupported_missing_range_bounds_count": missing_range_bounds_count,
+            "unsupported_missing_target_columns_count": missing_target_cols_count,
             "manual_review_issue_count": len(manual_review_issues),
             "unsupported_issues": unsupported_issues,
             "manual_review_issues": manual_review_issues,
@@ -721,7 +752,7 @@ class IngestionBridge:
                 # Filter out pseudo-column markers from target_columns
                 cols = [
                     c for c in cols
-                    if c and str(c).strip().lower() not in self.PSEUDO_COLUMNS and str(c).strip("[]").lower() not in self.PSEUDO_COLUMNS
+                    if c and not self.is_pseudo_column(c)
                 ]
 
                 # Deduplicate actions: if target_columns is empty, auto-assign from parameters keys/subset_columns
@@ -739,10 +770,35 @@ class IngestionBridge:
                         if isinstance(candidate_keys, (list, tuple)):
                             cols = [
                                 k for k in candidate_keys
-                                if k and str(k).strip().lower() not in self.PSEUDO_COLUMNS and str(k).strip("[]").lower() not in self.PSEUDO_COLUMNS
+                                if k and not self.is_pseudo_column(k)
                             ]
                     # Ensure parameters have subset_columns set
                     c_iss.parameters["subset_columns"] = list(cols)
+
+                # DEFENSE IN DEPTH GUARD 1: Missing target columns for column-bound action
+                if action not in self.DATASET_LEVEL_ACTIONS and not cols:
+                    logger.warning(
+                        "[IngestionBridge] Dropping action '%s' on %s because target_columns is empty after pseudo-column removal.",
+                        action.value,
+                        c_iss.dataset,
+                    )
+                    c_iss.resolved_action = None
+                    c_iss.resolution_path = "unsupported_missing_target_columns"
+                    continue
+
+                # DEFENSE IN DEPTH GUARD 2: Missing bounds for RANGE_CLIP
+                if action == ActionType.RANGE_CLIP:
+                    has_min = c_iss.parameters.get("min_value") is not None
+                    has_max = c_iss.parameters.get("max_value") is not None
+                    if not has_min and not has_max:
+                        logger.warning(
+                            "[IngestionBridge] Dropping RANGE_CLIP on %s.%s because neither min_value nor max_value was provided.",
+                            c_iss.dataset,
+                            cols,
+                        )
+                        c_iss.resolved_action = None
+                        c_iss.resolution_path = "unsupported_missing_range_bounds"
+                        continue
 
                 source_enum = ActionSource.ASSESSMENT
                 if c_iss.source.startswith("plan_"):

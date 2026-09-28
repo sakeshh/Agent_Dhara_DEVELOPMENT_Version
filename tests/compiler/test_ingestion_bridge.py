@@ -114,6 +114,7 @@ def test_ingestion_bridge_harvesting_all_sources(caplog):
                             "issue_type": "negative_values",
                             "severity": "high",
                             "message": "Salary is negative",
+                            "parameters": {"min_value": 0.0},
                         }
                     ]
                 }
@@ -197,15 +198,17 @@ def test_diagnostic_context_and_mapping():
         ("Phone", "invalid_phone", "normalize_phone"),
         ("BirthDate", "invalid_date", "parse_dates"),
         ("HireDate", "invalid_date", "parse_dates"),
-        ("Salary", "negative_values", "range_clip"),
-        ("Bonus", "outliers", "range_clip"),
+        ("Salary", "negative_values", "range_clip", {"min_value": 0.0}),
+        ("Bonus", "outliers", "range_clip", {"min_value": 0.0, "max_value": 100000.0}),
         ("Gender", "boolean_inconsistency", "standardize_boolean"),
         ("Id", "duplicate_pk", "deduplicate"),
         ("MiddleName", "null_values", "fill_nulls"),
         ("OldCode", "sentinel_values", "replace_sentinels"),
     ]
-    for col, itype, sug in standard_types:
-        dq_issues.append({"column": col, "issue_type": itype, "suggested_action": sug, "severity": "medium"})
+    for item in standard_types:
+        col, itype, sug = item[0], item[1], item[2]
+        params = item[3] if len(item) > 3 else {}
+        dq_issues.append({"column": col, "issue_type": itype, "suggested_action": sug, "severity": "medium", "parameters": params})
 
     # 8 unsupported / domain-specific
     unsupported_types = [
@@ -324,4 +327,185 @@ def test_row_level_deduplicate_with_pseudo_column_compiles_successfully():
     assert "PARTITION BY [EmployeeID], [StatusEventID], [ReasonCode]" in sql_code
     assert "[Row-level]" not in sql_code
     assert "Row-level" not in sql_code
+
+
+# ==============================================================================
+# Regression Tests for Production Code Generation Guards
+# ==============================================================================
+
+def test_range_clip_without_bounds_is_not_emitted():
+    """Verify that an issue mapping to RANGE_CLIP without min_value or max_value is not emitted."""
+    bridge = IngestionBridge(default_schema="dbo")
+    assess = {
+        "data_quality_issues": {
+            "datasets": {
+                "dbo.Dhara_Employee": {
+                    "issues": [
+                        {
+                            "issue_type": "range_outlier",
+                            "column": "Salary",
+                            "message": "Outlier in Salary without defined bounds",
+                            "parameters": {},
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    plan = {"datasets": {}}
+
+    canonical_issues, b_rules, telemetry = bridge.extract_and_normalize(
+        assess=assess,
+        plan=plan,
+        known_datasets={"dbo.Dhara_Employee"},
+    )
+    detected_issues, structured_actions = bridge.bridge_to_compiler_models(canonical_issues)
+
+    assert not any(act.action_type == ActionType.RANGE_CLIP for act in structured_actions)
+    assert telemetry["unsupported_missing_range_bounds_count"] == 1
+
+
+def test_column_action_with_star_target_is_not_emitted():
+    """Verify that a column-bound action targeting '*' is dropped and not emitted."""
+    bridge = IngestionBridge(default_schema="dbo")
+    plan = {
+        "datasets": {
+            "dbo.Dhara_OrgReference": {
+                "steps": [
+                    {
+                        "action": "range_clip",
+                        "column": "*",
+                        "params": {"min_value": 0.0},
+                    }
+                ]
+            }
+        }
+    }
+    assess = {"datasets": {}}
+
+    canonical_issues, b_rules, telemetry = bridge.extract_and_normalize(
+        assess=assess,
+        plan=plan,
+        known_datasets={"dbo.Dhara_OrgReference"},
+    )
+    detected_issues, structured_actions = bridge.bridge_to_compiler_models(canonical_issues)
+
+    assert structured_actions == []
+    assert telemetry["unsupported_missing_target_columns_count"] == 1
+
+
+@pytest.mark.parametrize("pseudo_col", ["*", "[*]", "row-level", "[row-level]", "Row-level", "[Row-level]", "__row__", "[__row__]"])
+def test_column_action_with_all_pseudo_columns_is_not_emitted(pseudo_col: str):
+    """Verify that all forms of pseudo-columns are stripped and column actions are not emitted."""
+    bridge = IngestionBridge(default_schema="dbo")
+    plan = {
+        "datasets": {
+            "dbo.Dhara_OrgReference": {
+                "steps": [
+                    {
+                        "action": "trim",
+                        "column": pseudo_col,
+                        "params": {"side": "both"},
+                    }
+                ]
+            }
+        }
+    }
+    assess = {"datasets": {}}
+
+    canonical_issues, b_rules, telemetry = bridge.extract_and_normalize(
+        assess=assess,
+        plan=plan,
+        known_datasets={"dbo.Dhara_OrgReference"},
+    )
+    detected_issues, structured_actions = bridge.bridge_to_compiler_models(canonical_issues)
+
+    assert structured_actions == []
+    assert telemetry["unsupported_missing_target_columns_count"] == 1
+
+
+def test_range_clip_with_valid_lower_bound_only_accepted():
+    """RANGE_CLIP with only min_value is accepted and emitted with valid target column."""
+    bridge = IngestionBridge(default_schema="dbo")
+    plan = {
+        "datasets": {
+            "dbo.Dhara_Employee": {
+                "steps": [
+                    {
+                        "action": "range_clip",
+                        "column": "Salary",
+                        "params": {"min_value": 0.0},
+                    }
+                ]
+            }
+        }
+    }
+    assess = {"datasets": {}}
+
+    canonical_issues, b_rules, telemetry = bridge.extract_and_normalize(
+        assess=assess,
+        plan=plan,
+        known_datasets={"dbo.Dhara_Employee"},
+    )
+    detected_issues, structured_actions = bridge.bridge_to_compiler_models(canonical_issues)
+
+    assert len(structured_actions) == 1
+    act = structured_actions[0]
+    assert act.action_type == ActionType.RANGE_CLIP
+    assert act.target_columns == ["Salary"]
+    assert act.parameters["min_value"] == 0.0
+    assert "max_value" not in act.parameters
+
+
+def test_range_clip_with_valid_upper_bound_only_accepted():
+    """RANGE_CLIP with only max_value is accepted and emitted with valid target column."""
+    bridge = IngestionBridge(default_schema="dbo")
+    plan = {
+        "datasets": {
+            "dbo.Dhara_Employee": {
+                "steps": [
+                    {
+                        "action": "range_clip",
+                        "column": "Discount",
+                        "params": {"max_value": 100.0},
+                    }
+                ]
+            }
+        }
+    }
+    assess = {"datasets": {}}
+
+    canonical_issues, b_rules, telemetry = bridge.extract_and_normalize(
+        assess=assess,
+        plan=plan,
+        known_datasets={"dbo.Dhara_Employee"},
+    )
+    detected_issues, structured_actions = bridge.bridge_to_compiler_models(canonical_issues)
+
+    assert len(structured_actions) == 1
+    act = structured_actions[0]
+    assert act.action_type == ActionType.RANGE_CLIP
+    assert act.target_columns == ["Discount"]
+    assert act.parameters["max_value"] == 100.0
+    assert "min_value" not in act.parameters
+
+
+def test_logical_planner_boundary_strictly_blocks_naked_range_clip():
+    """Verify that LogicalPlanner boundary remains strict and rejects malformed actions directly."""
+    from agent.compiler.planners.logical_planner import LogicalPlanner
+    from agent.compiler.models.actions import ActionSource
+
+    planner = LogicalPlanner()
+    naked_action = StructuredAction(
+        action_id="naked_clip_01",
+        action_type=ActionType.RANGE_CLIP,
+        dataset_name="dbo.Dhara_Employee",
+        target_columns=[],
+        parameters={},
+        source=ActionSource.CATALOG,
+    )
+
+    with pytest.raises(ValueError, match="Invalid StructuredAction cannot enter LogicalPlanner"):
+        planner.action_to_logical_step(naked_action, 0, {})
+
 

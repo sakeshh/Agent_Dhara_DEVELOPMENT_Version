@@ -261,6 +261,12 @@ def _run_compiler_codegen(
     except Exception as exc:
         flow["ingestion_telemetry"] = telemetry
         logger.warning("[_run_compiler_codegen] Compilation halted with unexpected error: %s", exc, exc_info=True)
+        is_val_err = "Invalid StructuredAction" in str(exc) or "ACTION_" in str(exc) or isinstance(exc, ValueError)
+        flow["compilation_error_details"] = {
+            "error": str(exc),
+            "failure_stage": "action_validation" if is_val_err else "compilation",
+            "retryable": not is_val_err,
+        }
         return "", False, [str(exc)], "compiler"
 
 
@@ -2000,6 +2006,8 @@ def etl_generate_code(
             else "Code generated as draft — fix validation_errors before production deploy."
         ),
         "duckdb_diff": flow.get("duckdb_diff"),
+        "failure_stage": flow.get("compilation_error_details", {}).get("failure_stage") if not ok else None,
+        "retryable": flow.get("compilation_error_details", {}).get("retryable") if not ok else None,
     }
 
 
