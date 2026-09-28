@@ -36,8 +36,25 @@ BEGIN
                     CONSTRAINT [DF_RejectionLog_RejectedAt]
                     DEFAULT SYSUTCDATETIME()
             );
+        END
+        ELSE
+        BEGIN
+            -- Migration / Upgrade for existing deployed Rejection_Log tables
+            IF COL_LENGTH('[ETL_REJECT].[Rejection_Log]', 'RunId') IS NULL
+                ALTER TABLE [ETL_REJECT].[Rejection_Log] ADD [RunId] UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID();
+            IF COL_LENGTH('[ETL_REJECT].[Rejection_Log]', 'IssueId') IS NULL
+                ALTER TABLE [ETL_REJECT].[Rejection_Log] ADD [IssueId] NVARCHAR(200) NULL;
+            IF COL_LENGTH('[ETL_REJECT].[Rejection_Log]', 'StepId') IS NULL
+                ALTER TABLE [ETL_REJECT].[Rejection_Log] ADD [StepId] NVARCHAR(200) NULL;
+            IF COL_LENGTH('[ETL_REJECT].[Rejection_Log]', 'ColumnName') IS NULL
+                ALTER TABLE [ETL_REJECT].[Rejection_Log] ADD [ColumnName] NVARCHAR(128) NULL;
+            IF COL_LENGTH('[ETL_REJECT].[Rejection_Log]', 'Disposition') IS NULL
+                ALTER TABLE [ETL_REJECT].[Rejection_Log] ADD [Disposition] VARCHAR(30) NOT NULL DEFAULT 'REJECT';
+            IF COL_LENGTH('[ETL_REJECT].[Rejection_Log]', 'OriginalValue') IS NULL
+                ALTER TABLE [ETL_REJECT].[Rejection_Log] ADD [OriginalValue] NVARCHAR(MAX) NULL;
         END;
 
+        DECLARE @PipelineId VARCHAR(100) = '{{ pipeline_id }}';
         DECLARE @RunId UNIQUEIDENTIFIER = NEWID();
 
 {% for dataset_name, ddl_and_ctes in dataset_transforms.items() %}

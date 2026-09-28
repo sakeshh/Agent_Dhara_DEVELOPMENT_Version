@@ -19,8 +19,8 @@ INSERT INTO [ETL_REJECT].[Rejection_Log] (
     [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
 )
 SELECT 
-    '{{ pipeline_id | default("adhoc") }}',
-    {{ run_id | default("@RunId") }},
+    @PipelineId,
+    @RunId,
     '{{ dataset_name }}',
     '{{ issue_id | default("") }}',
     '{{ step_id }}',
@@ -42,8 +42,8 @@ INSERT INTO [ETL_REJECT].[Rejection_Log] (
     [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
 )
 SELECT 
-    '{{ pipeline_id | default("adhoc") }}',
-    {{ run_id | default("@RunId") }},
+    @PipelineId,
+    @RunId,
     '{{ dataset_name }}',
     '{{ issue_id | default("") }}',
     '{{ step_id }}',
@@ -66,8 +66,8 @@ INSERT INTO [ETL_REJECT].[Rejection_Log] (
     [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
 )
 SELECT 
-    '{{ pipeline_id | default("adhoc") }}',
-    {{ run_id | default("@RunId") }},
+    @PipelineId,
+    @RunId,
     '{{ dataset_name }}',
     '{{ issue_id | default("") }}',
     '{{ step_id }}',

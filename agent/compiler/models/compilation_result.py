@@ -79,6 +79,8 @@ class CompilationTelemetry:
     fallback_projection_used: bool = False
 
     failure_stage: Optional[str] = None
+    planner_input_source: str = "structured_actions"
+    coverage: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
     step_results: List[StepCompilationResult] = field(default_factory=list)
 
@@ -135,5 +137,7 @@ class CompilationTelemetry:
             "projection_statement_count": self.projection_statement_count,
             "fallback_projection_used": self.fallback_projection_used,
             "failure_stage": self.failure_stage,
+            "planner_input_source": self.planner_input_source,
+            "coverage": self.coverage,
             "warnings": self.warnings,
         }

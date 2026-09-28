@@ -240,17 +240,24 @@ def _run_compiler_codegen(
     if plan.get("cleaning_approval"):
         compiler_ctx.metadata["cleaning_approval"] = plan["cleaning_approval"]
 
+    from agent.compiler.models.compilation_result import CodeGenerationError
+
     pipeline = CompilerPipeline()
-    compiled_ctx, snapshot = pipeline.compile(compiler_ctx)
-
-    code = compiled_ctx.code_artifact.content if compiled_ctx.code_artifact else ""
-    flow["output_contracts"] = compiled_ctx.metadata.get("output_contracts") or {}
-    flow["latest_snapshot_id"] = snapshot.snapshot_id
-    flow["ingestion_telemetry"] = telemetry
-    if compiled_ctx.metadata.get("deployment_manifest"):
-        flow["deployment_manifest"] = compiled_ctx.metadata["deployment_manifest"]
-
-    return code, True, [], "compiler"
+    try:
+        compiled_ctx, snapshot = pipeline.compile(compiler_ctx)
+        code = compiled_ctx.code_artifact.content if compiled_ctx.code_artifact else ""
+        flow["output_contracts"] = compiled_ctx.metadata.get("output_contracts") or {}
+        flow["latest_snapshot_id"] = snapshot.snapshot_id
+        flow["ingestion_telemetry"] = telemetry
+        flow["compilation_telemetry"] = compiled_ctx.metadata.get("compilation_telemetry")
+        if compiled_ctx.metadata.get("deployment_manifest"):
+            flow["deployment_manifest"] = compiled_ctx.metadata["deployment_manifest"]
+        return code, True, [], "compiler"
+    except CodeGenerationError as cge:
+        flow["ingestion_telemetry"] = telemetry
+        flow["compilation_telemetry"] = cge.telemetry
+        logger.warning("[_run_compiler_codegen] Compilation halted: %s (telemetry: %s)", cge, cge.telemetry)
+        return "", False, [str(cge)], "compiler"
 
 
 # ── Phase state machine ───────────────────────────────────────────────────────

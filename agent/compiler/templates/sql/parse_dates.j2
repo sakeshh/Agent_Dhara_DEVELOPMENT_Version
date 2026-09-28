@@ -13,8 +13,8 @@
 {% if track_failures | default(true) %}
 -- Defensive Date Conversion Tracking: Log unparseable or out-of-range dates before mutating values
 {% for col in columns %}
-INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
-SELECT '{{ pipeline_id }}', '{{ dataset_name }}', 'Date conversion failure: unable to parse [{{ col }}] as {{ d_type }}', CAST([{{ col }}] AS NVARCHAR(MAX))
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData])
+SELECT @PipelineId, @RunId, '{{ dataset_name }}', '{{ issue_id | default("") }}', '{{ step_id }}', '{{ col }}', 'Date conversion failure: unable to parse [{{ col }}] as {{ d_type }}', 'REJECT', CAST([{{ col }}] AS NVARCHAR(MAX)), CAST([{{ col }}] AS NVARCHAR(MAX))
 FROM [dbo].[{{ dataset_name }}_Staging]
 WHERE [{{ col }}] IS NOT NULL AND (
     TRY_CONVERT({{ d_type }}, [{{ col }}]) IS NULL

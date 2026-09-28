@@ -2,8 +2,8 @@
 {% if track_failures | default(true) %}
 -- Defensive Conversion Tracking: Log silent conversion failures before mutating values
 {% for col in columns %}
-INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
-SELECT '{{ pipeline_id }}', '{{ dataset_name }}', 'Conversion failure: unable to cast [{{ col }}] to {{ target_type | default("NVARCHAR(255)") }}', CAST([{{ col }}] AS NVARCHAR(MAX))
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData])
+SELECT @PipelineId, @RunId, '{{ dataset_name }}', '{{ issue_id | default("") }}', '{{ step_id }}', '{{ col }}', 'Conversion failure: unable to cast [{{ col }}] to {{ target_type | default("NVARCHAR(255)") }}', 'REJECT', CAST([{{ col }}] AS NVARCHAR(MAX)), CAST([{{ col }}] AS NVARCHAR(MAX))
 FROM [dbo].[{{ dataset_name }}_Staging]
 WHERE [{{ col }}] IS NOT NULL AND TRY_CAST([{{ col }}] AS {{ target_type | default("NVARCHAR(255)") }}) IS NULL;
 

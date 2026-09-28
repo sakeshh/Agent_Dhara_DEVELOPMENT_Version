@@ -9,8 +9,8 @@ WITH [DedupCTE] AS (
 )
 {% if never_drop_rows %}
 -- Quarantine duplicate rows to Rejection_Log
-INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
-SELECT '{{ pipeline_id | default("adhoc") }}', '{{ dataset_name }}', 'Duplicate record', (SELECT * FROM [DedupCTE] c WHERE c.[__duplicate_rank] > 1 FOR JSON PATH);
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData])
+SELECT @PipelineId, @RunId, '{{ dataset_name }}', '{{ issue_id | default("") }}', '{{ step_id }}', '{{ columns | join(", ") }}', 'Duplicate record', 'QUARANTINE', NULL, (SELECT * FROM [DedupCTE] c WHERE c.[__duplicate_rank] > 1 FOR JSON PATH);
 
 DELETE FROM [DedupCTE] WHERE [__duplicate_rank] > 1;
 {% else %}

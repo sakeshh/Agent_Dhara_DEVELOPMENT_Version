@@ -2,8 +2,8 @@
 {% if track_failures | default(true) %}
 -- Defensive Numeric Coercion Tracking: Log unparseable numeric values
 {% for col in columns %}
-INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
-SELECT '{{ pipeline_id }}', '{{ dataset_name }}', 'Numeric coercion failure: unable to parse [{{ col }}] as {{ target_type | default("DECIMAL(18,4)") }}', CAST([{{ col }}] AS NVARCHAR(MAX))
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData])
+SELECT @PipelineId, @RunId, '{{ dataset_name }}', '{{ issue_id | default("") }}', '{{ step_id }}', '{{ col }}', 'Numeric coercion failure: unable to parse [{{ col }}] as {{ target_type | default("DECIMAL(18,4)") }}', 'REJECT', CAST([{{ col }}] AS NVARCHAR(MAX)), CAST([{{ col }}] AS NVARCHAR(MAX))
 FROM [dbo].[{{ dataset_name }}_Staging]
 WHERE [{{ col }}] IS NOT NULL AND TRY_CAST([{{ col }}] AS {{ target_type | default("DECIMAL(18,4)") }}) IS NULL;
 

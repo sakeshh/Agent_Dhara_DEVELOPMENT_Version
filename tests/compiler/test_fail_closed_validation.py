@@ -143,6 +143,8 @@ def test_scenario_d_strict_vs_preview_mode():
 
     assert "8 assessment issue(s) have no supported remediation" in str(exc_info.value)
     assert exc_info.value.failure_stage == "capability_validation"
+    assert exc_info.value.telemetry["rendered_transformation_count"] == 0
+    assert exc_info.value.telemetry["coverage"]["coverage_percent"] == 60.0
 
     # 2. Preview mode -> generates partial artifact with executable=False
     ctx_preview = _build_context()
@@ -165,6 +167,8 @@ def test_scenario_d_strict_vs_preview_mode():
     assert telemetry["partial"] is True
     assert telemetry["unsupported_issue_count"] == 8
     assert telemetry["rendered_transformation_count"] == 1
+    assert telemetry["planner_input_source"] == "structured_actions"
+    assert telemetry["coverage"]["coverage_percent"] == 60.0
     assert len(telemetry["warnings"]) > 0
 
 
@@ -262,4 +266,93 @@ def test_end_to_end_lineage_and_accounting_invariants():
     )
     assert comp_telem["rendered_transformation_count"] == 2
     assert comp_telem["infrastructure_statement_count"] >= 3
+
+
+def test_deterministic_plan_fingerprint():
+    """Validates that identical context produces identical plan_id and procedure name."""
+    pipeline = CompilerPipeline()
+
+    def make_ctx():
+        ctx = _build_context(session_id="deterministic_sess")
+        ctx.structured_actions = [
+            StructuredAction(action_type=ActionType.TRIM, dataset_name="Employee", target_columns=["name"]),
+            StructuredAction(action_type=ActionType.LOWERCASE, dataset_name="Employee", target_columns=["email"]),
+        ]
+        ctx.metadata["ingestion_telemetry"] = {
+            "assessment_discovered_count": 2,
+            "mapped_action_count": 2,
+            "unsupported_issue_count": 0,
+        }
+        return ctx
+
+    ctx1 = make_ctx()
+    ctx2 = make_ctx()
+
+    compiled_ctx1, snap1 = pipeline.compile(ctx1)
+    compiled_ctx2, snap2 = pipeline.compile(ctx2)
+
+    # Identical plan_id across compilations
+    assert compiled_ctx1.logical_plan.plan_id == compiled_ctx2.logical_plan.plan_id
+    assert compiled_ctx1.physical_plan.plan_id == compiled_ctx2.physical_plan.plan_id
+
+    # The generated procedure name is deterministic
+    proc_name = f"sp_etl_{compiled_ctx1.physical_plan.plan_id.replace('-', '_')}"
+    assert f"CREATE OR ALTER PROCEDURE [dbo].[{proc_name}]" in compiled_ctx1.code_artifact.content
+    assert f"CREATE OR ALTER PROCEDURE [dbo].[{proc_name}]" in compiled_ctx2.code_artifact.content
+
+    # Stripping volatile generation timestamp, the entire SQL code is character-for-character identical
+    def strip_timestamp(sql: str) -> str:
+        return "\n".join(l for l in sql.splitlines() if not l.startswith("-- Generated at:"))
+
+    assert strip_timestamp(compiled_ctx1.code_artifact.content) == strip_timestamp(compiled_ctx2.code_artifact.content)
+
+    # Changing an action changes the fingerprint
+    ctx_diff = make_ctx()
+    ctx_diff.structured_actions.append(
+        StructuredAction(action_type=ActionType.UPPERCASE, dataset_name="Employee", target_columns=["name"])
+    )
+    ctx_diff.metadata["ingestion_telemetry"]["assessment_discovered_count"] = 3
+    ctx_diff.metadata["ingestion_telemetry"]["mapped_action_count"] = 3
+    compiled_diff, _ = pipeline.compile(ctx_diff)
+
+    assert compiled_diff.logical_plan.plan_id != compiled_ctx1.logical_plan.plan_id
+
+
+def test_stored_procedure_rejection_table_upgrade_and_pipeline_variable():
+    """Validates that the generated stored procedure defines @PipelineId, @RunId, and defensive schema upgrades."""
+    pipeline = CompilerPipeline()
+    ctx = _build_context(session_id="sp_vars_test")
+    ctx.structured_actions = [
+        StructuredAction(
+            action_type=ActionType.SANITIZE_EMAIL,
+            dataset_name="Employee",
+            target_columns=["email"],
+            parameters={"disposition": "REJECT"},
+        ),
+    ]
+    ctx.metadata["ingestion_telemetry"] = {
+        "assessment_discovered_count": 1,
+        "mapped_action_count": 1,
+        "unsupported_issue_count": 0,
+    }
+
+    compiled_ctx, _ = pipeline.compile(ctx)
+    sql = compiled_ctx.code_artifact.content
+
+    # Procedure declares @PipelineId and @RunId
+    assert "DECLARE @PipelineId VARCHAR(100) =" in sql
+    assert "DECLARE @RunId UNIQUEIDENTIFIER = NEWID();" in sql
+
+    # Rejection log table migration statements exist
+    assert "IF COL_LENGTH('[ETL_REJECT].[Rejection_Log]', 'RunId') IS NULL" in sql
+    assert "IF COL_LENGTH('[ETL_REJECT].[Rejection_Log]', 'IssueId') IS NULL" in sql
+    assert "IF COL_LENGTH('[ETL_REJECT].[Rejection_Log]', 'StepId') IS NULL" in sql
+    assert "IF COL_LENGTH('[ETL_REJECT].[Rejection_Log]', 'ColumnName') IS NULL" in sql
+    assert "IF COL_LENGTH('[ETL_REJECT].[Rejection_Log]', 'Disposition') IS NULL" in sql
+    assert "IF COL_LENGTH('[ETL_REJECT].[Rejection_Log]', 'OriginalValue') IS NULL" in sql
+
+    # Inserts use variables instead of repeating literals
+    assert "@PipelineId," in sql
+    assert "@RunId," in sql
+
 

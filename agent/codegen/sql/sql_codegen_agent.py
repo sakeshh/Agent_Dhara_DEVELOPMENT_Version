@@ -59,6 +59,81 @@ class SQLCodegenAgent(BaseCodegenAgent):
         infrastructure_statement_count = 2  # Rejection schema + Rejection_Log DDL
         projection_statement_count = 0
 
+        ing_telem = context.metadata.get("ingestion_telemetry", {})
+        assessment_issue_count = ing_telem.get("assessment_discovered_count", len(context.detected_issues))
+        default_mapped = len(context.structured_actions) if context.structured_actions else (len(context.logical_plan.steps) if context.logical_plan else 0)
+        mapped_issue_count = ing_telem.get("mapped_issue_count", ing_telem.get("mapped_action_count", default_mapped))
+        unsupported_issue_count = ing_telem.get("unsupported_issue_count", 0)
+        manual_review_issue_count = ing_telem.get("manual_review_issue_count", 0)
+
+        structured_action_count = len(context.structured_actions)
+        logical_step_count = len(context.logical_plan.steps) if context.logical_plan else 0
+        physical_step_count = len(physical_plan.steps)
+
+        planner_input_source = context.metadata.get("planner_input_source") or (
+            "structured_actions" if context.structured_actions else "legacy_detected_issues"
+        )
+        cov_pct = round((mapped_issue_count / assessment_issue_count * 100.0), 2) if assessment_issue_count > 0 else 100.0
+        coverage_dict = {
+            "detected": assessment_issue_count,
+            "supported": mapped_issue_count,
+            "unsupported": unsupported_issue_count,
+            "coverage_percent": cov_pct,
+        }
+
+        strict_mode = context.options.get("strict_execution", True)
+        if context.options.get("preview_mode", False) or context.options.get("preview_partial", False):
+            strict_mode = False
+
+        # Fast capability validation in strict mode: fail before rendering to save work
+        if strict_mode and assessment_issue_count > 0 and mapped_issue_count == 0:
+            telemetry = CompilationTelemetry(
+                ok=False,
+                executable=False,
+                partial=False,
+                failure_stage="capability_validation",
+                planner_input_source=planner_input_source,
+                coverage=coverage_dict,
+                assessment_issue_count=assessment_issue_count,
+                mapped_issue_count=0,
+                unsupported_issue_count=unsupported_issue_count,
+                manual_review_issue_count=manual_review_issue_count,
+                structured_action_count=structured_action_count,
+                logical_step_count=logical_step_count,
+                physical_step_count=physical_step_count,
+                rendered_transformation_count=0,
+            )
+            context.metadata["compilation_telemetry"] = telemetry.to_dict()
+            raise CodeGenerationError(
+                f"Assessment detected {assessment_issue_count} issue(s), but none could be mapped to compiler actions.",
+                telemetry=telemetry.to_dict(),
+                failure_stage="capability_validation",
+            )
+
+        if strict_mode and unsupported_issue_count > 0:
+            telemetry = CompilationTelemetry(
+                ok=False,
+                executable=False,
+                partial=False,
+                failure_stage="capability_validation",
+                planner_input_source=planner_input_source,
+                coverage=coverage_dict,
+                assessment_issue_count=assessment_issue_count,
+                mapped_issue_count=mapped_issue_count,
+                unsupported_issue_count=unsupported_issue_count,
+                manual_review_issue_count=manual_review_issue_count,
+                structured_action_count=structured_action_count,
+                logical_step_count=logical_step_count,
+                physical_step_count=physical_step_count,
+                rendered_transformation_count=0,
+            )
+            context.metadata["compilation_telemetry"] = telemetry.to_dict()
+            raise CodeGenerationError(
+                f"Compilation stopped because {unsupported_issue_count} assessment issue(s) have no supported remediation.",
+                telemetry=telemetry.to_dict(),
+                failure_stage="capability_validation",
+            )
+
         for ds_name in physical_plan.dataset_names:
             table_ident = parse_table_identifier(ds_name)
             steps = physical_plan.get_steps_for_dataset(ds_name)
@@ -297,6 +372,8 @@ class SQLCodegenAgent(BaseCodegenAgent):
             infrastructure_statement_count=infrastructure_statement_count,
             projection_statement_count=projection_statement_count,
             fallback_projection_used=bool(clean_columns and rendered_transformation_count == 0),
+            planner_input_source=planner_input_source,
+            coverage=coverage_dict,
             step_results=compilation_results,
         )
 

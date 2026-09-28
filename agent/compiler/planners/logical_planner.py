@@ -9,6 +9,7 @@ from agent.compiler.models.context import CompilerContext
 from agent.compiler.models.logical import ActionType, DataEffect, LogicalPlan, LogicalStep
 from agent.compiler.models.profile import DatasetProfile
 from agent.compiler.planners.confidence_agent import ConfidenceAgent
+from agent.compiler.planners.fingerprint import compute_plan_fingerprint
 from agent.compiler.planners.issue_compiler import IssueCompiler
 from agent.compiler.validation.action_validator import ActionValidator
 
@@ -182,6 +183,7 @@ class LogicalPlanner(BaseAgent):
         
         # Primary compilation: structured actions
         if context.structured_actions:
+            action_source = "structured_actions"
             for idx, action in enumerate(context.structured_actions):
                 if isinstance(action, StructuredAction):
                     step = self.action_to_logical_step(action, idx, context.dataset_profiles)
@@ -193,6 +195,7 @@ class LogicalPlanner(BaseAgent):
                 steps.append(step)
                 dataset_names.add(step.dataset_name)
         elif context.detected_issues:
+            action_source = "legacy_detected_issues"
             # Fallback compilation for legacy contexts without structured actions
             for idx, issue in enumerate(context.detected_issues):
                 step = self.issue_compiler.issue_to_logical_step(issue, idx)
@@ -201,6 +204,10 @@ class LogicalPlanner(BaseAgent):
                 step.source_issue_ids = [issue.issue_id]
                 steps.append(step)
                 dataset_names.add(issue.dataset_name)
+        else:
+            action_source = "none"
+
+        context.metadata["planner_input_source"] = action_source
 
         # 3. Add business rules steps if applicable
         for rule in context.business_rules:
@@ -212,13 +219,15 @@ class LogicalPlanner(BaseAgent):
         # 4. Hybrid Topological & Semantic Sorting (with cycle detection)
         sorted_steps = self._topological_sort(steps)
 
-        plan_id = f"plan_{context.session_id}_{int(time.time())}"
+        fingerprint = compute_plan_fingerprint(context, sorted_steps)
+        sess = context.session_id or "default"
+        plan_id = f"plan_{sess}_{fingerprint}"
         logical_plan = LogicalPlan(
             plan_id=plan_id,
             dataset_names=sorted(list(dataset_names)),
             steps=sorted_steps,
             invariants={"never_drop_rows": context.options.get("never_drop_rows", False)},
-            metadata={"step_count": len(sorted_steps)},
+            metadata={"step_count": len(sorted_steps), "fingerprint": fingerprint},
         )
 
         context.logical_plan = logical_plan
