@@ -180,6 +180,10 @@ def check_custom_assertions(df: pd.DataFrame, rules: List[Dict[str, Any]]) -> Li
     unless they are already numeric, supporting string evaluations (e.g. col == 'IT').
     """
     issues = []
+    import builtins
+    df_cols_set = set(df.columns)
+    df_cols_lower = {str(c).lower(): str(c) for c in df.columns}
+
     for rule in rules:
         if not isinstance(rule, dict):
             continue
@@ -188,7 +192,23 @@ def check_custom_assertions(df: pd.DataFrame, rules: List[Dict[str, Any]]) -> Li
             continue
         severity = str(rule.get("severity", "medium")).lower()
         custom_msg = rule.get("message")
-        
+
+        target_col = rule.get("column")
+        if target_col and target_col not in df_cols_set and target_col.lower() not in df_cols_lower:
+            continue
+
+        tokens = set(re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', str(assertion)))
+        reserved_kw = {
+            "and", "or", "not", "in", "is", "if", "else", "for", "while",
+            "true", "false", "none", "True", "False", "None", "pd", "np",
+            "len", "sum", "min", "max", "isna", "isnull", "notna", "notnull",
+            "str", "int", "float", "bool", "lambda", "return"
+        }
+        var_tokens = [t for t in tokens if t not in reserved_kw and not hasattr(builtins, t)]
+        missing_cols = [t for t in var_tokens if t not in df_cols_set and t.lower() not in df_cols_lower]
+        if missing_cols:
+            continue
+
         try:
             res, ref_cols = evaluate_custom_assertion(df, assertion)
             viol_mask = ~res.fillna(False)

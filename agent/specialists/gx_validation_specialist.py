@@ -909,9 +909,35 @@ def run_gx_validation(
                                         })
 
                 # 2. Custom Assertions
+                import builtins
+                df_cols_set = set(validation_df.columns)
+                df_cols_lower = {str(c).lower(): str(c) for c in validation_df.columns}
+
                 for rule in deduped_assertions:
                     assertion = rule.get("assertion")
                     custom_msg = rule.get("message")
+                    if not assertion:
+                        continue
+
+                    target_col = rule.get("column")
+                    if target_col and target_col not in df_cols_set and target_col.lower() not in df_cols_lower:
+                        logger.info(f"Skipping custom assertion '{assertion}': column '{target_col}' not in dataset columns")
+                        continue
+
+                    # Validate rule columns: if any identifier in the assertion is not in dataframe columns, skip rule
+                    tokens = set(re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', str(assertion)))
+                    reserved_kw = {
+                        "and", "or", "not", "in", "is", "if", "else", "for", "while",
+                        "true", "false", "none", "True", "False", "None", "pd", "np",
+                        "len", "sum", "min", "max", "isna", "isnull", "notna", "notnull",
+                        "str", "int", "float", "bool", "lambda", "return"
+                    }
+                    var_tokens = [t for t in tokens if t not in reserved_kw and not hasattr(builtins, t)]
+                    missing_cols = [t for t in var_tokens if t not in df_cols_set and t.lower() not in df_cols_lower]
+                    if missing_cols:
+                        logger.info(f"Skipping custom assertion '{assertion}': columns {missing_cols} not in dataset columns")
+                        continue
+
                     try:
                         from agent.intelligent_data_assessment import evaluate_custom_assertion
                         res, ref_cols = evaluate_custom_assertion(validation_df, assertion)

@@ -623,6 +623,15 @@ def api_update_session_context(payload: SessionContextPayload, _auth: None = Dep
         sess["context"] = ctx
     for k, v in (payload.context or {}).items():
         ctx[str(k)] = v
+    if ctx.get("user_prompt"):
+        sess["user_prompt"] = ctx["user_prompt"]
+        logger.info(f"[SESSION] Stored prompt={sess['user_prompt']}")
+    elif isinstance(ctx.get("pending_business_rules"), dict):
+        p_prompt = ctx["pending_business_rules"].get("user_prompt") or ctx["pending_business_rules"].get("notes")
+        if p_prompt:
+            sess["user_prompt"] = p_prompt
+            ctx["user_prompt"] = p_prompt
+            logger.info(f"[SESSION] Stored prompt={sess['user_prompt']}")
     save_session(sess)
     return {"ok": True, "session_id": sid, "context_keys": list(ctx.keys())}
 
@@ -757,7 +766,12 @@ def api_enrich_semantics(payload: Dict[str, Any], _auth: None = Depends(require_
 def api_etl_plan(payload: EtlPlanPayload, request: Request, _auth: None = Depends(require_backend_token)) -> Dict[str, Any]:
     """Build ETL plan from assessment + business rules; stores under session.context.etl_flow."""
     _plan_limiter.check(client_ip(request))
+    logger.info(f"[PLAN API] payload={payload.model_dump()}")
     from agent.etl_handlers import etl_plan_start
+
+    resolved_prompt = payload.user_prompt
+    if not resolved_prompt and isinstance(payload.business_rules, dict):
+        resolved_prompt = payload.business_rules.get("user_prompt") or payload.business_rules.get("notes")
 
     return etl_plan_start(
         payload.session_id,
@@ -772,7 +786,7 @@ def api_etl_plan(payload: EtlPlanPayload, request: Request, _auth: None = Depend
         source_context=payload.source_context,
         engine_user_override=bool(payload.engine_user_override),
         generation_mode=payload.generation_mode,
-        user_prompt=payload.user_prompt,
+        user_prompt=resolved_prompt,
     )
 
 

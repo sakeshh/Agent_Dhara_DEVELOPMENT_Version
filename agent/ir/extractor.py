@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
@@ -205,8 +206,8 @@ class IrExtractor:
             len(rag_context.contracts),
         )
 
-        # If a highly confident historical IR pattern matches, reuse it
-        if rag_context.matched_pattern:
+        # Historical IR pattern reuse
+        if rag_context.matched_pattern and os.getenv("DHARA_REUSE_IR_HISTORY", "true").lower() == "true":
             logger.info("[IrExtractor] Reusing historical IR pattern from memory for prompt: '%s'", user_prompt[:50])
             reused_plan = IrPlan.model_validate(rag_context.matched_pattern.model_dump())
             reused_plan.metadata.session_id = session_id

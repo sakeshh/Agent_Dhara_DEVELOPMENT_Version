@@ -85,8 +85,8 @@ export default function DataPipelinePage() {
   const [approvedSemantics, setApprovedSemantics] = useState<Record<string, Record<string, string>> | null>(null);
   const [dqThreshold, setDqThreshold] = useState<number>(70);
   const [forceUnlock, setForceUnlock] = useState<boolean>(false);
-  const [semanticOverrides, setSemanticOverrides] = useState<Record<string, any>>({});
   const [plan, setPlan] = useState<any>(null);
+  const [userPrompt, setUserPrompt] = useState<string>('');
 
   const [execResult, setExecResult] = useState<ExecutionResult | null>(null);
   const [execLoading, setExecLoading] = useState(false);
@@ -550,7 +550,7 @@ export default function DataPipelinePage() {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-transparent">
-      <AnimatedBackground pauseTime={0} />
+      <AnimatedBackground showVideo={false} pauseTime={0} />
 
       {/* Header */}
       <motion.div
@@ -586,11 +586,11 @@ export default function DataPipelinePage() {
         <div className={`flex flex-col lg:flex-row gap-8 items-start ${!selectedDatabase ? 'justify-center' : ''}`}>
           {/* Left Sidebar: Vertical Stepper (Visible ONLY after a data source is selected) */}
           {selectedDatabase && (
-            <div className="w-full lg:w-72 shrink-0 bg-white/70 backdrop-blur-xl rounded-2xl border border-black/10 p-6 shadow-[0_8px_32px_rgba(0,0,0,0.04)] overflow-y-auto h-[calc(100vh-85px)] options-scroll">
-              <h2 className="text-xs font-bold uppercase tracking-wider text-black/45 mb-6 px-2">
+            <div className="w-full lg:w-72 shrink-0 bg-white/70 backdrop-blur-xl rounded-2xl border border-black/10 p-5 shadow-[0_8px_32px_rgba(0,0,0,0.04)] overflow-y-auto h-[calc(100vh-85px)] no-scrollbar">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-black/45 mb-4 px-2">
                 Pipeline Steps
               </h2>
-              <div className="relative flex flex-col space-y-6">
+              <div className="relative flex flex-col space-y-4">
                 {steps.map((step, index) => {
                   const Icon = step.icon;
                   const isActive = currentStep === step.id;
@@ -610,7 +610,7 @@ export default function DataPipelinePage() {
                     <div key={step.id} id={`step-btn-${step.id}`} className="relative flex items-start">
                       {/* Vertical Connector Line with Down Arrow */}
                       {index < steps.length - 1 && (
-                        <div className="absolute left-8 top-14 h-[40px] w-2 -translate-x-1/2 flex flex-col items-center z-0">
+                        <div className="absolute left-8 top-14 h-[32px] w-2 -translate-x-1/2 flex flex-col items-center z-0">
                           {/* Line */}
                           <div className="w-0.5 flex-1 bg-black/10 relative overflow-hidden rounded-full">
                             <motion.div
@@ -650,8 +650,6 @@ export default function DataPipelinePage() {
                               ? 'bg-[#0070AD]/80 text-white hover:bg-[#0070AD]'
                               : 'bg-black/5 text-black/45'
                           }`}
-                          animate={isActive && statusText !== 'Completed' ? { scale: [1, 1.05, 1] } : {}}
-                          transition={{ duration: 0.5, repeat: isActive && statusText !== 'Completed' ? Infinity : 0, repeatDelay: 2 }}
                           whileHover={isClickable ? { scale: 1.05 } : {}}
                           whileTap={isClickable ? { scale: 0.98 } : {}}
                         >
@@ -791,7 +789,10 @@ export default function DataPipelinePage() {
                 sessionId={etlSessionId}
                 selectedDatabase={selectedDatabase!}
                 selectedFiles={selectedFiles}
-                onComplete={handleStartAssessment}
+                onComplete={(prompt?: string) => {
+                  if (prompt) setUserPrompt(prompt);
+                  handleStartAssessment();
+                }}
                 onBack={() => {
                   setDirection('back');
                   setCurrentStep('fabric-setup');
@@ -971,6 +972,7 @@ export default function DataPipelinePage() {
                 ) : (
                   <EtlGenerationPanel
                     sessionId={etlSessionId}
+                    userPrompt={userPrompt}
                     assessment={(assessmentData?.result ?? assessmentData) as Record<string, unknown>}
                     variant="pipeline"
                     pipelineMode="requirements"
@@ -996,6 +998,7 @@ export default function DataPipelinePage() {
                   <>
                     <EtlGenerationPanel
                       sessionId={etlSessionId}
+                      userPrompt={userPrompt}
                       assessment={(assessmentData?.result ?? assessmentData) as Record<string, unknown>}
                       variant="pipeline"
                       pipelineMode="etl"
