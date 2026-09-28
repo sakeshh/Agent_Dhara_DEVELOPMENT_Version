@@ -30,6 +30,8 @@ import logging
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+logging.getLogger("matplotlib.category").setLevel(logging.WARNING)
+logging.getLogger("matplotlib").setLevel(logging.WARNING)
 
 # Max rows to profile — sampling above this threshold avoids OOM on huge files
 PROFILE_ROW_LIMIT = 50_000

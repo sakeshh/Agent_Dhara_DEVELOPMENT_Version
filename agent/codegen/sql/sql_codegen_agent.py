@@ -61,22 +61,66 @@ class SQLCodegenAgent(BaseCodegenAgent):
 
         ing_telem = context.metadata.get("ingestion_telemetry", {})
         assessment_issue_count = ing_telem.get("assessment_discovered_count", len(context.detected_issues))
+        reconciled_issue_count = ing_telem.get("canonical_issue_count", ing_telem.get("normalized_issue_count", assessment_issue_count))
         default_mapped = len(context.structured_actions) if context.structured_actions else (len(context.logical_plan.steps) if context.logical_plan else 0)
-        mapped_issue_count = ing_telem.get("mapped_issue_count", ing_telem.get("mapped_action_count", default_mapped))
+        mapped_issue_count = ing_telem.get("deterministically_resolved_issue_count", ing_telem.get("mapped_issue_count", ing_telem.get("mapped_action_count", default_mapped)))
         unsupported_issue_count = ing_telem.get("unsupported_issue_count", 0)
         manual_review_issue_count = ing_telem.get("manual_review_issue_count", 0)
 
         structured_action_count = len(context.structured_actions)
         logical_step_count = len(context.logical_plan.steps) if context.logical_plan else 0
         physical_step_count = len(physical_plan.steps)
+        actions_consolidated = max(0, structured_action_count - logical_step_count)
+        independently_planned = min(structured_action_count, logical_step_count)
+        actions_dropped = 0
+
+        consolidation_groups = context.metadata.get("consolidation_groups") or []
+        if not consolidation_groups and actions_consolidated > 0:
+            consolidation_groups.append({
+                "status": "CONSOLIDATED",
+                "actions_consolidated_count": actions_consolidated,
+                "logical_step_count": logical_step_count,
+                "reason_code": "TOPOLOGICAL_STEP_CONSOLIDATION",
+            })
+
+        certification_status = context.metadata.get("certification_status") or (
+            "REVIEW_REQUIRED" if manual_review_issue_count > 0 else "COMPLETE"
+        )
+        blocking_manual_review_count = context.metadata.get("blocking_manual_review_issue_count", 0)
+        non_blocking_manual_review_count = context.metadata.get("non_blocking_manual_review_issue_count", manual_review_issue_count)
 
         planner_input_source = context.metadata.get("planner_input_source") or (
             "structured_actions" if context.structured_actions else "legacy_detected_issues"
         )
-        cov_pct = round((mapped_issue_count / assessment_issue_count * 100.0), 2) if assessment_issue_count > 0 else 100.0
+
+        canonical_issue_ids = set(
+            context.metadata.get("canonical_issue_ids")
+            or ing_telem.get("canonical_issue_ids")
+            or [iss.issue_id for iss in context.detected_issues]
+        )
+        executable_issue_ids: Set[str] = set()
+        for act in context.structured_actions:
+            if hasattr(act, "source_issue_ids") and act.source_issue_ids:
+                executable_issue_ids.update(act.source_issue_ids)
+            elif hasattr(act, "action_id"):
+                executable_issue_ids.add(act.action_id)
+
+        if canonical_issue_ids:
+            unknown_ids = executable_issue_ids - canonical_issue_ids
+            if unknown_ids:
+                logger.error("[SqlCodegenAgent] Telemetry invariant error: executable actions reference unknown canonical issues: %s", sorted(unknown_ids))
+            cov_pct = round(len(executable_issue_ids) / len(canonical_issue_ids) * 100.0, 2)
+            supported_count = len(executable_issue_ids)
+        elif reconciled_issue_count > 0:
+            supported_count = mapped_issue_count
+            cov_pct = round(mapped_issue_count / reconciled_issue_count * 100.0, 2)
+        else:
+            supported_count = 0
+            cov_pct = 100.0
+
         coverage_dict = {
-            "detected": assessment_issue_count,
-            "supported": mapped_issue_count,
+            "detected": reconciled_issue_count,
+            "supported": supported_count,
             "unsupported": unsupported_issue_count,
             "coverage_percent": cov_pct,
         }
@@ -93,6 +137,10 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 partial=False,
                 failure_stage="capability_validation",
                 planner_input_source=planner_input_source,
+                certification_status="BLOCKED",
+                blocking_manual_review_issue_count=blocking_manual_review_count,
+                non_blocking_manual_review_issue_count=non_blocking_manual_review_count,
+                independently_planned_action_count=independently_planned,
                 coverage=coverage_dict,
                 assessment_issue_count=assessment_issue_count,
                 mapped_issue_count=0,
@@ -101,7 +149,11 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 structured_action_count=structured_action_count,
                 logical_step_count=logical_step_count,
                 physical_step_count=physical_step_count,
+                actions_consolidated_count=actions_consolidated,
+                actions_dropped_count=actions_dropped,
+                consolidation_groups=consolidation_groups,
                 rendered_transformation_count=0,
+                issue_reconciliation=context.metadata.get("issue_reconciliation") or [],
             )
             context.metadata["compilation_telemetry"] = telemetry.to_dict()
             raise CodeGenerationError(
@@ -117,6 +169,10 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 partial=False,
                 failure_stage="capability_validation",
                 planner_input_source=planner_input_source,
+                certification_status="BLOCKED",
+                blocking_manual_review_issue_count=blocking_manual_review_count,
+                non_blocking_manual_review_issue_count=non_blocking_manual_review_count,
+                independently_planned_action_count=independently_planned,
                 coverage=coverage_dict,
                 assessment_issue_count=assessment_issue_count,
                 mapped_issue_count=mapped_issue_count,
@@ -125,7 +181,11 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 structured_action_count=structured_action_count,
                 logical_step_count=logical_step_count,
                 physical_step_count=physical_step_count,
+                actions_consolidated_count=actions_consolidated,
+                actions_dropped_count=actions_dropped,
+                consolidation_groups=consolidation_groups,
                 rendered_transformation_count=0,
+                issue_reconciliation=context.metadata.get("issue_reconciliation") or [],
             )
             context.metadata["compilation_telemetry"] = telemetry.to_dict()
             raise CodeGenerationError(
@@ -479,6 +539,10 @@ class SQLCodegenAgent(BaseCodegenAgent):
             ok=True,
             executable=True,
             partial=not strict_mode and (unsupported_issue_count > 0 or failed_transformation_count > 0),
+            certification_status=certification_status,
+            blocking_manual_review_issue_count=blocking_manual_review_count,
+            non_blocking_manual_review_issue_count=non_blocking_manual_review_count,
+            independently_planned_action_count=independently_planned,
             assessment_issue_count=assessment_issue_count,
             mapped_issue_count=mapped_issue_count,
             unsupported_issue_count=unsupported_issue_count,
@@ -486,6 +550,9 @@ class SQLCodegenAgent(BaseCodegenAgent):
             structured_action_count=structured_action_count,
             logical_step_count=logical_step_count,
             physical_step_count=physical_step_count,
+            actions_consolidated_count=actions_consolidated,
+            actions_dropped_count=actions_dropped,
+            consolidation_groups=consolidation_groups,
             rendered_transformation_count=rendered_transformation_count,
             failed_transformation_count=failed_transformation_count,
             template_missing_count=template_missing_count,

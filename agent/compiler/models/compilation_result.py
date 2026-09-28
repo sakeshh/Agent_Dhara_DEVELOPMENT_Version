@@ -81,6 +81,13 @@ class CompilationTelemetry:
 
     failure_stage: Optional[str] = None
     planner_input_source: str = "structured_actions"
+    certification_status: str = "COMPLETE"  # "COMPLETE" | "REVIEW_REQUIRED" | "BLOCKED"
+    blocking_manual_review_issue_count: int = 0
+    non_blocking_manual_review_issue_count: int = 0
+    independently_planned_action_count: int = 0
+    actions_consolidated_count: int = 0
+    actions_dropped_count: int = 0
+    consolidation_groups: List[Dict[str, Any]] = field(default_factory=list)
     coverage: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
     step_results: List[StepCompilationResult] = field(default_factory=list)
@@ -141,6 +148,13 @@ class CompilationTelemetry:
             "fallback_projection_used": self.fallback_projection_used,
             "failure_stage": self.failure_stage,
             "planner_input_source": self.planner_input_source,
+            "certification_status": self.certification_status,
+            "blocking_manual_review_issue_count": self.blocking_manual_review_issue_count,
+            "non_blocking_manual_review_issue_count": self.non_blocking_manual_review_issue_count,
+            "independently_planned_action_count": self.independently_planned_action_count,
+            "actions_consolidated_count": self.actions_consolidated_count,
+            "actions_dropped_count": self.actions_dropped_count,
+            "consolidation_groups": self.consolidation_groups,
             "coverage": self.coverage,
             "warnings": self.warnings,
             "issue_reconciliation": self.issue_reconciliation,

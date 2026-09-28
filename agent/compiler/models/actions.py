@@ -171,11 +171,31 @@ class CastTypeParameters(BaseModel):
         return v.strip()
 
 
+FILL_STRATEGY_ALIASES: Dict[str, str] = {
+    "value": "constant",
+    "fixed": "constant",
+    "literal": "constant",
+    "ffill": "forward_fill",
+    "bfill": "backward_fill",
+}
+
+
 class FillNullsParameters(BaseModel):
     strategy: Literal["constant", "mean", "median", "mode", "forward_fill", "backward_fill"] = Field(
         default="constant", description="Imputation strategy"
     )
     fill_value: Optional[Any] = Field(default=None, description="Constant value if strategy is 'constant'")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_strategy_and_values(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            strat = data.get("strategy")
+            if strat and str(strat).lower() in FILL_STRATEGY_ALIASES:
+                data["strategy"] = FILL_STRATEGY_ALIASES[str(strat).lower()]
+            if "fill_value" not in data and "value" in data:
+                data["fill_value"] = data["value"]
+        return data
 
 
 class RangeClipParameters(BaseModel):

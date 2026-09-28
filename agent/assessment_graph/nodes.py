@@ -180,7 +180,7 @@ def profiler(state: DatasetState) -> Dict[str, Any]:
     if run_ydata:
         try:
             from agent.specialists.ydata_profiler import enrich_assessment_with_profile
-            meta = enrich_assessment_with_profile(df, meta)
+            meta = enrich_assessment_with_profile(df, meta, dataset_name=dataset_name)
         except ImportError:
             pass
         except Exception as e:

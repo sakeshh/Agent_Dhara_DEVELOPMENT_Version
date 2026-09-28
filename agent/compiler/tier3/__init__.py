@@ -58,6 +58,7 @@ from agent.compiler.tier3.validation_result import (
     ValidationSeverity,
 )
 from agent.compiler.tier3.validator import Tier3ValidationOrchestrator
+from agent.compiler.tier3.resolution_service import Tier3ResolutionResult, Tier3ResolutionService
 
 __all__ = [
     "ApprovalDecision",
@@ -102,6 +103,8 @@ __all__ = [
     "Tier3ReplayCache",
     "Tier3ResolutionProposal",
     "Tier3ResolutionRequest",
+    "Tier3ResolutionResult",
+    "Tier3ResolutionService",
     "Tier3ResponseParser",
     "Tier3SafetyValidator",
     "Tier3SchemaValidator",

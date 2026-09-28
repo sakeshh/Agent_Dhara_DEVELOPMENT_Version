@@ -864,7 +864,7 @@ def load_and_profile(
         meta = profile_dataframe(df, job_id=job_id)
         try:
             from agent.specialists.ydata_profiler import enrich_assessment_with_profile
-            meta = enrich_assessment_with_profile(df, meta)
+            meta = enrich_assessment_with_profile(df, meta, dataset_name=name)
         except ImportError:
             pass # ydata-profiling optional — graceful skip
         except Exception as e:

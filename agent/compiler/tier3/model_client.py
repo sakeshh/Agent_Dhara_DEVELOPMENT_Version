@@ -120,3 +120,135 @@ class MockTier3ModelClient:
             retry_count=max(0, self.call_count - 1),
             status="SUCCESS",
         )
+
+
+class OpenAITier3ModelClient:
+    """Production LLM client for Tier 3 proposals utilizing AzureOpenAI or OpenAI."""
+
+    def __init__(self, prompt_builder: Optional[Any] = None, timeout: float = 30.0):
+        from agent.compiler.tier3.prompt_builder import Tier3PromptBuilder
+        self.prompt_builder = prompt_builder or Tier3PromptBuilder()
+        self.timeout = timeout
+
+    def propose_resolution(self, request: Tier3ResolutionRequest) -> Tier3ModelResponse:
+        t0 = time.time()
+        from agent.model_config import load_llm_config
+        cfg = load_llm_config(purpose="tier3_resolution") or load_llm_config(purpose="etl_codegen") or load_llm_config(purpose="general")
+
+        if not cfg or not cfg.api_key:
+            return Tier3ModelResponse(
+                raw_content="",
+                model_provider="none",
+                model_deployment="none",
+                model_version="none",
+                request_id=f"req_{int(time.time()*1000)}",
+                latency_ms=0.0,
+                status="UNAVAILABLE",
+                error_message="LLM provider credentials not configured for Tier 3 resolution.",
+            )
+
+        client = None
+        try:
+            if cfg.provider == "azure_openai" and cfg.endpoint:
+                from openai import AzureOpenAI
+                client = AzureOpenAI(
+                    azure_endpoint=cfg.endpoint,
+                    api_key=cfg.api_key,
+                    api_version=cfg.api_version or "2024-02-01",
+                    timeout=self.timeout,
+                    max_retries=1,
+                )
+            elif cfg.provider == "openai":
+                from openai import OpenAI
+                client = OpenAI(
+                    api_key=cfg.api_key,
+                    timeout=self.timeout,
+                    max_retries=1,
+                )
+        except Exception as e:
+            return Tier3ModelResponse(
+                raw_content="",
+                model_provider=cfg.provider,
+                model_deployment=cfg.model,
+                model_version="1.0",
+                request_id=f"req_{int(time.time()*1000)}",
+                latency_ms=round((time.time() - t0) * 1000, 1),
+                status="UNAVAILABLE",
+                error_message=f"Failed to initialize OpenAI client: {e}",
+            )
+
+        if not client:
+            return Tier3ModelResponse(
+                raw_content="",
+                model_provider=cfg.provider,
+                model_deployment=cfg.model,
+                model_version="1.0",
+                request_id=f"req_{int(time.time()*1000)}",
+                latency_ms=0.0,
+                status="UNAVAILABLE",
+                error_message="Could not initialize client with provider config.",
+            )
+
+        prompts = self.prompt_builder.build_prompt(request)
+        try:
+            resp = client.chat.completions.create(
+                model=cfg.model,
+                messages=[
+                    {"role": "system", "content": prompts["system_prompt"]},
+                    {"role": "user", "content": prompts["user_prompt"]},
+                ],
+                temperature=0.0,
+                response_format={"type": "json_object"},
+            )
+            raw = resp.choices[0].message.content or "{}"
+            usage = {}
+            if getattr(resp, "usage", None):
+                usage = {
+                    "prompt_tokens": resp.usage.prompt_tokens,
+                    "completion_tokens": resp.usage.completion_tokens,
+                    "total_tokens": resp.usage.total_tokens,
+                }
+            latency = round((time.time() - t0) * 1000, 1)
+            return Tier3ModelResponse(
+                raw_content=raw,
+                model_provider=cfg.provider,
+                model_deployment=cfg.model,
+                model_version="1.0",
+                request_id=getattr(resp, "id", f"req_{int(time.time()*1000)}"),
+                latency_ms=latency,
+                token_usage=usage,
+                status="SUCCESS",
+            )
+        except Exception as exc:
+            import re
+            latency = round((time.time() - t0) * 1000, 1)
+            raw_err = str(exc)
+            # Redact secrets, keys, or bearer tokens in error message
+            redacted_err = re.sub(
+                r"(Bearer\s+|api[-_]?key\s*[:=]\s*|key=)[A-Za-z0-9_\-\.]{8,}",
+                r"\1[REDACTED]",
+                raw_err,
+                flags=re.IGNORECASE,
+            )
+            err_lower = redacted_err.lower()
+            if "content_filter" in err_lower or "responsibleai" in err_lower:
+                status = "CONTENT_FILTER"
+            elif "timeout" in err_lower or "timed out" in err_lower:
+                status = "TIMEOUT"
+            elif "rate" in err_lower or "429" in err_lower:
+                status = "RETRYABLE_ERROR"
+            elif "connection" in err_lower or "network" in err_lower:
+                status = "UNAVAILABLE"
+            else:
+                status = "FATAL_ERROR"
+
+            return Tier3ModelResponse(
+                raw_content="",
+                model_provider=cfg.provider,
+                model_deployment=cfg.model,
+                model_version="1.0",
+                request_id=f"req_{int(time.time()*1000)}",
+                latency_ms=latency,
+                status=status,
+                error_message=redacted_err,
+            )
