@@ -1,0 +1,14 @@
+-- Step: {{ step_id }} ({{ description }})
+UPDATE [dbo].[{{ dataset_name }}_Staging]
+SET
+{% for col in columns %}
+    [{{ col }}] = CASE 
+        WHEN {{ sql_condition }} THEN {{ rendered_new_value }}
+        {% if rendered_else_value is not none and rendered_else_value != '' %}
+        ELSE {{ rendered_else_value }}
+        {% else %}
+        ELSE [{{ col }}]
+        {% endif %}
+    END{% if not loop.last %},{% endif %}
+{% endfor %}
+;

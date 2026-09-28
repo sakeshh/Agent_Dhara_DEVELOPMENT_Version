@@ -32,6 +32,16 @@ from agent.compiler.learning.explanation_agent import ExplanationAgent, ExplainC
 from agent.compiler.learning.analytics_service import AnalyticsService
 from agent.compiler.learning.cleaning_package_builder import CleaningPackageBuilder
 
+from agent.compiler.learning.promoted_models import (
+    ExtensionCandidate,
+    PromotedRule,
+    PromotionEvidence,
+    RuleLifecycleState,
+    SchemaSignature,
+)
+from agent.compiler.learning.promoted_repository import PromotedRuleRepository
+from agent.compiler.learning.promotion_evaluator import PromotionEvaluator
+
 __all__ = [
     "CleaningPatternRecord",
     "IssueHistoryRecord",
@@ -65,4 +75,12 @@ __all__ = [
     "ExplainCleaningResponse",
     "AnalyticsService",
     "CleaningPackageBuilder",
+    # Phase 6
+    "ExtensionCandidate",
+    "PromotedRule",
+    "PromotionEvidence",
+    "RuleLifecycleState",
+    "SchemaSignature",
+    "PromotedRuleRepository",
+    "PromotionEvaluator",
 ]

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class ActionType(str, Enum):
+    # Level 1: Deterministic Catalog Operations
     TRIM = "trim"
     LOWERCASE = "lowercase"
     UPPERCASE = "uppercase"
@@ -25,6 +26,14 @@ class ActionType(str, Enum):
     DEDUPLICATE = "deduplicate"
     VALIDATE_REFERENTIAL_INTEGRITY = "validate_referential_integrity"
     CUSTOM_EXPRESSION = "custom_expression"
+
+    # Level 2: Composable Universal Operators
+    PREFIX_ADD = "prefix_add"
+    SUFFIX_ADD = "suffix_add"
+    PATTERN_REPLACE = "pattern_replace"
+    VALUE_MAP = "value_map"
+    PAD = "pad"
+    CONDITIONAL_UPDATE = "conditional_update"
 
 
 class DataEffect(str, Enum):
@@ -49,6 +58,11 @@ class LogicalStep(BaseModel):
     source_issue_ids: List[str] = Field(default_factory=list)
     description: Optional[str] = None
     fused_operations: List[ActionType] = Field(default_factory=list)
+    depends_on_step_ids: List[str] = Field(default_factory=list, description="IDs of steps that must execute before this step")
+    source: Optional[str] = Field(default=None, description="Provenance source (assessment, business_rule, catalog, etc.)")
+    source_reference: Optional[str] = Field(default=None, description="Original reference ID for rule or issue")
+    extraction_method: Optional[str] = Field(default=None, description="Extraction method (deterministic, llm, manual)")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Step metadata and policy annotations")
 
 
 class LogicalPlan(BaseModel):

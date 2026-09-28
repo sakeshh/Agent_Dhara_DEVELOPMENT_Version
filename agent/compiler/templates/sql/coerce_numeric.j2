@@ -1,0 +1,26 @@
+-- Step: {{ step_id }} ({{ description }})
+{% if track_failures | default(true) %}
+-- Defensive Numeric Coercion Tracking: Log unparseable numeric values
+{% for col in columns %}
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
+SELECT '{{ pipeline_id }}', '{{ dataset_name }}', 'Numeric coercion failure: unable to parse [{{ col }}] as {{ target_type | default("DECIMAL(18,4)") }}', CAST([{{ col }}] AS NVARCHAR(MAX))
+FROM [dbo].[{{ dataset_name }}_Staging]
+WHERE [{{ col }}] IS NOT NULL AND TRY_CAST([{{ col }}] AS {{ target_type | default("DECIMAL(18,4)") }}) IS NULL;
+
+{% if max_failed_rows is defined and max_failed_rows is not none %}
+DECLARE @FailedCount_{{ col | replace('-', '_') }} INT = @@ROWCOUNT;
+IF @FailedCount_{{ col | replace('-', '_') }} > {{ max_failed_rows }}
+BEGIN
+    RAISERROR('Circuit breaker triggered: Numeric coercion failures for column [%s] exceeded threshold (%d).', 16, 1, '{{ col }}', {{ max_failed_rows }});
+    RETURN;
+END;
+{% endif %}
+{% endfor %}
+{% endif %}
+
+UPDATE [dbo].[{{ dataset_name }}_Staging]
+SET
+{% for col in columns %}
+    [{{ col }}] = TRY_CAST([{{ col }}] AS {{ target_type | default('DECIMAL(18,4)') }}){% if not loop.last %},{% endif %}
+{% endfor %}
+;

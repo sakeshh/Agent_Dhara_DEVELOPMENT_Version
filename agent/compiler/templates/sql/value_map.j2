@@ -1,0 +1,17 @@
+-- Step: {{ step_id }} ({{ description }})
+UPDATE [dbo].[{{ dataset_name }}_Staging]
+SET
+{% for col in columns %}
+    [{{ col }}] = CASE 
+        WHEN [{{ col }}] IS NULL THEN NULL
+        {% for src_val, tgt_val in mappings.items() %}
+        WHEN [{{ col }}] = {{ src_val | render_literal }} THEN {{ tgt_val | render_literal }}
+        {% endfor %}
+        {% if preserve_unmapped %}
+        ELSE [{{ col }}]
+        {% else %}
+        ELSE NULL
+        {% endif %}
+    END{% if not loop.last %},{% endif %}
+{% endfor %}
+;

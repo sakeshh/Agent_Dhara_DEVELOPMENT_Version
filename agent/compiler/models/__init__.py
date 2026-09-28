@@ -9,6 +9,27 @@ from agent.compiler.models.artifacts import ArtifactManifest, CodeArtifact, Cost
 from agent.compiler.models.validation import DiagnosticIssue, DiagnosticSeverity, ValidationIssueType, ValidationResult
 from agent.compiler.models.cleaning import CleaningMode
 from agent.compiler.models.context import CompilerContext
+from agent.compiler.models.actions import (
+    ActionSource,
+    StructuredAction,
+    PrefixAddParameters,
+    SuffixAddParameters,
+    PatternReplaceParameters,
+    ValueMapParameters,
+    PadParameters,
+    ConditionalUpdateParameters,
+    TrimParameters,
+    CastTypeParameters,
+    FillNullsParameters,
+    RangeClipParameters,
+    DeduplicateParameters,
+    ParseDatesParameters,
+)
+from agent.compiler.models.execution import (
+    ExecutionMode,
+    FailureBehavior,
+    TransformationPolicy,
+)
 
 __all__ = [
     "ColumnProfile",
@@ -34,4 +55,21 @@ __all__ = [
     "ValidationResult",
     "CleaningMode",
     "CompilerContext",
+    "ActionSource",
+    "StructuredAction",
+    "PrefixAddParameters",
+    "SuffixAddParameters",
+    "PatternReplaceParameters",
+    "ValueMapParameters",
+    "PadParameters",
+    "ConditionalUpdateParameters",
+    "TrimParameters",
+    "CastTypeParameters",
+    "FillNullsParameters",
+    "RangeClipParameters",
+    "DeduplicateParameters",
+    "ParseDatesParameters",
+    "ExecutionMode",
+    "FailureBehavior",
+    "TransformationPolicy",
 ]

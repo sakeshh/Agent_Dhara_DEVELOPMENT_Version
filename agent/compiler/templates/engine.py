@@ -8,6 +8,26 @@ import jinja2
 _DEFAULT_TEMPLATES_DIR = Path(__file__).resolve().parent
 
 
+def quote_identifier(name: Any) -> str:
+    """Safely quotes a SQL identifier with square brackets [identifier]."""
+    if name is None:
+        return ""
+    clean = str(name).strip().replace("[", "").replace("]", "")
+    return f"[{clean}]"
+
+
+def render_literal(val: Any) -> str:
+    """Safely renders a literal value for T-SQL (N'escaped', numbers, NULL)."""
+    if val is None:
+        return "NULL"
+    if isinstance(val, bool):
+        return "1" if val else "0"
+    if isinstance(val, (int, float)):
+        return str(val)
+    escaped = str(val).replace("'", "''")
+    return f"N'{escaped}'"
+
+
 class TemplateEngine:
     """Jinja2-based template registry and rendering engine for code generation."""
 
@@ -22,6 +42,10 @@ class TemplateEngine:
             lstrip_blocks=True,
             undefined=jinja2.Undefined,
         )
+        self.env.filters["quote_identifier"] = quote_identifier
+        self.env.filters["render_literal"] = render_literal
+        self.env.globals["quote_identifier"] = quote_identifier
+        self.env.globals["render_literal"] = render_literal
 
     @classmethod
     def get_instance(cls) -> TemplateEngine:

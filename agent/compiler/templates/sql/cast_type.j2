@@ -1,4 +1,23 @@
 -- Step: {{ step_id }} ({{ description }})
+{% if track_failures | default(true) %}
+-- Defensive Conversion Tracking: Log silent conversion failures before mutating values
+{% for col in columns %}
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
+SELECT '{{ pipeline_id }}', '{{ dataset_name }}', 'Conversion failure: unable to cast [{{ col }}] to {{ target_type | default("NVARCHAR(255)") }}', CAST([{{ col }}] AS NVARCHAR(MAX))
+FROM [dbo].[{{ dataset_name }}_Staging]
+WHERE [{{ col }}] IS NOT NULL AND TRY_CAST([{{ col }}] AS {{ target_type | default("NVARCHAR(255)") }}) IS NULL;
+
+{% if max_failed_rows is defined and max_failed_rows is not none %}
+DECLARE @FailedCount_{{ col | replace('-', '_') }} INT = @@ROWCOUNT;
+IF @FailedCount_{{ col | replace('-', '_') }} > {{ max_failed_rows }}
+BEGIN
+    RAISERROR('Circuit breaker triggered: Conversion failures for column [%s] exceeded threshold (%d).', 16, 1, '{{ col }}', {{ max_failed_rows }});
+    RETURN;
+END;
+{% endif %}
+{% endfor %}
+{% endif %}
+
 UPDATE [dbo].[{{ dataset_name }}_Staging]
 SET
 {% for col in columns %}

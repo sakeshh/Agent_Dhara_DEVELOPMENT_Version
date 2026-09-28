@@ -52,6 +52,13 @@ class PhysicalPlanner(BaseAgent):
         ActionType.REPLACE_SENTINELS: ("tsql_nullif_sentinels", "replace_sentinels.j2"),
         ActionType.DEDUPLICATE: ("tsql_row_number_partition", "deduplicate.j2"),
         ActionType.VALIDATE_REFERENTIAL_INTEGRITY: ("tsql_left_anti_join", "ri_check.j2"),
+        # Level 2 Composable Operators
+        ActionType.PREFIX_ADD: ("tsql_prefix_add", "prefix_add.j2"),
+        ActionType.SUFFIX_ADD: ("tsql_suffix_add", "suffix_add.j2"),
+        ActionType.PATTERN_REPLACE: ("tsql_pattern_replace", "pattern_replace.j2"),
+        ActionType.VALUE_MAP: ("tsql_value_map", "value_map.j2"),
+        ActionType.PAD: ("tsql_pad", "pad.j2"),
+        ActionType.CONDITIONAL_UPDATE: ("tsql_conditional_update", "conditional_update.j2"),
     }
 
     # Spark translation strategies
@@ -69,10 +76,92 @@ class PhysicalPlanner(BaseAgent):
     }
 
     def _map_step(self, step: LogicalStep, engine: ExecutionEngine, order: int) -> PhysicalStep:
+        from agent.errors import UnsupportedCapabilityError
+        import re
+
+        template_params = dict(step.parameters)
+        template_params["columns"] = step.target_columns
+        template_params["dataset_name"] = step.dataset_name
+        template_params["fused_operations"] = [op.value for op in step.fused_operations]
+        step_meta = getattr(step, "metadata", {}) or {}
+        if "max_failed_rows" not in template_params and step_meta.get("max_failed_rows") is not None:
+            template_params["max_failed_rows"] = step_meta["max_failed_rows"]
+        if "track_failures" not in template_params and step_meta.get("track_failures") is not None:
+            template_params["track_failures"] = step_meta["track_failures"]
+
         if engine == ExecutionEngine.PYTHON:
             strat, tmpl = self.PYTHON_STRATEGIES.get(step.action, ("custom_python", "custom.j2"))
         elif engine == ExecutionEngine.AZURE_SQL:
             strat, tmpl = self.SQL_STRATEGIES.get(step.action, ("custom_sql", "custom.j2"))
+
+            # Physical capability enforcement for Azure SQL:
+            if step.action == ActionType.PATTERN_REPLACE:
+                pat = str(step.parameters.get("pattern") or "")
+                is_regex = bool(step.parameters.get("regex", True))
+                if is_regex:
+                    regex_tokens = [r"\d", r"\w", r"\s", r"\D", r"\W", r"\S", ".*", ".+", "^", "$", "(", ")", "[0-9]", "[a-z]"]
+                    if any(t in pat for t in regex_tokens) or re.search(r"[\^\$\*\+\?\{\}\[\]\(\)\|\\]", pat):
+                        raise UnsupportedCapabilityError(
+                            f"Azure SQL does not support POSIX regular expression replacement for pattern '{pat}'. "
+                            f"Regular expression replacements require Python or PySpark engine, or literal replacement.",
+                            engine="sql",
+                            action="pattern_replace",
+                        )
+
+            elif step.action == ActionType.CONDITIONAL_UPDATE:
+                from agent.compiler.templates.engine import render_literal
+                raw_cond = step.parameters.get("condition")
+
+                if isinstance(raw_cond, dict):
+                    col = str(raw_cond.get("column") or "").strip().replace("[", "").replace("]", "")
+                    op = str(raw_cond.get("operator") or "EQ").upper().strip()
+                    val = raw_cond.get("value")
+                    op_map = {
+                        "EQ": "=", "NEQ": "<>", "IS_NULL": "IS NULL", "IS_NOT_NULL": "IS NOT NULL",
+                        "GT": ">", "LT": "<", "GTE": ">=", "LTE": "<=", "LIKE": "LIKE"
+                    }
+                    if not col or op not in op_map:
+                        raise UnsupportedCapabilityError(
+                            f"Invalid structured condition operator '{op}' or missing column in conditional_update.",
+                            engine="sql", action="conditional_update"
+                        )
+                    sql_op = op_map[op]
+                    if sql_op in ("IS NULL", "IS NOT NULL"):
+                        sql_cond = f"[{col}] {sql_op}"
+                    else:
+                        sql_cond = f"[{col}] {sql_op} {render_literal(val)}"
+                elif isinstance(raw_cond, str):
+                    forbidden = [";", "--", "/*", "DROP", "ALTER", "EXEC", "DELETE", "TRUNCATE", "INSERT"]
+                    if any(f in raw_cond.upper() for f in forbidden):
+                        raise UnsupportedCapabilityError(
+                            f"Azure SQL conditional_update rejects arbitrary unvalidated expression '{raw_cond}'.",
+                            engine="sql", action="conditional_update"
+                        )
+                    safe_pat = r"^\s*\[?([a-zA-Z0-9_]+)\]?\s+(IS\s+NULL|IS\s+NOT\s+NULL|=|<>|!=|>|<|>=|<=|LIKE)\s*(.*)$"
+                    m = re.match(safe_pat, raw_cond.strip(), re.IGNORECASE)
+                    if not m:
+                        raise UnsupportedCapabilityError(
+                            f"Azure SQL conditional_update rejects arbitrary expression '{raw_cond}'. "
+                            f"Use structured condition {{column, operator, value}} or simple predicate '[col] = val'.",
+                            engine="sql", action="conditional_update"
+                        )
+                    col_name = m.group(1)
+                    op_str = m.group(2).upper()
+                    val_part = m.group(3).strip()
+                    if op_str in ("IS NULL", "IS NOT NULL"):
+                        sql_cond = f"[{col_name}] {op_str}"
+                    else:
+                        if (val_part.startswith("'") and val_part.endswith("'")) or (val_part.startswith('"') and val_part.endswith('"')):
+                            val_part = val_part[1:-1]
+                        sql_cond = f"[{col_name}] {op_str} {render_literal(val_part)}"
+                else:
+                    raise UnsupportedCapabilityError("Conditional update requires a valid condition.", engine="sql", action="conditional_update")
+
+                template_params["sql_condition"] = sql_cond
+                template_params["rendered_new_value"] = render_literal(step.parameters.get("new_value"))
+                else_val = step.parameters.get("else_value")
+                template_params["rendered_else_value"] = render_literal(else_val) if else_val is not None else ""
+
         elif engine == ExecutionEngine.PYSPARK:
             strat, tmpl = self.SPARK_STRATEGIES.get(step.action, ("spark_" + step.action.value, f"{step.action.value}.j2"))
         elif engine == ExecutionEngine.FABRIC:
@@ -83,12 +172,6 @@ class PhysicalPlanner(BaseAgent):
             strat, tmpl = (f"adf_{step.action.value}", "adf_activity.j2")
         else:
             strat, tmpl = ("generic_strategy", f"{step.action.value}.j2")
-
-        # Handle fused operations
-        template_params = dict(step.parameters)
-        template_params["columns"] = step.target_columns
-        template_params["dataset_name"] = step.dataset_name
-        template_params["fused_operations"] = [op.value for op in step.fused_operations]
 
         return PhysicalStep(
             step_id=f"phys_{step.step_id}",

@@ -66,6 +66,55 @@ class CompilationBlockedError(AgentError):
         self.details = details or {}
 
 
+class UnsupportedCapabilityError(CompilationBlockedError):
+    """Raised when an operation semantic cannot be executed natively by the physical engine."""
+    def __init__(self, message: str, engine: str | None = None, action: str | None = None):
+        super().__init__(message, details={"engine": engine, "action": action})
+        self.engine = engine
+        self.action = action
+
+
+class CircuitBreakerError(CompilationBlockedError):
+    """Raised when runtime safety or dry-run validation exceeds configured failure thresholds."""
+    def __init__(
+        self,
+        message: str,
+        step_id: str | None = None,
+        failed_count: int = 0,
+        threshold: int | float = 0,
+        action: str | None = None,
+    ):
+        super().__init__(
+            message,
+            details={
+                "step_id": step_id,
+                "failed_count": failed_count,
+                "threshold": threshold,
+                "action": action,
+            },
+        )
+        self.step_id = step_id
+        self.failed_count = failed_count
+        self.threshold = threshold
+        self.action = action
+
+
+class ReconciliationError(CompilationBlockedError):
+    """Raised when mathematical row-count reconciliation fails (input != clean + quarantine + dropped + merged)."""
+    def __init__(self, message: str, input_rows: int = 0, accounted_rows: int = 0, delta: int = 0):
+        super().__init__(
+            message,
+            details={
+                "input_rows": input_rows,
+                "accounted_rows": accounted_rows,
+                "delta": delta,
+            },
+        )
+        self.input_rows = input_rows
+        self.accounted_rows = accounted_rows
+        self.delta = delta
+
+
 class GeneratedCodeIncompleteError(Exception):
     """Exception raised when generated code has incomplete transform functions."""
     def __init__(self, code: str, missing_functions: list[str]):

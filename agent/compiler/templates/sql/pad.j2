@@ -1,0 +1,15 @@
+-- Step: {{ step_id }} ({{ description }})
+UPDATE [dbo].[{{ dataset_name }}_Staging]
+SET
+{% for col in columns %}
+    [{{ col }}] = CASE 
+        WHEN [{{ col }}] IS NULL THEN NULL
+        WHEN LEN([{{ col }}]) >= {{ length }} THEN [{{ col }}]
+        {% if side == 'right' %}
+        ELSE CONCAT([{{ col }}], REPLICATE({{ fill_character | render_literal }}, {{ length }} - LEN([{{ col }}])))
+        {% else %}
+        ELSE CONCAT(REPLICATE({{ fill_character | render_literal }}, {{ length }} - LEN([{{ col }}])), [{{ col }}])
+        {% endif %}
+    END{% if not loop.last %},{% endif %}
+{% endfor %}
+;

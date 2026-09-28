@@ -1,7 +1,45 @@
 -- Step: {{ step_id }} ({{ description }})
+{% set d_type = target_type | default('DATETIME2') | upper %}
+{% if 'SMALLDATETIME' in d_type %}
+    {% set min_bound = '1900-01-01' %}
+    {% set max_bound = '2079-06-06' %}
+{% elif d_type == 'DATETIME' %}
+    {% set min_bound = '1753-01-01' %}
+    {% set max_bound = '9999-12-31' %}
+{% else %}
+    {% set min_bound = '0001-01-01' %}
+    {% set max_bound = '9999-12-31' %}
+{% endif %}
+{% if track_failures | default(true) %}
+-- Defensive Date Conversion Tracking: Log unparseable or out-of-range dates before mutating values
+{% for col in columns %}
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
+SELECT '{{ pipeline_id }}', '{{ dataset_name }}', 'Date conversion failure: unable to parse [{{ col }}] as {{ d_type }}', CAST([{{ col }}] AS NVARCHAR(MAX))
+FROM [dbo].[{{ dataset_name }}_Staging]
+WHERE [{{ col }}] IS NOT NULL AND (
+    TRY_CONVERT({{ d_type }}, [{{ col }}]) IS NULL
+    OR TRY_CONVERT({{ d_type }}, [{{ col }}]) < '{{ min_bound }}'
+    OR TRY_CONVERT({{ d_type }}, [{{ col }}]) > '{{ max_bound }}'
+);
+
+{% if max_failed_rows is defined and max_failed_rows is not none %}
+DECLARE @FailedCount_{{ col | replace('-', '_') }} INT = @@ROWCOUNT;
+IF @FailedCount_{{ col | replace('-', '_') }} > {{ max_failed_rows }}
+BEGIN
+    RAISERROR('Circuit breaker triggered: Date conversion failures for column [%s] exceeded threshold (%d).', 16, 1, '{{ col }}', {{ max_failed_rows }});
+    RETURN;
+END;
+{% endif %}
+{% endfor %}
+{% endif %}
+
 UPDATE [dbo].[{{ dataset_name }}_Staging]
 SET
 {% for col in columns %}
-    [{{ col }}] = TRY_CONVERT(DATETIME2, [{{ col }}]){% if not loop.last %},{% endif %}
+    [{{ col }}] = CASE 
+        WHEN [{{ col }}] IS NULL THEN NULL
+        WHEN TRY_CONVERT({{ d_type }}, [{{ col }}]) IS NULL OR TRY_CONVERT({{ d_type }}, [{{ col }}]) < '{{ min_bound }}' OR TRY_CONVERT({{ d_type }}, [{{ col }}]) > '{{ max_bound }}' THEN NULL
+        ELSE TRY_CONVERT({{ d_type }}, [{{ col }}])
+    END{% if not loop.last %},{% endif %}
 {% endfor %}
 ;

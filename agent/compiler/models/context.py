@@ -22,6 +22,7 @@ class CompilerContext(BaseModel):
     dataset_profiles: Dict[str, DatasetProfile] = Field(default_factory=dict)
     business_rules: List[BusinessRule] = Field(default_factory=list)
     detected_issues: List[Issue] = Field(default_factory=list)
+    structured_actions: List[Any] = Field(default_factory=list, description="Validated StructuredAction instances from any source")
     logical_plan: Optional[LogicalPlan] = None
     physical_plan: Optional[PhysicalPlan] = None
     code_artifact: Optional[CodeArtifact] = None
