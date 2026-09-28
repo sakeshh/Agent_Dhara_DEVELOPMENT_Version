@@ -139,13 +139,14 @@ class SQLCodegenAgent(BaseCodegenAgent):
             steps = physical_plan.get_steps_for_dataset(ds_name)
             rendered_steps: List[str] = []
 
-            # Add staging table preparation header (infrastructure)
+            # Add staging table preparation header with run-local surrogate staging key
             staging_table = table_ident.staging_name
             source_table = table_ident.qualified_name
             prep_ddl = (
-                f"-- Ensure Staging table exists\n"
+                f"-- Ensure Staging table exists with run-local surrogate staging key\n"
                 f"IF OBJECT_ID('{staging_table}', 'U') IS NOT NULL DROP TABLE {staging_table};\n"
-                f"SELECT * INTO {staging_table} FROM {source_table};"
+                f"SELECT * INTO {staging_table} FROM {source_table};\n"
+                f"ALTER TABLE {staging_table} ADD [_DharaStagingRowId] BIGINT IDENTITY(1,1) NOT NULL;"
             )
             rendered_steps.append(prep_ddl)
             infrastructure_statement_count += 1
@@ -204,6 +205,32 @@ class SQLCodegenAgent(BaseCodegenAgent):
 
                 if "target_column" not in params and step.target_columns:
                     params["target_column"] = step.target_columns[0]
+
+                # 0. Approval gate: low-confidence/heuristic actions require explicit approval
+                requires_approval = (
+                    params.get("requires_approval", False) 
+                    or getattr(step, "requires_approval", False)
+                )
+                is_approved = params.get("approved", False) or getattr(step, "approved", False)
+                if requires_approval and not is_approved:
+                    err_msg = f"Step '{step.step_id}' ({step.strategy_name}) requires approval before SQL generation."
+                    logger.warning("[SQLCodegenAgent] %s", err_msg)
+                    compilation_results.append(
+                        StepCompilationResult(
+                            step_id=step.step_id,
+                            dataset_name=step.dataset_name,
+                            action_type=getattr(step, "action_type", None) or step.strategy_name,
+                            strategy_name=step.strategy_name,
+                            template_name=template_path,
+                            status="MANUAL_REVIEW_REQUIRED",
+                            error=err_msg,
+                            source_logical_step_id=step.logical_step_id,
+                            source_action_id=getattr(step, "source_action_id", None),
+                            source_issue_ids=step_issue_ids,
+                            is_executable_transformation=False,
+                        )
+                    )
+                    continue
 
                 # 1. Parameter contract validation
                 required_params = set(STRATEGY_PARAMETER_CONTRACTS.get(step.strategy_name, set()))
@@ -324,6 +351,17 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 )
                 rendered_steps.append(projection_sql)
                 projection_statement_count += 1
+            else:
+                # Standard clean projection: create clean table and drop internal compiler surrogate key
+                projection_sql = (
+                    f"-- Final Clean Table Projection (Excluding internal compiler columns)\n"
+                    f"IF OBJECT_ID('{clean_table}', 'U') IS NOT NULL DROP TABLE {clean_table};\n"
+                    f"SELECT * INTO {clean_table} FROM {staging_table};\n"
+                    f"IF COL_LENGTH('{clean_table}', '_DharaStagingRowId') IS NOT NULL\n"
+                    f"    ALTER TABLE {clean_table} DROP COLUMN [_DharaStagingRowId];"
+                )
+                rendered_steps.append(projection_sql)
+                projection_statement_count += 1
 
             dataset_transforms[ds_name] = "\n\n".join(rendered_steps) if rendered_steps else "-- No transformations"
 
@@ -352,11 +390,90 @@ class SQLCodegenAgent(BaseCodegenAgent):
         render_failed_count = sum(r.status == "RENDER_FAILED" for r in compilation_results)
         skipped_step_count = sum(r.status == "SKIPPED" for r in compilation_results)
         unsupported_step_count = sum(r.status == "UNSUPPORTED" for r in compilation_results)
-        failed_transformation_count = template_missing_count + parameter_missing_count + render_failed_count + unsupported_step_count
+        manual_review_step_count = sum(r.status == "MANUAL_REVIEW_REQUIRED" for r in compilation_results)
+        failed_transformation_count = (
+            template_missing_count
+            + parameter_missing_count
+            + render_failed_count
+            + unsupported_step_count
+            + manual_review_step_count
+        )
 
         strict_mode = context.options.get("strict_execution", True)
         if context.options.get("preview_mode", False) or context.options.get("preview_partial", False):
             strict_mode = False
+
+        # Build per-issue reconciliation records for auditable traceability
+        issue_reconciliation: List[Dict[str, Any]] = []
+        recorded_issue_ids = set()
+
+        # 1. Account for rendered and step-level compilation results
+        issue_lookup = {i.issue_id: i for i in context.detected_issues} if context.detected_issues else {}
+        for r in compilation_results:
+            status_map = {
+                "RENDERED": "rendered",
+                "MANUAL_REVIEW_REQUIRED": "manual_review",
+            }
+            final_stat = status_map.get(r.status, "failed")
+            for iss_id in r.source_issue_ids:
+                if iss_id not in recorded_issue_ids:
+                    iss_obj = issue_lookup.get(iss_id)
+                    issue_reconciliation.append({
+                        "issue_id": iss_id,
+                        "dataset": r.dataset_name,
+                        "column": iss_obj.column_name if iss_obj else None,
+                        "final_status": final_stat,
+                        "action_type": str(r.action_type) if r.action_type else None,
+                        "step_id": r.step_id,
+                        "reason": r.error if final_stat != "rendered" else None,
+                    })
+                    recorded_issue_ids.add(iss_id)
+
+        # 2. Account for manual review issues from ingestion
+        for m_item in ing_telem.get("manual_review_issues", []):
+            iss_id = m_item.get("issue_id")
+            if iss_id and iss_id not in recorded_issue_ids:
+                issue_reconciliation.append({
+                    "issue_id": iss_id,
+                    "dataset": m_item.get("dataset"),
+                    "column": m_item.get("column"),
+                    "final_status": "manual_review",
+                    "action_type": m_item.get("action_type"),
+                    "step_id": None,
+                    "reason": m_item.get("reason") or m_item.get("message") or "Manual review required",
+                })
+                recorded_issue_ids.add(iss_id)
+
+        # 3. Account for unsupported issues from ingestion
+        for u_item in ing_telem.get("unsupported_issues", []):
+            iss_id = u_item.get("issue_id")
+            if iss_id and iss_id not in recorded_issue_ids:
+                issue_reconciliation.append({
+                    "issue_id": iss_id,
+                    "dataset": u_item.get("dataset"),
+                    "column": u_item.get("column"),
+                    "final_status": "unsupported",
+                    "action_type": None,
+                    "step_id": None,
+                    "reason": u_item.get("reason") or u_item.get("message") or "Unsupported issue",
+                })
+                recorded_issue_ids.add(iss_id)
+
+        # 4. Account for any remaining detected issues
+        for iss in context.detected_issues or []:
+            if iss.issue_id not in recorded_issue_ids:
+                issue_reconciliation.append({
+                    "issue_id": iss.issue_id,
+                    "dataset": iss.dataset_name,
+                    "column": iss.column_name,
+                    "final_status": "unsupported",
+                    "action_type": None,
+                    "step_id": None,
+                    "reason": "Not mapped or scheduled",
+                })
+                recorded_issue_ids.add(iss.issue_id)
+
+        total_manual_review = manual_review_issue_count + manual_review_step_count
 
         telemetry = CompilationTelemetry(
             ok=True,
@@ -365,7 +482,7 @@ class SQLCodegenAgent(BaseCodegenAgent):
             assessment_issue_count=assessment_issue_count,
             mapped_issue_count=mapped_issue_count,
             unsupported_issue_count=unsupported_issue_count,
-            manual_review_issue_count=manual_review_issue_count,
+            manual_review_issue_count=total_manual_review,
             structured_action_count=structured_action_count,
             logical_step_count=logical_step_count,
             physical_step_count=physical_step_count,
@@ -376,12 +493,14 @@ class SQLCodegenAgent(BaseCodegenAgent):
             render_failed_count=render_failed_count,
             skipped_step_count=skipped_step_count,
             unsupported_step_count=unsupported_step_count,
+            manual_review_step_count=manual_review_step_count,
             infrastructure_statement_count=infrastructure_statement_count,
             projection_statement_count=projection_statement_count,
             fallback_projection_used=bool(projection_statement_count > 0 and rendered_transformation_count == 0),
             planner_input_source=planner_input_source,
             coverage=coverage_dict,
             step_results=compilation_results,
+            issue_reconciliation=issue_reconciliation,
         )
 
         # Gate Evaluation
@@ -446,14 +565,19 @@ class SQLCodegenAgent(BaseCodegenAgent):
 
             # Gate 5: Physical plan has steps, but 0 executable steps rendered
             if planned_step_count > 0 and rendered_step_count == 0:
-                telemetry.ok = False
-                telemetry.executable = False
-                telemetry.failure_stage = "rendering_validation"
-                raise CodeGenerationError(
-                    f"The physical plan contained {planned_step_count} step(s), but SQL code generation rendered no executable transformations.",
-                    telemetry=telemetry.to_dict(),
-                    failure_stage="rendering_validation",
-                )
+                if strict_mode:
+                    telemetry.ok = False
+                    telemetry.executable = False
+                    telemetry.failure_stage = "rendering_validation"
+                    raise CodeGenerationError(
+                        f"The physical plan contained {planned_step_count} step(s), but SQL code generation rendered no executable transformations.",
+                        telemetry=telemetry.to_dict(),
+                        failure_stage="rendering_validation",
+                    )
+                else:
+                    telemetry.executable = False
+                    telemetry.partial = True
+                    telemetry.warnings.append("No executable transformations were rendered; manual review is required.")
 
         context.metadata["compilation_telemetry"] = telemetry.to_dict()
 

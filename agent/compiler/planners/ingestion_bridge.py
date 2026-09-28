@@ -132,6 +132,10 @@ class IngestionBridge:
         "outliers": ActionType.RANGE_CLIP,
         "negative_values": ActionType.RANGE_CLIP,
         "non_negative": ActionType.RANGE_CLIP,
+        "negative_salary": ActionType.RANGE_CLIP,
+        "negative_quantity": ActionType.RANGE_CLIP,
+        "negative_price": ActionType.RANGE_CLIP,
+        "min_zero": ActionType.RANGE_CLIP,
         "extreme_outliers": ActionType.RANGE_CLIP,
         "negative_currency": ActionType.RANGE_CLIP,
         "duplicates": ActionType.DEDUPLICATE,
@@ -315,20 +319,27 @@ class IngestionBridge:
                     sug_l = (sug or "").lower()
 
                     # Domain semantic classification
+                    # Columns that may legitimately have negative values in accounting/business domains.
+                    # Never clamp these to 0 automatically without explicit business rule.
                     unsafe_neg_cols = (
                         "adjustment", "adjustments", "variance", "temperature", "temp",
-                        "profit", "loss", "balance", "coordinates", "coord", "refund", "delta"
+                        "profit", "loss", "balance", "coordinates", "coord", "refund", "delta",
+                        "amount", "total_amount", "cost", "fee", "rate", "discount", "margin"
                     )
-                    safe_non_neg_cols = (
-                        "salary", "wage", "compensation", "price", "amount", "total_amount",
-                        "cost", "fee", "rate", "qty", "quantity", "count", "age", "tenure", "units", "bonus"
+                    # Columns where negative values are categorically invalid (base compensation, age, physical counts).
+                    strict_non_neg_cols = (
+                        "salary", "wage", "compensation", "age", "tenure", "quantity", "qty", "count", "units"
                     )
                     explicit_non_neg_types = (
                         "negative_salary", "negative_currency", "negative_quantity", "negative_price",
                         "non_negative", "min_zero"
                     )
 
-                    if any(u in col_l for u in unsafe_neg_cols):
+                    is_negative_issue = (
+                        "negative" in itype_l or "negative" in msg_l or "0" in sug_l
+                    )
+
+                    if any(u in col_l for u in unsafe_neg_cols) and is_negative_issue:
                         # Negative values may be legitimate in this domain; clamping to 0 risks silent data corruption.
                         action = None
                         res_path = "unsupported_ambiguous_negative_policy"
@@ -336,17 +347,22 @@ class IngestionBridge:
                         final_params["min_value"] = 0.0
                         final_params["parameter_source"] = f"issue_type:{itype}"
                         final_params["parameter_confidence"] = "high"
-                    elif any(c in col_l for c in safe_non_neg_cols) and (
-                        "negative" in itype_l or "negative" in msg_l or "clip" in sug_l or "range" in itype_l or "outlier" in itype_l
-                    ):
-                        final_params["min_value"] = 0.0
-                        final_params["parameter_source"] = f"column_semantic:{col_clean}"
-                        final_params["parameter_confidence"] = "high"
+                        final_params["requires_approval"] = False
                     elif "clip" in sug_l and "0" in sug_l:
                         final_params["min_value"] = 0.0
                         final_params["parameter_source"] = "suggested_action:clip_zero"
                         final_params["parameter_confidence"] = "high"
-                    else:
+                        final_params["requires_approval"] = False
+                    elif any(c in col_l for c in strict_non_neg_cols) and (
+                        "negative" in itype_l or "negative" in msg_l or "clip" in sug_l or "range" in itype_l or "outlier" in itype_l
+                    ):
+                        final_params["min_value"] = 0.0
+                        final_params["parameter_source"] = f"column_name_heuristic:{col_clean}"
+                        final_params["parameter_confidence"] = "medium"
+                        # Column-name heuristic alone requires approval unless explicitly approved
+                        if not final_params.get("approved"):
+                            final_params["requires_approval"] = True
+                    elif is_negative_issue:
                         action = None
                         res_path = "unsupported_ambiguous_negative_domain"
 
@@ -369,10 +385,15 @@ class IngestionBridge:
                         final_params["sentinel_values"] = ['NA', 'N/A', 'NULL', 'None', '-999', '?', '-', 'UNKNOWN']
                         final_params["parameter_source"] = "assumed_standard_sentinels"
                         final_params["parameter_confidence"] = "low"
-                        final_params["requires_approval"] = True
+                        if not final_params.get("approved"):
+                            final_params["requires_approval"] = True
 
             elif action == ActionType.TRIM:
                 final_params.setdefault("side", "both")
+
+            if source in ("plan_domain_rules_decomposed", "plan_dataset_steps"):
+                final_params.setdefault("approved", True)
+                final_params["requires_approval"] = False
 
             raw_issues.append(
                 CanonicalIssue(
@@ -581,12 +602,25 @@ class IngestionBridge:
             seen_keys.add(key)
             deduped.append(iss)
 
-        # ── 7. Separate Mapped vs Unsupported ─────────────────────────────────
+        # ── 7. Separate Mapped vs Unsupported vs Manual Review ────────────────
         mapped_count = 0
+        manual_review_issues: List[Dict[str, Any]] = []
         unsupported_issues: List[Dict[str, Any]] = []
 
         for iss in deduped:
-            if iss.resolved_action is not None:
+            if iss.source == "manual_review" or iss.suggested_action == "manual_review":
+                manual_info = {
+                    "issue_id": iss.issue_id,
+                    "dataset": iss.dataset,
+                    "column": iss.column,
+                    "issue_type": iss.issue_type,
+                    "message": iss.message,
+                    "source": iss.source,
+                    "reason": "Manual review finding in assessment",
+                    "action_type": None,
+                }
+                manual_review_issues.append(manual_info)
+            elif iss.resolved_action is not None:
                 mapped_count += 1
             else:
                 unsupported_info = {
@@ -596,6 +630,7 @@ class IngestionBridge:
                     "issue_type": iss.issue_type,
                     "message": iss.message,
                     "source": iss.source,
+                    "reason": iss.resolution_path or "No supported action for issue",
                 }
                 unsupported_issues.append(unsupported_info)
                 logger.warning(
@@ -606,7 +641,6 @@ class IngestionBridge:
                     iss.issue_type,
                 )
 
-        manual_review_count = sum(1 for iss in deduped if iss.source == "manual_review")
         telemetry = {
             "assessment_discovered_count": total_assessment_discovered,
             "plan_discovered_count": total_plan_discovered,
@@ -615,8 +649,9 @@ class IngestionBridge:
             "mapped_issue_count": mapped_count,
             "mapped_action_count": mapped_count,
             "unsupported_issue_count": len(unsupported_issues),
-            "manual_review_issue_count": manual_review_count,
+            "manual_review_issue_count": len(manual_review_issues),
             "unsupported_issues": unsupported_issues,
+            "manual_review_issues": manual_review_issues,
         }
 
         logger.info(
@@ -628,7 +663,7 @@ class IngestionBridge:
             duplicates_removed,
             mapped_count,
             len(unsupported_issues),
-            manual_review_count,
+            len(manual_review_issues),
         )
 
         return deduped, business_rules, telemetry
@@ -660,7 +695,7 @@ class IngestionBridge:
             issues.append(issue_model)
 
             # Build executable StructuredAction if action resolved
-            if action is not None:
+            if action is not None and c_iss.source != "manual_review" and c_iss.suggested_action != "manual_review":
                 cols = [c_iss.column] if c_iss.column else []
                 # Referential integrity actions use child_key from parameters if column is missing
                 if action == ActionType.VALIDATE_REFERENTIAL_INTEGRITY and not cols and c_iss.parameters.get("child_key"):
@@ -681,6 +716,7 @@ class IngestionBridge:
                     source_issue_ids=[c_iss.issue_id],
                     extraction_method=c_iss.resolution_path or "deterministic",
                     confidence=1.0,
+                    requires_approval=bool(c_iss.parameters.get("requires_approval", False)),
                     metadata={"canonical_source": c_iss.source, "issue_type": c_iss.issue_type},
                 )
                 structured_actions.append(s_action)

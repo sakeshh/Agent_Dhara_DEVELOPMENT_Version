@@ -9,29 +9,40 @@ UPDATE {{ target_table }}
 SET [{{ col }}] = LOWER(RTRIM(LTRIM([{{ col }}])))
 WHERE [{{ col }}] IS NOT NULL;
 
--- 2. Audit & Remediate malformed emails
 {% if disp == 'REJECT' and not never_drop_rows %}
-INSERT INTO [ETL_REJECT].[Rejection_Log] (
-    [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
-)
-SELECT 
-    @PipelineId,
-    @RunId,
-    '{{ dataset_name }}',
-    '{{ issue_id | default("") }}',
-    '{{ step_id }}',
-    '{{ col }}',
-    'Invalid email syntax or domain in [{{ col }}]',
-    'REJECT',
-    s.[{{ col }}],
-    (SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+IF OBJECT_ID('tempdb..#Rejected_{{ step_id | replace("-", "_") }}_{{ col }}') IS NOT NULL DROP TABLE #Rejected_{{ step_id | replace("-", "_") }}_{{ col }};
+
+SELECT *
+INTO #Rejected_{{ step_id | replace("-", "_") }}_{{ col }}
 FROM {{ target_table }} s
 WHERE s.[{{ col }}] IS NOT NULL 
   AND NOT (s.[{{ col }}] LIKE '%_@_%._%' AND s.[{{ col }}] NOT LIKE '%[ %<>;:]%');
 
-DELETE FROM {{ target_table }}
-WHERE [{{ col }}] IS NOT NULL 
-  AND NOT ([{{ col }}] LIKE '%_@_%._%' AND [{{ col }}] NOT LIKE '%[ %<>;:]%');
+IF EXISTS (SELECT 1 FROM #Rejected_{{ step_id | replace("-", "_") }}_{{ col }})
+BEGIN
+    INSERT INTO [ETL_REJECT].[Rejection_Log] (
+        [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
+    )
+    SELECT 
+        @PipelineId,
+        @RunId,
+        '{{ dataset_name }}',
+        '{{ issue_id | default("") }}',
+        '{{ step_id }}',
+        '{{ col }}',
+        'Invalid email syntax or domain in [{{ col }}]',
+        'REJECT',
+        r.[{{ col }}],
+        (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+    FROM #Rejected_{{ step_id | replace("-", "_") }}_{{ col }} r;
+
+    DELETE s
+    FROM {{ target_table }} s
+    INNER JOIN #Rejected_{{ step_id | replace("-", "_") }}_{{ col }} r
+        ON r.[_DharaStagingRowId] = s.[_DharaStagingRowId];
+END;
+
+IF OBJECT_ID('tempdb..#Rejected_{{ step_id | replace("-", "_") }}_{{ col }}') IS NOT NULL DROP TABLE #Rejected_{{ step_id | replace("-", "_") }}_{{ col }};
 
 {% elif disp == 'REJECT' or disp == 'NULLIFY' %}
 INSERT INTO [ETL_REJECT].[Rejection_Log] (

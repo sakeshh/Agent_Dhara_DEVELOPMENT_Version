@@ -1,3 +1,11 @@
+"""
+Compiler-Level Golden Reconciliation and Invariant Test Suite.
+
+NOTE: This test verifies assessment ingestion, planning, SQL rendering, telemetry
+reconciliation, identifier invariants, staging surrogate keys, and modeled dirty-data row
+conservation. It is a compiler-level golden reconciliation test, NOT a live Azure SQL ODBC
+execution test.
+"""
 from __future__ import annotations
 
 import re
@@ -69,7 +77,7 @@ def test_compiler_golden_reconciliation_and_invariant_gates():
                     "issues": [
                         {"column": "Name", "issue_type": "untrimmed_whitespace", "suggested_action": "trim", "severity": "low"},
                         {"column": "Email", "issue_type": "invalid_email", "suggested_action": "sanitize_email", "severity": "high"},
-                        {"column": "Salary", "issue_type": "negative_values", "suggested_action": "range_clip", "severity": "high"},
+                        {"column": "Salary", "issue_type": "negative_salary", "suggested_action": "range_clip", "severity": "high"},
                         {"column": "Active", "issue_type": "boolean_inconsistency", "suggested_action": "standardize_boolean", "severity": "medium"},
                         {"column": "EmpId", "issue_type": "duplicate_pk", "suggested_action": "deduplicate", "severity": "high"},
                     ]
@@ -121,15 +129,15 @@ def test_compiler_golden_reconciliation_and_invariant_gates():
     assert ing_telem["unsupported_issue_count"] == 1
     assert (
         ing_telem["assessment_discovered_count"]
-        == ing_telem["mapped_issue_count"] + ing_telem["unsupported_issue_count"]
+        == ing_telem["mapped_issue_count"] + ing_telem["unsupported_issue_count"] + ing_telem["manual_review_issue_count"]
     )
 
     # Safe parameter enrichment verification:
-    # Salary is a known non-negative compensation column -> min_value=0.0 enriched with high confidence
+    # Salary has explicit non-negative issue type -> min_value=0.0 enriched with high confidence
     salary_issue = next(i for i in canonical_issues if i.column == "Salary")
     assert salary_issue.resolved_action == ActionType.RANGE_CLIP
     assert salary_issue.parameters["min_value"] == 0.0
-    assert "Salary" in salary_issue.parameters["parameter_source"]
+    assert "negative_salary" in salary_issue.parameters["parameter_source"]
     assert salary_issue.parameters["parameter_confidence"] == "high"
 
     # Adjustment is an ambiguous domain column -> NOT clamped to 0; marked unsupported
@@ -169,6 +177,12 @@ def test_compiler_golden_reconciliation_and_invariant_gates():
     assert telemetry["partial"] is True  # Non-executable partial due to unsupported issue
     assert telemetry["executable"] is False
 
+    # Traceability reconciliation: Every discovered issue has a stable tracking record
+    reconciled = telemetry["issue_reconciliation"]
+    assert len(reconciled) == 6
+    assert sum(1 for r in reconciled if r["final_status"] == "rendered") == 5
+    assert sum(1 for r in reconciled if r["final_status"] == "unsupported") == 1
+
     sql = compiled_ctx.code_artifact.content
 
     # 4. Critical Invariant Gate: Step 1 identifier normalization
@@ -179,7 +193,11 @@ def test_compiler_golden_reconciliation_and_invariant_gates():
     # Strict Invariant: Malformed double prefix must NEVER appear
     assert "[dbo].[dbo." not in sql
 
-    # 5. Rejection Log Contract Verification:
+    # 5. Staging Surrogate Key & Clean Projection Invariants
+    assert "ALTER TABLE [dbo].[Dhara_Employee_Staging] ADD [_DharaStagingRowId] BIGINT IDENTITY(1,1) NOT NULL;" in sql
+    assert "DROP COLUMN [_DharaStagingRowId]" in sql or "Strict Final Clean Projection" in sql
+
+    # 6. Rejection Log Contract Verification:
     # Variables declared and assigned at procedure scope
     assert "DECLARE @PipelineId VARCHAR(100) =" in sql
     assert "DECLARE @RunId UNIQUEIDENTIFIER = NEWID();" in sql
@@ -284,6 +302,8 @@ def test_atomic_quarantine_deletion_temp_table():
     assert "WHERE [Salary] < 0" in sql
     assert "INSERT INTO [ETL_REJECT].[Rejection_Log]" in sql
     assert "FROM #Rejected_phys_" in sql
+    assert "INNER JOIN #Rejected_phys_" in sql
+    assert "ON r.[_DharaStagingRowId] = s.[_DharaStagingRowId]" in sql
     assert "DROP TABLE #Rejected_phys_" in sql
 
 
@@ -362,3 +382,201 @@ def test_simulated_dirty_data_reconciliation():
 
     diana = next(r for r in clean_rows if r["EmpId"] == 4)
     assert diana["Active"] is None     # Invalid boolean nullified
+
+
+# ------------------------------------------------------------------------------
+# Test 5: Low-Confidence Sentinels & Heuristics Blocked Without Approval
+# ------------------------------------------------------------------------------
+
+def test_low_confidence_sentinels_are_not_rendered_without_approval():
+    """Validates that assumed standard sentinels and unapproved heuristics
+    with requires_approval=True are NOT rendered into executable SQL without approval.
+    """
+    bridge = IngestionBridge()
+    pipeline = CompilerPipeline()
+
+    assess = {
+        "data_quality_issues": {
+            "datasets": {
+                "dbo.Customer": {
+                    "issues": [
+                        # Sentinel without detected values: triggers assumed standard sentinels
+                        {"column": "Status", "issue_type": "sentinel_values", "suggested_action": "replace_sentinels", "severity": "medium"},
+                    ]
+                }
+            }
+        },
+        "datasets": {
+            "dbo.Customer": {
+                "columns": {"Status": {"dtype": "string"}},
+                "row_count": 10,
+            }
+        }
+    }
+
+    canonical_issues, _, ing_telem = bridge.extract_and_normalize(
+        assess=assess,
+        plan={},
+        known_datasets={"dbo.Customer"},
+    )
+    detected_issues, structured_actions = bridge.bridge_to_compiler_models(canonical_issues)
+
+    # Ingestion validation:
+    # 1 issue discovered and mapped to StructuredAction with requires_approval=True
+    assert ing_telem["assessment_discovered_count"] == 1
+    assert ing_telem["mapped_issue_count"] == 1
+    assert len(structured_actions) == 1
+
+    sentinel_issue = canonical_issues[0]
+    action = structured_actions[0]
+    assert action.requires_approval is True
+    assert action.parameters["parameter_source"] == "assumed_standard_sentinels"
+    assert action.parameters["parameter_confidence"] == "low"
+
+    # Attempt compilation in preview mode
+    cust_prof = DatasetProfile(dataset_id="dbo.Customer", columns={"Status": ColumnProfile(name="Status", dtype="string")}, row_count=10)
+    ctx = CompilerContext(
+        session_id="unapproved_sentinel_sess",
+        target_engine=ExecutionEngine.AZURE_SQL,
+        options={"strict_execution": False, "preview_mode": True},
+        detected_issues=detected_issues,
+        structured_actions=structured_actions,
+        dataset_profiles={"dbo.Customer": cust_prof},
+    )
+    ctx.metadata["ingestion_telemetry"] = ing_telem
+
+    compiled_ctx, _ = pipeline.compile(ctx)
+    telemetry = compiled_ctx.metadata["compilation_telemetry"]
+
+    # Invariant: Step is NOT rendered, manual_review is accounted, and no UPDATE transformation appears
+    assert telemetry["rendered_transformation_count"] == 0
+    assert telemetry["manual_review_issue_count"] == 1
+    sql = compiled_ctx.code_artifact.content
+    assert "UPDATE" not in sql
+
+    # Per-issue traceability check
+    assert len(telemetry["issue_reconciliation"]) == 1
+    rec = telemetry["issue_reconciliation"][0]
+    assert rec["issue_id"] == sentinel_issue.issue_id
+    assert rec["final_status"] == "manual_review"
+
+
+# ------------------------------------------------------------------------------
+# Test 6: Rejection Deletion Strictly Keyed to Staging Surrogate ID
+# ------------------------------------------------------------------------------
+
+def test_rejection_deletion_strictly_keyed_to_staging_row_id():
+    """Validates that REJECT deletion strictly joins on _DharaStagingRowId and does NOT re-evaluate predicate."""
+    rule_action = StructuredAction(
+        action_type=ActionType.CONDITIONAL_UPDATE,
+        dataset_name="Dhara_Employee",
+        target_columns=["Salary"],
+        parameters={
+            "condition": "[Salary] < 0",
+            "new_value": None,
+            "disposition": "REJECT",
+        },
+        source=ActionSource.BUSINESS_RULE,
+    )
+
+    pipeline = CompilerPipeline()
+    ctx = CompilerContext(
+        session_id="keyed_deletion_sess",
+        target_engine=ExecutionEngine.AZURE_SQL,
+        structured_actions=[rule_action],
+    )
+    ctx.metadata["ingestion_telemetry"] = {
+        "assessment_discovered_count": 1,
+        "mapped_action_count": 1,
+        "unsupported_issue_count": 0,
+    }
+
+    compiled_ctx, _ = pipeline.compile(ctx)
+    sql = compiled_ctx.code_artifact.content
+
+    # Strict assertion: DELETE joins on _DharaStagingRowId
+    assert "INNER JOIN #Rejected_phys_" in sql
+    assert "ON r.[_DharaStagingRowId] = s.[_DharaStagingRowId]" in sql
+    # Strict negative check: DELETE must NOT re-evaluate condition directly against staging table
+    assert "DELETE s\n    FROM [dbo].[Dhara_Employee_Staging] s\n    WHERE" not in sql
+    assert "DELETE s\r\n    FROM [dbo].[Dhara_Employee_Staging] s\r\n    WHERE" not in sql
+
+
+# ------------------------------------------------------------------------------
+# Test 7: Identity-Based Row Conservation Set Invariants
+# ------------------------------------------------------------------------------
+
+def test_identity_based_data_conservation_invariants():
+    """Mathematically verifies row conservation using unique row identities (_DharaStagingRowId):
+    1. SourceRowIds = CleanRowIds ∪ RejectedRowIds
+    2. CleanRowIds ∩ RejectedRowIds = ∅
+    3. SourceRowIds \\ (CleanRowIds ∪ RejectedRowIds) = ∅
+    """
+    dirty_data = _create_dirty_source_data()
+    raw_employees = dirty_data["Dhara_Employee"]
+
+    # Assign surrogate keys _DharaStagingRowId: 1..6
+    staging_rows = []
+    for idx, r in enumerate(raw_employees, start=1):
+        row_copy = dict(r)
+        row_copy["_DharaStagingRowId"] = idx
+        staging_rows.append(row_copy)
+
+    source_row_ids = {r["_DharaStagingRowId"] for r in staging_rows}
+    assert source_row_ids == {1, 2, 3, 4, 5, 6}
+
+    # Simulate execution with keyed isolation:
+    clean_rows = []
+    rejected_rows = []
+    seen_emp_ids = set()
+
+    for r in staging_rows:
+        row = dict(r)
+        # 1. Trim
+        row["Name"] = row["Name"].strip()
+
+        # 2. Email validation (disposition: NULLIFY -> row survives, cell nullified)
+        if "@" not in row["Email"] or "." not in row["Email"] or " " in row["Email"]:
+            row["Email"] = None
+
+        # 3. Salary clamp (disposition: CORRECT -> clamped to 0)
+        if row["Salary"] < 0:
+            row["Salary"] = 0.0
+
+        # 4. Boolean standardize
+        b_val = str(row["Active"]).upper().strip()
+        if b_val in ("1", "TRUE", "T", "YES", "Y", "ON"):
+            row["Active"] = "1"
+        elif b_val in ("0", "FALSE", "F", "NO", "N", "OFF"):
+            row["Active"] = "0"
+        else:
+            row["Active"] = None
+
+        # 5. Deduplicate by EmpId (disposition: REJECT/DROP second duplicate)
+        if row["EmpId"] in seen_emp_ids:
+            rejected_rows.append(row)
+            continue
+        seen_emp_ids.add(row["EmpId"])
+        clean_rows.append(row)
+
+    clean_ids = {r["_DharaStagingRowId"] for r in clean_rows}
+    rejected_ids = {r["_DharaStagingRowId"] for r in rejected_rows}
+
+    # Invariant 1: Completeness - Every source row is accounted for
+    assert clean_ids | rejected_ids == source_row_ids
+
+    # Invariant 2: Disjointness - No row exists in both clean and rejected sets
+    assert clean_ids & rejected_ids == set()
+
+    # Invariant 3: Zero leakage - No source row missing from both sets
+    assert source_row_ids - (clean_ids | rejected_ids) == set()
+
+    # Invariant 4: Clean table projects only schema columns (drops _DharaStagingRowId)
+    clean_projected = [
+        {k: v for k, v in r.items() if k != "_DharaStagingRowId"}
+        for r in clean_rows
+    ]
+    for r in clean_projected:
+        assert "_DharaStagingRowId" not in r
+        assert set(r.keys()) == {"EmpId", "Name", "Email", "Salary", "Active", "Dept"}
+

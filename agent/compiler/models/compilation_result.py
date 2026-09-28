@@ -72,6 +72,7 @@ class CompilationTelemetry:
     render_failed_count: int = 0
     skipped_step_count: int = 0
     unsupported_step_count: int = 0
+    manual_review_step_count: int = 0
 
     # Infrastructure SQL fragment metrics (never counted as transformations)
     infrastructure_statement_count: int = 0
@@ -83,6 +84,7 @@ class CompilationTelemetry:
     coverage: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
     step_results: List[StepCompilationResult] = field(default_factory=list)
+    issue_reconciliation: List[Dict[str, Any]] = field(default_factory=list)
 
     # Backward compatibility properties
     @property
@@ -133,6 +135,7 @@ class CompilationTelemetry:
             "render_failed_count": self.render_failed_count,
             "skipped_step_count": self.skipped_step_count,
             "unsupported_step_count": self.unsupported_step_count,
+            "manual_review_step_count": self.manual_review_step_count,
             "infrastructure_statement_count": self.infrastructure_statement_count,
             "projection_statement_count": self.projection_statement_count,
             "fallback_projection_used": self.fallback_projection_used,
@@ -140,4 +143,5 @@ class CompilationTelemetry:
             "planner_input_source": self.planner_input_source,
             "coverage": self.coverage,
             "warnings": self.warnings,
+            "issue_reconciliation": self.issue_reconciliation,
         }

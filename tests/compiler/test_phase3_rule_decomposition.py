@@ -330,7 +330,7 @@ class TestPhase3RuleDecomposition:
                         "issues": [
                             {
                                 "column": "Salary",
-                                "issue_type": "negative_values",
+                                "issue_type": "negative_salary",
                                 "severity": "high",
                             }
                         ]

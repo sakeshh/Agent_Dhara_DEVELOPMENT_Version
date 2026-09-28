@@ -30,7 +30,8 @@ BEGIN
 
     DELETE s
     FROM {{ target_table }} s
-    WHERE {{ sql_condition }};
+    INNER JOIN #Rejected_{{ step_id | replace("-", "_") }} r
+        ON r.[_DharaStagingRowId] = s.[_DharaStagingRowId];
 END;
 
 IF OBJECT_ID('tempdb..#Rejected_{{ step_id | replace("-", "_") }}') IS NOT NULL DROP TABLE #Rejected_{{ step_id | replace("-", "_") }};

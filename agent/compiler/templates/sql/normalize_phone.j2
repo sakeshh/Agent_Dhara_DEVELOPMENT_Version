@@ -10,29 +10,40 @@ SET [{{ col }}] = (CASE WHEN LTRIM([{{ col }}]) LIKE '+%' THEN '+' ELSE '' END)
     + REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM([{{ col }}])), ' ', ''), '-', ''), '(', ''), ')', ''), '.', ''), '/', ''), '+', '')
 WHERE [{{ col }}] IS NOT NULL;
 
--- 2. Audit & Remediate invalid phone numbers (digits length < 7 or non-digit characters)
 {% if disp == 'REJECT' and not never_drop_rows %}
-INSERT INTO [ETL_REJECT].[Rejection_Log] (
-    [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
-)
-SELECT 
-    @PipelineId,
-    @RunId,
-    '{{ dataset_name }}',
-    '{{ issue_id | default("") }}',
-    '{{ step_id }}',
-    '{{ col }}',
-    'Invalid phone number format in [{{ col }}] (length < 7 or non-digits)',
-    'REJECT',
-    s.[{{ col }}],
-    (SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+IF OBJECT_ID('tempdb..#Rejected_{{ step_id | replace("-", "_") }}_{{ col }}') IS NOT NULL DROP TABLE #Rejected_{{ step_id | replace("-", "_") }}_{{ col }};
+
+SELECT *
+INTO #Rejected_{{ step_id | replace("-", "_") }}_{{ col }}
 FROM {{ target_table }} s
 WHERE s.[{{ col }}] IS NOT NULL 
   AND (LEN(REPLACE(s.[{{ col }}], '+', '')) < 7 OR REPLACE(s.[{{ col }}], '+', '') LIKE '%[^0-9]%');
 
-DELETE FROM {{ target_table }}
-WHERE [{{ col }}] IS NOT NULL 
-  AND (LEN(REPLACE([{{ col }}], '+', '')) < 7 OR REPLACE([{{ col }}], '+', '') LIKE '%[^0-9]%');
+IF EXISTS (SELECT 1 FROM #Rejected_{{ step_id | replace("-", "_") }}_{{ col }})
+BEGIN
+    INSERT INTO [ETL_REJECT].[Rejection_Log] (
+        [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
+    )
+    SELECT 
+        @PipelineId,
+        @RunId,
+        '{{ dataset_name }}',
+        '{{ issue_id | default("") }}',
+        '{{ step_id }}',
+        '{{ col }}',
+        'Invalid phone number format in [{{ col }}] (length < 7 or non-digits)',
+        'REJECT',
+        r.[{{ col }}],
+        (SELECT r.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+    FROM #Rejected_{{ step_id | replace("-", "_") }}_{{ col }} r;
+
+    DELETE s
+    FROM {{ target_table }} s
+    INNER JOIN #Rejected_{{ step_id | replace("-", "_") }}_{{ col }} r
+        ON r.[_DharaStagingRowId] = s.[_DharaStagingRowId];
+END;
+
+IF OBJECT_ID('tempdb..#Rejected_{{ step_id | replace("-", "_") }}_{{ col }}') IS NOT NULL DROP TABLE #Rejected_{{ step_id | replace("-", "_") }}_{{ col }};
 
 {% elif disp == 'REJECT' or disp == 'NULLIFY' %}
 INSERT INTO [ETL_REJECT].[Rejection_Log] (
