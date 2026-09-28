@@ -94,6 +94,7 @@ class SessionContextPayload(BaseModel):
 
 class EtlPlanPayload(BaseModel):
     session_id: str = "default"
+    user_prompt: Optional[str] = None
     business_rules: Optional[Dict[str, Any]] = None
     assessment_result: Optional[Dict[str, Any]] = None
     engine: Optional[str] = "python"
@@ -110,6 +111,7 @@ class EtlPlanPayload(BaseModel):
 class EtlConfirmPayload(BaseModel):
     session_id: str = "default"
     plan: Optional[Dict[str, Any]] = None
+    user_prompt: Optional[str] = None
 
 
 class EtlApplyManualResolutionsPayload(BaseModel):
@@ -144,6 +146,7 @@ class EtlGeneratePayload(BaseModel):
     sql_dialect: Optional[str] = "tsql"
     codegen_mode: Optional[str] = None  # template | llm | llm_then_template
     generation_mode: Optional[str] = "full"
+    user_prompt: Optional[str] = None
 
 
 class EtlDeployPayload(BaseModel):
@@ -769,6 +772,7 @@ def api_etl_plan(payload: EtlPlanPayload, request: Request, _auth: None = Depend
         source_context=payload.source_context,
         engine_user_override=bool(payload.engine_user_override),
         generation_mode=payload.generation_mode,
+        user_prompt=payload.user_prompt,
     )
 
 
@@ -875,6 +879,7 @@ def api_etl_generate(payload: EtlGeneratePayload, request: Request, _auth: None 
         sql_dialect=payload.sql_dialect or "tsql",
         codegen_mode=payload.codegen_mode,
         generation_mode=payload.generation_mode,
+        user_prompt=payload.user_prompt,
     )
     if not result.get("ok") and result.get("http_status") == 409:
         raise HTTPException(status_code=409, detail=result)
@@ -1264,7 +1269,10 @@ async def api_parse_business_rules(
 
     from agent.session_store import load_session, save_session
     try:
+        rules["user_prompt"] = combined_text
         sess = load_session(session_id)
+        sess["user_prompt"] = combined_text
+        sess.setdefault("context", {})["user_prompt"] = combined_text
         sess.setdefault("context", {})["pending_business_rules"] = rules
         save_session(sess)
     except Exception as e:

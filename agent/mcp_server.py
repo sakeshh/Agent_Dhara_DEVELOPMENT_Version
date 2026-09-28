@@ -124,6 +124,7 @@ class SessionContextPayload(BaseModel):
 
 class EtlPlanPayload(BaseModel):
     session_id: str = "default"
+    user_prompt: Optional[str] = None
     business_rules: Optional[Dict[str, Any]] = None
     assessment_result: Optional[Dict[str, Any]] = None
     engine: Optional[str] = "python"
@@ -140,6 +141,7 @@ class EtlPlanPayload(BaseModel):
 class EtlConfirmPayload(BaseModel):
     session_id: str = "default"
     plan: Optional[Dict[str, Any]] = None
+    user_prompt: Optional[str] = None
 
 
 class RemediationApprovalPayload(BaseModel):
@@ -170,6 +172,7 @@ class EtlGeneratePayload(BaseModel):
     sql_dialect: Optional[str] = "tsql"
     codegen_mode: Optional[str] = None  # template | llm | llm_then_template
     generation_mode: Optional[str] = "full"
+    user_prompt: Optional[str] = None
 
 
 class EtlDeployPayload(BaseModel):
@@ -1153,6 +1156,7 @@ def api_etl_plan(payload: EtlPlanPayload) -> Dict[str, Any]:
         source_context=payload.source_context,
         engine_user_override=bool(payload.engine_user_override),
         generation_mode=payload.generation_mode,
+        user_prompt=payload.user_prompt,
     )
 
 
@@ -1329,6 +1333,7 @@ def api_etl_generate(payload: EtlGeneratePayload) -> Dict[str, Any]:
         sql_dialect=payload.sql_dialect or "tsql",
         codegen_mode=payload.codegen_mode,
         generation_mode=payload.generation_mode,
+        user_prompt=payload.user_prompt,
     )
     # Only raise for genuine blocking HTTP errors (e.g. 409 PLAN_NOT_APPROVED).
     # Validation failures (ok=False, no http_status) are returned as 200 drafts

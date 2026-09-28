@@ -64,7 +64,7 @@ class IntentRouter:
 
         if matched_ops:
             elapsed_ms = (time.perf_counter() - t0) * 1000
-            return IntentClassification(
+            res = IntentClassification(
                 intent=matched_ops[0],
                 complexity=IntentComplexity.COMPLEX,
                 confidence=0.96,
@@ -74,6 +74,8 @@ class IntentRouter:
                 matched_patterns=matched_patterns,
                 latency_ms=round(elapsed_ms, 3),
             )
+            logger.info("[IntentRouter] route=%s", res.route.value)
+            return res
 
         # 2. Check for Multi-table join clues
         if dataset_profiles and len(dataset_profiles) > 1:
@@ -89,7 +91,7 @@ class IntentRouter:
 
         if matched_ops:
             elapsed_ms = (time.perf_counter() - t0) * 1000
-            return IntentClassification(
+            res = IntentClassification(
                 intent=matched_ops[0],
                 complexity=IntentComplexity.MODERATE,
                 confidence=0.92,
@@ -99,6 +101,8 @@ class IntentRouter:
                 matched_patterns=matched_patterns,
                 latency_ms=round(elapsed_ms, 3),
             )
+            logger.info("[IntentRouter] route=%s", res.route.value)
+            return res
 
         # 4. Check for Simple Patterns
         for pattern, op_name in _SIMPLE_PATTERNS:
@@ -109,7 +113,7 @@ class IntentRouter:
         primary_intent = matched_ops[0] if matched_ops else "filter_and_project"
         elapsed_ms = (time.perf_counter() - t0) * 1000
 
-        return IntentClassification(
+        res = IntentClassification(
             intent=primary_intent,
             complexity=IntentComplexity.SIMPLE,
             confidence=0.98 if matched_ops else 0.85,
@@ -119,3 +123,5 @@ class IntentRouter:
             matched_patterns=matched_patterns,
             latency_ms=round(elapsed_ms, 3),
         )
+        logger.info("[IntentRouter] route=%s", res.route.value)
+        return res

@@ -189,4 +189,7 @@ class IrValidator:
                     suggestions=suggestions,
                 )
 
+        if result.valid:
+            logger.info("[IrValidator] passed")
+
         return result

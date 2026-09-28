@@ -247,6 +247,7 @@ class IrFixer:
             metrics.final_validation_status = "passed"
             metrics.repair_duration_ms = (time.perf_counter() - t0) * 1000
             current_plan.metadata.repair_metrics = metrics
+            logger.info("[IrFixer] repairs=%d", metrics.repairs_applied)
             return current_plan, val_result, True
 
         # Multi-pass repair loop with hard cap
@@ -278,4 +279,5 @@ class IrFixer:
 
         metrics.repair_duration_ms = (time.perf_counter() - t0) * 1000
         current_plan.metadata.repair_metrics = metrics
+        logger.info("[IrFixer] repairs=%d", metrics.repairs_applied)
         return current_plan, val_result, val_result.valid

@@ -81,6 +81,10 @@ class RagRetriever:
         formatted_snippet = "\n".join(snippet_lines)
         latency = (time.perf_counter() - t0) * 1000
 
+        logger.info("[RAG Retriever] retrieved %d rules", len(rules_text))
+        if rules_text:
+            logger.info("[RAG Retriever] retrieved business rules")
+
         return RagContext(
             business_rules=rules_text,
             contracts=contracts_data,

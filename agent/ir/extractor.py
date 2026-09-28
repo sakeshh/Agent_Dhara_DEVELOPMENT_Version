@@ -215,8 +215,8 @@ class IrExtractor:
 
         llm = cls._get_llm_client()
         cfg = load_llm_config(purpose="general")
-        model_name = getattr(cfg, "model", None) or getattr(cfg, "deployment_name", None) or "gpt-4o"
-        logger.info("[IrExtractor] planner_model=%s (provider=%s)", model_name, getattr(cfg, "provider", "unknown"))
+        model_name = getattr(cfg, "model", None) or getattr(cfg, "deployment_name", None) or "gpt-4o-mini"
+        logger.info("[IrExtractor] planner_model=%s", model_name)
 
         if llm is None:
             logger.info("Using deterministic fallback extractor (no active LLM client)")

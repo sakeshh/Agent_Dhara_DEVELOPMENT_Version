@@ -150,6 +150,7 @@ def _run_compiler_codegen(
     assess: dict,
     ctx: dict,
     sql_dialect: str = "tsql",
+    user_prompt: Optional[str] = None,
 ) -> tuple[str, bool, list[str], str]:
     from agent.compiler.compiler_pipeline import CompilerPipeline
     from agent.compiler.models.context import CompilerContext
@@ -216,57 +217,104 @@ def _run_compiler_codegen(
     # Extract user prompt from all possible request and session locations
     biz_rules = plan.get("business_rules") or flow.get("business_rules") or {}
     user_prompt = (
-        plan.get("user_prompt")
+        user_prompt
+        or plan.get("user_prompt")
+        or flow.get("user_prompt")
+        or ctx.get("user_prompt")
+        or (biz_rules.get("user_prompt") if isinstance(biz_rules, dict) else None)
         or plan.get("description")
         or plan.get("notes")
-        or (flow.get("user_prompt") if flow else None)
-        or (biz_rules.get("user_prompt") if isinstance(biz_rules, dict) else None)
         or (biz_rules.get("notes") if isinstance(biz_rules, dict) else None)
         or (flow.get("etl_intent", {}).get("description") if isinstance(flow.get("etl_intent"), dict) else None)
-        or ctx.get("user_prompt")
     )
 
-    if flags.llm_ir_planner_enabled and user_prompt:
-        logger.info("[CompilerPipeline] user_prompt detected: '%s' — initiating LLM IR planner pipeline", user_prompt[:80])
+    ir_plan_data = (
+        plan.get("ir_plan")
+        or flow.get("ir_plan")
+        or ctx.get("ir_plan")
+    )
+    if not ir_plan_data:
+        snap = load_plan_snapshot(session_id)
+        if snap and snap.get("ir_plan"):
+            ir_plan_data = snap.get("ir_plan")
+            if not user_prompt:
+                user_prompt = snap.get("user_prompt")
+
+    had_prompt = bool(
+        ctx.get("had_user_prompt")
+        or flow.get("had_user_prompt")
+        or plan.get("had_user_prompt")
+        or flow.get("planner_route") in ("llm_ir_planner", "multi_agent_planner")
+        or plan.get("planner_route") in ("llm_ir_planner", "multi_agent_planner")
+    )
+
+    if flags.llm_ir_planner_enabled and not user_prompt and not ir_plan_data:
+        if had_prompt or not detected_issues:
+            logger.error("[LLM-IR] Missing prompt")
+            return "", False, ["Prompt lost between planning and generation"], "error"
+
+    if flags.llm_ir_planner_enabled and (ir_plan_data or user_prompt):
         from agent.ir import IrExtractor, IrNormalizer, IrValidator, IrFixer, IrBuilder
         from agent.ir.semantic_validator import BusinessRuleValidator
         from agent.router import IntentRouter, RouteTarget
 
-        # 1. Sub-millisecond Intent Routing
-        route_decision = IntentRouter.classify(user_prompt, profiles)
-        logger.info(
-            "[IntentRouter] route=%s complexity=%s confidence=%.2f (latency=%.2fms)",
-            route_decision.route.value,
-            route_decision.complexity.value,
-            route_decision.confidence,
-            route_decision.latency_ms,
+        route = (
+            flow.get("planner_route")
+            or plan.get("planner_route")
+            or "llm_ir_planner"
         )
 
-        # 2. Extract IR
-        if route_decision.route == RouteTarget.COMPILER_DIRECT:
-            logger.info("[IrExtractor] Fast-path deterministic compiler direct (no LLM tokens)")
-            raw_ir = IrExtractor._heuristic_fallback_extract(user_prompt, profiles, session_id=session_id)
-            raw_ir.metadata.tags = ["compiler_direct"]
+        if ir_plan_data:
+            logger.info("[CompilerPipeline] using persisted IR")
+            from agent.ir.models import IrPlan
+            healed_ir = IrPlan.model_validate(ir_plan_data) if isinstance(ir_plan_data, dict) else ir_plan_data
+            norm_ir = IrNormalizer.normalize(healed_ir, profiles)
+            logger.info("[IrValidator] Validating normalized plan with %d sources, %d steps", len(norm_ir.sources), len(norm_ir.logical_plan))
+            healed_ir, val_res, is_valid = IrFixer.heal_plan(norm_ir, profiles, max_attempts=2)
+            if val_res.valid:
+                logger.info("[IrValidator] passed")
+            logger.info(
+                "[IrFixer] repairs=%d",
+                len(healed_ir.metadata.repair_history) if healed_ir.metadata else 0,
+            )
+            semantic_val = BusinessRuleValidator.validate_semantics(healed_ir, profiles)
+            if semantic_val.valid:
+                logger.info("[SemanticValidator] Plan passed semantic business rule validation")
+            else:
+                logger.warning("[SemanticValidator] Flagged semantic issues: %s", [e.message for e in semantic_val.errors])
         else:
-            raw_ir = IrExtractor.extract(user_prompt, profiles, session_id=session_id)
-            raw_ir.metadata.tags = [route_decision.route.value]
+            logger.info("[CompilerPipeline] user_prompt detected: '%s' — initiating LLM IR planner pipeline", user_prompt[:80])
+            route_decision = IntentRouter.classify(user_prompt, profiles)
+            route = route_decision.route.value
+            logger.info(
+                "[IntentRouter] route=%s complexity=%s confidence=%.2f (latency=%.2fms)",
+                route_decision.route.value,
+                route_decision.complexity.value,
+                route_decision.confidence,
+                route_decision.latency_ms,
+            )
+            if route_decision.route == RouteTarget.COMPILER_DIRECT:
+                logger.info("[IrExtractor] Fast-path deterministic compiler direct (no LLM tokens)")
+                raw_ir = IrExtractor._heuristic_fallback_extract(user_prompt, profiles, session_id=session_id)
+                raw_ir.metadata.tags = ["compiler_direct"]
+            else:
+                raw_ir = IrExtractor.extract(user_prompt, profiles, session_id=session_id)
+                raw_ir.metadata.tags = [route_decision.route.value]
 
-        # 3. Normalize & Self-Healing Loop
-        norm_ir = IrNormalizer.normalize(raw_ir, profiles)
-        logger.info("[IrValidator] Validating normalized plan with %d sources, %d steps", len(norm_ir.sources), len(norm_ir.logical_plan))
-        healed_ir, val_res, is_valid = IrFixer.heal_plan(norm_ir, profiles, max_attempts=2)
-        logger.info(
-            "[IrFixer] Self-healing pass: is_valid=%s, repairs=%d",
-            is_valid,
-            len(healed_ir.metadata.repair_history) if healed_ir.metadata else 0,
-        )
-
-        # 4. Semantic Business Rule Validation
-        semantic_val = BusinessRuleValidator.validate_semantics(healed_ir, profiles)
-        if not semantic_val.valid:
-            logger.warning("[SemanticValidator] Flagged semantic issues: %s", [e.message for e in semantic_val.errors])
-        else:
-            logger.info("[SemanticValidator] Plan passed semantic business rule validation")
+            norm_ir = IrNormalizer.normalize(raw_ir, profiles)
+            logger.info("[IrValidator] Validating normalized plan with %d sources, %d steps", len(norm_ir.sources), len(norm_ir.logical_plan))
+            healed_ir, val_res, is_valid = IrFixer.heal_plan(norm_ir, profiles, max_attempts=2)
+            if val_res.valid:
+                logger.info("[IrValidator] passed")
+            logger.info(
+                "[IrFixer] repairs=%d",
+                len(healed_ir.metadata.repair_history) if healed_ir.metadata else 0,
+            )
+            semantic_val = BusinessRuleValidator.validate_semantics(healed_ir, profiles)
+            if not semantic_val.valid:
+                logger.warning("[SemanticValidator] Flagged semantic issues: %s", [e.message for e in semantic_val.errors])
+            else:
+                logger.info("[SemanticValidator] Plan passed semantic business rule validation")
 
         # 5. Build Compiler Context
         compiler_ctx = IrBuilder.build(
@@ -277,10 +325,12 @@ def _run_compiler_codegen(
             cleaning_mode=clean_mode,
         )
         if compiler_ctx.metrics:
-            compiler_ctx.metrics.route_taken = route_decision.route.value
-            compiler_ctx.metrics.planner_latency_ms = route_decision.latency_ms
+            compiler_ctx.metrics.route_taken = route
+            if "route_decision" in locals():
+                compiler_ctx.metrics.planner_latency_ms = route_decision.latency_ms
 
         compiler_ctx.detected_issues.extend(detected_issues)
+        logger.info("etl_generate_code path=%s→compiler", route)
     else:
         if not flags.llm_ir_planner_enabled:
             logger.info("[CompilerPipeline] DHARA_LLM_IR_PLANNER disabled by flag; executing deterministic issues compiler")
@@ -548,6 +598,33 @@ def _safe_segment(s: str) -> str:
     return t or "default"
 
 
+def save_plan_snapshot(session_id: str, data: dict) -> str:
+    """Persist plan, prompt, route, and IR to plan_snapshot.json."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    snap_dir = os.path.join(root, "output", "snapshots", _safe_segment(session_id))
+    os.makedirs(snap_dir, exist_ok=True)
+    snap_path = os.path.join(snap_dir, "plan_snapshot.json")
+    try:
+        with open(snap_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, default=str)
+    except Exception as e:
+        logger.warning("Failed to write plan_snapshot.json: %s", e)
+    return snap_path
+
+
+def load_plan_snapshot(session_id: str) -> Optional[dict]:
+    """Load persisted plan_snapshot.json for the session."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    snap_path = os.path.join(root, "output", "snapshots", _safe_segment(session_id), "plan_snapshot.json")
+    if os.path.exists(snap_path):
+        try:
+            with open(snap_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+    return None
+
+
 def _rehydrate_plan(plan: Dict[str, Any], ctx: Dict[str, Any], assess: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Restore session-owned fields stripped by UI plan edits."""
     out = dict(plan)
@@ -579,6 +656,30 @@ def _rehydrate_plan(plan: Dict[str, Any], ctx: Dict[str, Any], assess: Optional[
         out["engine_recommendation"] = flow["plan"]["engine_recommendation"]
     if not out.get("narration") and flow.get("plan", {}).get("narration"):
         out["narration"] = flow["plan"]["narration"]
+    if not out.get("user_prompt"):
+        p_prompt = (
+            flow.get("user_prompt")
+            or ctx.get("user_prompt")
+            or flow.get("plan", {}).get("user_prompt")
+        )
+        if p_prompt:
+            out["user_prompt"] = p_prompt
+    if not out.get("ir_plan"):
+        p_ir = (
+            flow.get("ir_plan")
+            or ctx.get("ir_plan")
+            or flow.get("plan", {}).get("ir_plan")
+        )
+        if p_ir:
+            out["ir_plan"] = p_ir
+    if not out.get("planner_route"):
+        p_route = (
+            flow.get("planner_route")
+            or ctx.get("planner_route")
+            or flow.get("plan", {}).get("planner_route")
+        )
+        if p_route:
+            out["planner_route"] = p_route
     return out
 
 
@@ -626,6 +727,7 @@ def etl_plan_start(
     source_context: Optional[Dict[str, Any]] = None,
     engine_user_override: bool = False,
     generation_mode: Optional[str] = "full",
+    user_prompt: Optional[str] = None,
 ) -> Dict[str, Any]:
     sid = (session_id or "default").strip() or "default"
     sess = load_session(sid)
@@ -674,6 +776,32 @@ def etl_plan_start(
     if pending:
         merged_raw = {**(pending or {}), **(business_rules if isinstance(business_rules, dict) else {})}
     rules_merged = merge_business_rules_for_datasets(merged_raw, ds_names, tenant_id=tid)
+
+    # Extract user prompt from all possible request and session locations
+    biz_raw = business_rules if isinstance(business_rules, dict) else {}
+    user_prompt = (
+        user_prompt
+        or biz_raw.get("user_prompt")
+        or (rules_merged.get("user_prompt") if isinstance(rules_merged, dict) else None)
+        or (biz_raw.get("notes") if isinstance(biz_raw, dict) else None)
+        or (rules_merged.get("notes") if isinstance(rules_merged, dict) else None)
+        or (biz_raw.get("description") if isinstance(biz_raw, dict) else None)
+        or ctx.get("user_prompt")
+        or sess.get("user_prompt")
+        or flow.get("user_prompt")
+        or (flow.get("etl_intent", {}).get("description") if isinstance(flow.get("etl_intent"), dict) else None)
+    )
+    logger.info(f"[PLAN] user_prompt={repr(user_prompt)}")
+
+    if user_prompt:
+        sess["had_user_prompt"] = True
+        ctx["had_user_prompt"] = True
+        flow["had_user_prompt"] = True
+        sess["user_prompt"] = user_prompt
+        ctx["user_prompt"] = user_prompt
+        flow["user_prompt"] = user_prompt
+        if isinstance(rules_merged, dict):
+            rules_merged["user_prompt"] = user_prompt
 
     # ── Zep memory: inject recalled dataset facts ────────────────────
     try:
@@ -1087,6 +1215,85 @@ def etl_plan_start(
     cov_report = build_coverage_report(assess, plan)
     plan["coverage_report"] = cov_report
 
+    # Priority P1 & P2: LLM IR Planning during PLAN stage
+    if flags.llm_ir_planner_enabled and user_prompt:
+        try:
+            from agent.compiler.models.profile import DatasetProfile, ColumnProfile
+            from agent.ir import IrExtractor, IrNormalizer, IrValidator, IrFixer
+            from agent.ir.semantic_validator import BusinessRuleValidator
+            from agent.router import IntentRouter, RouteTarget
+
+            plan_profiles: Dict[str, DatasetProfile] = {}
+            for ds_name, ds_info in (assess.get("datasets") or {}).items():
+                if isinstance(ds_info, dict):
+                    p_cols = {}
+                    for col_name, col_meta in (ds_info.get("columns") or {}).items():
+                        dtype = col_meta.get("dtype") or col_meta.get("type") or "string" if isinstance(col_meta, dict) else "string"
+                        p_cols[col_name] = ColumnProfile(name=col_name, dtype=dtype)
+                    plan_profiles[ds_name] = DatasetProfile(dataset_id=ds_name, row_count=int(ds_info.get("row_count") or 0), columns=p_cols)
+
+            if not plan_profiles and isinstance(plan.get("datasets"), dict):
+                for ds_name, p_ds in plan["datasets"].items():
+                    p_cols = {c: ColumnProfile(name=c, dtype="string") for c in (p_ds.get("columns") or [])}
+                    plan_profiles[ds_name] = DatasetProfile(dataset_id=ds_name, columns=p_cols)
+
+            route_decision = IntentRouter.classify(user_prompt, plan_profiles)
+            route_val = route_decision.route.value
+            logger.info(f"[IntentRouter] route={route_val}")
+
+            if route_decision.route == RouteTarget.COMPILER_DIRECT:
+                raw_ir = IrExtractor._heuristic_fallback_extract(user_prompt, plan_profiles, session_id=sid)
+                raw_ir.metadata.tags = ["compiler_direct"]
+            else:
+                raw_ir = IrExtractor.extract(user_prompt, plan_profiles, session_id=sid)
+                raw_ir.metadata.tags = [route_val]
+
+            norm_ir = IrNormalizer.normalize(raw_ir, plan_profiles)
+            logger.info("[IrValidator] Validating normalized plan with %d sources, %d steps", len(norm_ir.sources), len(norm_ir.logical_plan))
+            healed_ir, val_res, is_valid = IrFixer.heal_plan(norm_ir, plan_profiles, max_attempts=2)
+            if val_res.valid:
+                logger.info("[IrValidator] passed")
+            logger.info(
+                "[IrFixer] repairs=%d",
+                len(healed_ir.metadata.repair_history) if healed_ir.metadata else 0,
+            )
+
+            semantic_val = BusinessRuleValidator.validate_semantics(healed_ir, plan_profiles)
+            if semantic_val.valid:
+                logger.info("[SemanticValidator] Plan passed semantic business rule validation")
+            else:
+                logger.warning("[SemanticValidator] Flagged semantic issues: %s", [e.message for e in semantic_val.errors])
+
+            ir_dict = healed_ir.model_dump()
+            plan["ir_plan"] = ir_dict
+            flow["ir_plan"] = ir_dict
+            sess["ir_plan"] = ir_dict
+            ctx["ir_plan"] = ir_dict
+
+            plan["planner_route"] = route_val
+            flow["planner_route"] = route_val
+            sess["planner_route"] = route_val
+            ctx["planner_route"] = route_val
+
+            snapshot_payload = {
+                "user_prompt": user_prompt,
+                "planner_route": route_val,
+                "ir_plan": ir_dict,
+                "plan_id": plan.get("plan_id"),
+            }
+            save_plan_snapshot(sid, snapshot_payload)
+        except Exception as e:
+            logger.warning(f"Could not build IR plan during planning: {e}")
+
+    # Canonical storage persistence
+    plan["user_prompt"] = user_prompt
+    flow["user_prompt"] = user_prompt
+    sess["user_prompt"] = user_prompt
+    ctx["user_prompt"] = user_prompt
+
+    if user_prompt:
+        logger.info("[SESSION] Persisted user_prompt")
+
     save_session(sess)
     logger.info(
         "etl_plan_start session=%s plan_id=%s ok=%s steps=%s latency_ms=%.0f",
@@ -1358,6 +1565,20 @@ def etl_confirm_plan(session_id: str, plan_override: Optional[Dict[str, Any]] = 
 
     plan = enrich_plan_manual_review(_rehydrate_plan(plan, ctx, assess=assess))
 
+    # Step 1: Trace user_prompt during CONFIRM
+    confirmed_prompt = (
+        plan.get("user_prompt")
+        or flow.get("user_prompt")
+        or sess.get("user_prompt")
+        or ctx.get("user_prompt")
+    )
+    logger.info(f"[CONFIRM] user_prompt={repr(confirmed_prompt)}")
+    if confirmed_prompt:
+        plan["user_prompt"] = confirmed_prompt
+        flow["user_prompt"] = confirmed_prompt
+        sess["user_prompt"] = confirmed_prompt
+        ctx["user_prompt"] = confirmed_prompt
+
     rules = flow.get("business_rules") or plan.get("business_rules") or {}
     if rules.get("auto_resolve_safe_defaults") or plan.get("auto_resolve_safe_defaults"):
         pending_items = [m for m in plan.get("manual_review") or [] if str(m.get("status") or "pending").lower() == "pending"]
@@ -1445,6 +1666,12 @@ def etl_confirm_plan(session_id: str, plan_override: Optional[Dict[str, Any]] = 
                 flow["cleaning_mode"] = cleaning_approval["cleaning_mode"]
                 plan["cleaning_mode"] = cleaning_approval["cleaning_mode"]
 
+    # Retain IR plan and route in confirmed plan & flow
+    if flow.get("ir_plan") and not plan.get("ir_plan"):
+        plan["ir_plan"] = flow["ir_plan"]
+    if flow.get("planner_route") and not plan.get("planner_route"):
+        plan["planner_route"] = flow["planner_route"]
+
     flow["approved_plan"] = plan
     flow["preview"] = preview
     flow["lineage"] = lineage
@@ -1455,6 +1682,12 @@ def etl_confirm_plan(session_id: str, plan_override: Optional[Dict[str, Any]] = 
         by="user" if not auto_ok else "system",
         reason="confirm_plan_called" if not auto_ok else "auto_approved_all_steps_safe",
     )
+
+    if plan.get("user_prompt"):
+        sess["user_prompt"] = plan.get("user_prompt")
+        ctx["user_prompt"] = plan.get("user_prompt")
+        flow["user_prompt"] = plan.get("user_prompt")
+        logger.info("[SESSION] Persisted user_prompt")
 
     save_session(sess)
     logger.info(
@@ -1633,6 +1866,7 @@ def etl_generate_code(
     *,
     codegen_mode: Optional[str] = None,
     generation_mode: Optional[str] = "full",
+    user_prompt: Optional[str] = None,
 ) -> Dict[str, Any]:
     sid = (session_id or "default").strip() or "default"
     sess = load_session(sid)
@@ -1675,6 +1909,34 @@ def etl_generate_code(
             "message": "Confirm the plan first (POST /etl/confirm).",
         }
     plan = _rehydrate_plan(plan, ctx, assess=assess)
+
+    # Step 1 & Step 3: Log all sources and resolve user_prompt with session as source of truth
+    biz_rules = plan.get("business_rules") or flow.get("business_rules") or {}
+    resolved_prompt = (
+        user_prompt
+        or plan.get("user_prompt")
+        or flow.get("user_prompt")
+        or sess.get("user_prompt")
+        or ctx.get("user_prompt")
+        or (biz_rules.get("user_prompt") if isinstance(biz_rules, dict) else None)
+        or plan.get("description")
+        or plan.get("notes")
+        or (biz_rules.get("notes") if isinstance(biz_rules, dict) else None)
+        or (flow.get("etl_intent", {}).get("description") if isinstance(flow.get("etl_intent"), dict) else None)
+    )
+    user_prompt = resolved_prompt
+
+    logger.info(
+        f"""
+plan.user_prompt={plan.get('user_prompt')}
+flow.user_prompt={flow.get('user_prompt')}
+session.user_prompt={sess.get('user_prompt')}
+ctx.user_prompt={ctx.get('user_prompt')}
+"""
+    )
+
+    from agent.feature_flags import get_flags
+    flags = get_flags()
     
     from agent.etl_pipeline.plan_coverage_report import build_coverage_report
     cov_report = build_coverage_report(assess, plan)
@@ -1775,6 +2037,39 @@ def etl_generate_code(
     # Phase 1 PlanSpec is frozen and immutable after confirmation
     filtered_datasets = plan.get("datasets") or {}
 
+    has_stored_ir = bool(
+        plan.get("ir_plan")
+        or flow.get("ir_plan")
+        or sess.get("ir_plan")
+        or ctx.get("ir_plan")
+        or (load_plan_snapshot(sid) or {}).get("ir_plan")
+    )
+    had_prompt = bool(
+        sess.get("had_user_prompt")
+        or flow.get("had_user_prompt")
+        or plan.get("had_user_prompt")
+        or flow.get("planner_route") in ("llm_ir_planner", "multi_agent_planner")
+        or plan.get("planner_route") in ("llm_ir_planner", "multi_agent_planner")
+    )
+    has_assessment_issues = bool(
+        assess.get("issues")
+        or assess.get("data_quality_issues")
+        or any(
+            (ds.get("quality", {}).get("issues") if isinstance(ds.get("quality"), dict) else None)
+            for ds in (assess.get("datasets") or {}).values()
+            if isinstance(ds, dict)
+        )
+    )
+
+    # Step 4: Hard fail instead of silent fallback if prompt is lost
+    if flags.llm_ir_planner_enabled and not user_prompt and not has_stored_ir:
+        if had_prompt or not has_assessment_issues:
+            logger.error("[LLM-IR] Missing prompt")
+            return {
+                "ok": False,
+                "error": "MISSING_PROMPT",
+                "message": "Prompt lost between planning and generation",
+            }
 
     # Resolve default codegen engine and dialect dynamically using SourceDescriptor
     default_eng = "python"
@@ -1836,7 +2131,15 @@ def etl_generate_code(
     try:
         if mode == "compiler":
             logger.info("[CompilerPipeline] generation_path=deterministic_compiler")
-            code, ok, errs, generated_by = _run_compiler_codegen(sid, eng, plan, assess, ctx, sql_dialect=sd)
+            code, ok, errs, generated_by = _run_compiler_codegen(
+                sid, eng, plan, assess, ctx, sql_dialect=sd, user_prompt=user_prompt
+            )
+            if not ok and errs and errs[0] == "Prompt lost between planning and generation":
+                return {
+                    "ok": False,
+                    "error": "MISSING_PROMPT",
+                    "message": "Prompt lost between planning and generation",
+                }
         elif mode == "template":
             code, ok, errs = _template_fallback(eng, plan, assess, sql_dialect=sd)
             generated_by = "template"
@@ -1944,11 +2247,15 @@ def etl_generate_code(
         rel = None
         rollback_on_failure(flow, reason=f"validation_failed: {(errs or ['unknown'])[:3]}", soft=True)
     latency_ms = (time.time() - t_gen) * 1000
-    generation_path = (
-        "deterministic_compiler"
-        if generated_by == "compiler"
-        else ("template" if generated_by == "template" else ("legacy_llm" if generated_by == "llm" else "unknown"))
-    )
+    route = flow.get("planner_route") or plan.get("planner_route")
+    if generated_by == "compiler" and route:
+        generation_path = f"{route}→compiler"
+    else:
+        generation_path = (
+            "deterministic_compiler"
+            if generated_by == "compiler"
+            else ("template" if generated_by == "template" else ("legacy_llm" if generated_by == "llm" else "unknown"))
+        )
     artifact_id = f"art_{sid}_{pid}_{version}"
     flow_update: Dict[str, Any] = {
         "code": combined_code,

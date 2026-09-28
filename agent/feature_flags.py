@@ -66,6 +66,7 @@ class FeatureFlags:
         enabled = [k for k, v in self.as_dict().items() if v is True]
         disabled = [k for k, v in self.as_dict().items() if v is False]
         logger.info("[DQ3] FeatureFlags initialized — enabled=%s disabled=%s", enabled, disabled)
+        logger.info("LLM_IR_PLANNER=%s", self.llm_ir_planner_enabled)
 
     def as_dict(self) -> Dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
