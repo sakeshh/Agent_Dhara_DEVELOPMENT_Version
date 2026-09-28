@@ -176,6 +176,8 @@ class PhysicalPlanner(BaseAgent):
         return PhysicalStep(
             step_id=f"phys_{step.step_id}",
             logical_step_id=step.step_id,
+            source_action_id=getattr(step, "source_action_id", None),
+            source_issue_ids=list(getattr(step, "source_issue_ids", []) or []),
             dataset_name=step.dataset_name,
             strategy_name=strat,
             template_name=tmpl,

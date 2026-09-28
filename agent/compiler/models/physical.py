@@ -17,6 +17,8 @@ class ExecutionEngine(str, Enum):
 class PhysicalStep(BaseModel):
     step_id: str
     logical_step_id: str
+    source_action_id: Optional[str] = None
+    source_issue_ids: List[str] = Field(default_factory=list)
     dataset_name: str
     strategy_name: str
     template_name: str
@@ -26,6 +28,14 @@ class PhysicalStep(BaseModel):
     intermediate_identifier: Optional[str] = None
     quarantine_table_or_df: Optional[str] = None
     description: Optional[str] = None
+
+    @property
+    def source_logical_step_id(self) -> str:
+        return self.logical_step_id
+
+    @source_logical_step_id.setter
+    def source_logical_step_id(self, v: str) -> None:
+        self.logical_step_id = v
 
 
 class PhysicalPlan(BaseModel):

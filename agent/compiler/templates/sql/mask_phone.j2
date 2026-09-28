@@ -6,8 +6,10 @@
 UPDATE {{ target_table }}
 SET [{{ col }}] = CASE 
     WHEN [{{ col }}] IS NULL THEN NULL
-    WHEN LEN([{{ col }}]) <= 4 THEN REPLICATE('*', LEN([{{ col }}]))
-    ELSE REPLICATE('*', LEN([{{ col }}]) - 4) + RIGHT([{{ col }}], 4)
+    WHEN [{{ col }}] LIKE '%*%' THEN [{{ col }}] -- Idempotent: already masked
+    WHEN LEN(RTRIM(LTRIM([{{ col }}]))) <= 4 THEN REPLICATE('*', LEN(RTRIM(LTRIM([{{ col }}]))))
+    ELSE REPLICATE('*', LEN(RTRIM(LTRIM([{{ col }}]))) - 4) + RIGHT(RTRIM(LTRIM([{{ col }}])), 4)
 END
-WHERE [{{ col }}] IS NOT NULL;
+WHERE [{{ col }}] IS NOT NULL
+  AND [{{ col }}] NOT LIKE '%*%';
 {% endfor %}

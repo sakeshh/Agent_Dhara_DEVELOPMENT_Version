@@ -56,13 +56,15 @@ class SQLCodegenAgent(BaseCodegenAgent):
         dataset_transforms: Dict[str, str] = {}
         never_drop = context.options.get("never_drop_rows", False)
         compilation_results: List[StepCompilationResult] = []
+        infrastructure_statement_count = 2  # Rejection schema + Rejection_Log DDL
+        projection_statement_count = 0
 
         for ds_name in physical_plan.dataset_names:
             table_ident = parse_table_identifier(ds_name)
             steps = physical_plan.get_steps_for_dataset(ds_name)
             rendered_steps: List[str] = []
 
-            # Add staging table preparation header
+            # Add staging table preparation header (infrastructure)
             staging_table = table_ident.staging_name
             source_table = table_ident.qualified_name
             prep_ddl = (
@@ -71,6 +73,7 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 f"SELECT * INTO {staging_table} FROM {source_table};"
             )
             rendered_steps.append(prep_ddl)
+            infrastructure_statement_count += 1
 
             for step in steps:
                 template_path = f"sql/{step.template_name}"
@@ -83,6 +86,9 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 params["staging_table"] = table_ident.staging_name
                 params["source_table"] = table_ident.qualified_name
                 params["clean_table"] = table_ident.clean_name
+                params["run_id"] = "@RunId"
+                step_issue_ids = list(getattr(step, "source_issue_ids", []) or [])
+                params["issue_id"] = step_issue_ids[0] if step_issue_ids else ""
                 if "parent_dataset" in params and params["parent_dataset"]:
                     try:
                         p_ident = parse_table_identifier(params["parent_dataset"])
@@ -135,6 +141,10 @@ class SQLCodegenAgent(BaseCodegenAgent):
                             template_name=template_path,
                             status="PARAMETER_MISSING",
                             error=err_msg,
+                            source_logical_step_id=step.logical_step_id,
+                            source_action_id=getattr(step, "source_action_id", None),
+                            source_issue_ids=step_issue_ids,
+                            is_executable_transformation=False,
                         )
                     )
                     continue
@@ -152,6 +162,10 @@ class SQLCodegenAgent(BaseCodegenAgent):
                             template_name=template_path,
                             status="TEMPLATE_MISSING",
                             error=err_msg,
+                            source_logical_step_id=step.logical_step_id,
+                            source_action_id=getattr(step, "source_action_id", None),
+                            source_issue_ids=step_issue_ids,
+                            is_executable_transformation=False,
                         )
                     )
                     continue
@@ -171,6 +185,10 @@ class SQLCodegenAgent(BaseCodegenAgent):
                                 template_name=template_path,
                                 status="RENDER_FAILED",
                                 error=err_msg,
+                                source_logical_step_id=step.logical_step_id,
+                                source_action_id=getattr(step, "source_action_id", None),
+                                source_issue_ids=step_issue_ids,
+                                is_executable_transformation=False,
                             )
                         )
                     else:
@@ -184,6 +202,10 @@ class SQLCodegenAgent(BaseCodegenAgent):
                                 template_name=template_path,
                                 status="RENDERED",
                                 sql=step_code,
+                                source_logical_step_id=step.logical_step_id,
+                                source_action_id=getattr(step, "source_action_id", None),
+                                source_issue_ids=step_issue_ids,
+                                is_executable_transformation=True,
                             )
                         )
                 except Exception as exc:
@@ -198,10 +220,14 @@ class SQLCodegenAgent(BaseCodegenAgent):
                             template_name=template_path,
                             status="RENDER_FAILED",
                             error=err_msg,
+                            source_logical_step_id=step.logical_step_id,
+                            source_action_id=getattr(step, "source_action_id", None),
+                            source_issue_ids=step_issue_ids,
+                            is_executable_transformation=False,
                         )
                     )
 
-            # Retrieve output contract for this dataset
+            # Retrieve output contract for this dataset (projection)
             output_contracts = context.metadata.get("output_contracts") or {}
             contract_data = output_contracts.get(ds_name) or {}
             clean_columns = contract_data.get("clean_columns") or []
@@ -215,24 +241,36 @@ class SQLCodegenAgent(BaseCodegenAgent):
                     f"SELECT\n    {cols_quoted}\nINTO {clean_table}\nFROM {staging_table};"
                 )
                 rendered_steps.append(projection_sql)
+                projection_statement_count += 1
 
             dataset_transforms[ds_name] = "\n\n".join(rendered_steps) if rendered_steps else "-- No transformations"
 
         # ── Fail-Closed Validation Gates ──────────────────────────────────────
         ing_telem = context.metadata.get("ingestion_telemetry") or {}
         assessment_issue_count = ing_telem.get("assessment_discovered_count", len(context.detected_issues))
-        mapped_action_count = ing_telem.get("mapped_action_count", len(context.detected_issues))
+        default_mapped = len(context.structured_actions) if context.structured_actions else (len(context.logical_plan.steps) if context.logical_plan else 0)
+        mapped_issue_count = ing_telem.get("mapped_issue_count", ing_telem.get("mapped_action_count", default_mapped))
         unsupported_issue_count = ing_telem.get("unsupported_issue_count", 0)
-        planned_step_count = len(physical_plan.steps)
+        manual_review_issue_count = ing_telem.get("manual_review_issue_count", 0)
 
-        rendered_step_count = sum(
+        structured_action_count = len(context.structured_actions)
+        logical_step_count = len(context.logical_plan.steps) if context.logical_plan else 0
+        physical_step_count = len(physical_plan.steps)
+        mapped_action_count = mapped_issue_count
+        planned_step_count = physical_step_count
+
+        rendered_transformation_count = sum(
             r.status == "RENDERED"
-            and is_executable_sql(r.sql)
+            and r.is_executable_transformation
             for r in compilation_results
         )
+        rendered_step_count = rendered_transformation_count
         template_missing_count = sum(r.status == "TEMPLATE_MISSING" for r in compilation_results)
         parameter_missing_count = sum(r.status == "PARAMETER_MISSING" for r in compilation_results)
         render_failed_count = sum(r.status == "RENDER_FAILED" for r in compilation_results)
+        skipped_step_count = sum(r.status == "SKIPPED" for r in compilation_results)
+        unsupported_step_count = sum(r.status == "UNSUPPORTED" for r in compilation_results)
+        failed_transformation_count = template_missing_count + parameter_missing_count + render_failed_count + unsupported_step_count
 
         strict_mode = context.options.get("strict_execution", True)
         if context.options.get("preview_mode", False) or context.options.get("preview_partial", False):
@@ -241,16 +279,24 @@ class SQLCodegenAgent(BaseCodegenAgent):
         telemetry = CompilationTelemetry(
             ok=True,
             executable=True,
-            partial=not strict_mode and (unsupported_issue_count > 0 or template_missing_count > 0 or render_failed_count > 0),
+            partial=not strict_mode and (unsupported_issue_count > 0 or failed_transformation_count > 0),
             assessment_issue_count=assessment_issue_count,
-            mapped_action_count=mapped_action_count,
+            mapped_issue_count=mapped_issue_count,
             unsupported_issue_count=unsupported_issue_count,
-            planned_step_count=planned_step_count,
-            rendered_step_count=rendered_step_count,
+            manual_review_issue_count=manual_review_issue_count,
+            structured_action_count=structured_action_count,
+            logical_step_count=logical_step_count,
+            physical_step_count=physical_step_count,
+            rendered_transformation_count=rendered_transformation_count,
+            failed_transformation_count=failed_transformation_count,
             template_missing_count=template_missing_count,
             parameter_missing_count=parameter_missing_count,
             render_failed_count=render_failed_count,
-            fallback_projection_used=bool(clean_columns and rendered_step_count == 0),
+            skipped_step_count=skipped_step_count,
+            unsupported_step_count=unsupported_step_count,
+            infrastructure_statement_count=infrastructure_statement_count,
+            projection_statement_count=projection_statement_count,
+            fallback_projection_used=bool(clean_columns and rendered_transformation_count == 0),
             step_results=compilation_results,
         )
 

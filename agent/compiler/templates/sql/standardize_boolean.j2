@@ -1,13 +1,84 @@
 -- Step: {{ step_id }} ({{ description }})
 -- Strategy: Standardize Boolean Representation on [{{ dataset_name }}]
 {% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
+{% set disp = disposition | default('NULLIFY') | upper %}
 
 {% for col in columns %}
+-- 1. Standardize recognized boolean representations
 UPDATE {{ target_table }}
 SET [{{ col }}] = CASE
-    WHEN UPPER(LTRIM(RTRIM(CAST([{{ col }}] AS NVARCHAR(50))))) IN ('1', 'TRUE', 'T', 'YES', 'Y') THEN '1'
-    WHEN UPPER(LTRIM(RTRIM(CAST([{{ col }}] AS NVARCHAR(50))))) IN ('0', 'FALSE', 'F', 'NO', 'N') THEN '0'
-    ELSE NULL
+    WHEN UPPER(LTRIM(RTRIM(CAST([{{ col }}] AS NVARCHAR(50))))) IN ('1', 'TRUE', 'T', 'YES', 'Y', 'ON') THEN '1'
+    WHEN UPPER(LTRIM(RTRIM(CAST([{{ col }}] AS NVARCHAR(50))))) IN ('0', 'FALSE', 'F', 'NO', 'N', 'OFF') THEN '0'
+    ELSE [{{ col }}]
 END
 WHERE [{{ col }}] IS NOT NULL;
+
+-- 2. Audit & Remediate unknown / unmapped boolean values
+{% if disp == 'REJECT' and not never_drop_rows %}
+INSERT INTO [ETL_REJECT].[Rejection_Log] (
+    [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
+)
+SELECT 
+    '{{ pipeline_id | default("adhoc") }}',
+    {{ run_id | default("@RunId") }},
+    '{{ dataset_name }}',
+    '{{ issue_id | default("") }}',
+    '{{ step_id }}',
+    '{{ col }}',
+    'Unrecognized boolean value in [{{ col }}]',
+    'REJECT',
+    s.[{{ col }}],
+    (SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+FROM {{ target_table }} s
+WHERE s.[{{ col }}] IS NOT NULL 
+  AND s.[{{ col }}] NOT IN ('1', '0');
+
+DELETE FROM {{ target_table }}
+WHERE [{{ col }}] IS NOT NULL 
+  AND [{{ col }}] NOT IN ('1', '0');
+
+{% elif disp == 'REJECT' or disp == 'NULLIFY' %}
+INSERT INTO [ETL_REJECT].[Rejection_Log] (
+    [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
+)
+SELECT 
+    '{{ pipeline_id | default("adhoc") }}',
+    {{ run_id | default("@RunId") }},
+    '{{ dataset_name }}',
+    '{{ issue_id | default("") }}',
+    '{{ step_id }}',
+    '{{ col }}',
+    {% if disp == 'REJECT' %}'Unrecognized boolean in [{{ col }}] (nullified due to never_drop_rows policy)'{% else %}'Unrecognized boolean value in [{{ col }}] (nullified)'{% endif %},
+    'NULLIFY',
+    s.[{{ col }}],
+    (SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+FROM {{ target_table }} s
+WHERE s.[{{ col }}] IS NOT NULL 
+  AND s.[{{ col }}] NOT IN ('1', '0');
+
+UPDATE {{ target_table }}
+SET [{{ col }}] = NULL
+WHERE [{{ col }}] IS NOT NULL 
+  AND [{{ col }}] NOT IN ('1', '0');
+
+{% elif disp == 'FLAG' or disp == 'MANUAL_REVIEW' %}
+INSERT INTO [ETL_REJECT].[Rejection_Log] (
+    [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
+)
+SELECT 
+    '{{ pipeline_id | default("adhoc") }}',
+    {{ run_id | default("@RunId") }},
+    '{{ dataset_name }}',
+    '{{ issue_id | default("") }}',
+    '{{ step_id }}',
+    '{{ col }}',
+    'Flagged unrecognized boolean value in [{{ col }}]',
+    '{{ disp }}',
+    s.[{{ col }}],
+    (SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+FROM {{ target_table }} s
+WHERE s.[{{ col }}] IS NOT NULL 
+  AND s.[{{ col }}] NOT IN ('1', '0');
+
+{% endif %}
 {% endfor %}

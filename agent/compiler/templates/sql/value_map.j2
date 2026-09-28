@@ -1,13 +1,24 @@
 -- Step: {{ step_id }} ({{ description }})
+{% set map_dict = mappings | default(mapping | default({})) %}
 UPDATE [dbo].[{{ dataset_name }}_Staging]
 SET
 {% for col in columns %}
     [{{ col }}] = CASE 
+        {% if None in map_dict %}
+        WHEN [{{ col }}] IS NULL THEN {{ map_dict[None] | render_literal }}
+        {% elif 'NULL' in map_dict %}
+        WHEN [{{ col }}] IS NULL THEN {{ map_dict['NULL'] | render_literal }}
+        {% else %}
         WHEN [{{ col }}] IS NULL THEN NULL
-        {% for src_val, tgt_val in (mappings | default(mapping | default({}))).items() %}
+        {% endif %}
+        {% for src_val, tgt_val in map_dict.items() %}
+        {% if src_val is not none and src_val != 'NULL' %}
         WHEN [{{ col }}] = {{ src_val | render_literal }} THEN {{ tgt_val | render_literal }}
+        {% endif %}
         {% endfor %}
-        {% if preserve_unmapped %}
+        {% if default_value is defined and default_value is not none %}
+        ELSE {{ default_value | render_literal }}
+        {% elif preserve_unmapped %}
         ELSE [{{ col }}]
         {% else %}
         ELSE NULL

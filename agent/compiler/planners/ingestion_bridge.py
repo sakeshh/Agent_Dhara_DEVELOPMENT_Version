@@ -513,25 +513,29 @@ class IngestionBridge:
                     iss.issue_type,
                 )
 
+        manual_review_count = sum(1 for iss in deduped if iss.source == "manual_review")
         telemetry = {
             "assessment_discovered_count": total_assessment_discovered,
             "plan_discovered_count": total_plan_discovered,
             "normalized_issue_count": len(deduped),
             "duplicates_removed_count": duplicates_removed,
+            "mapped_issue_count": mapped_count,
             "mapped_action_count": mapped_count,
             "unsupported_issue_count": len(unsupported_issues),
+            "manual_review_issue_count": manual_review_count,
             "unsupported_issues": unsupported_issues,
         }
 
         logger.info(
             "[IngestionBridge] Summary: assessment_discovered=%d, plan_discovered=%d, "
-            "normalized=%d, deduped_removed=%d, mapped=%d, unsupported=%d",
+            "normalized=%d, deduped_removed=%d, mapped=%d, unsupported=%d, manual_review=%d",
             total_assessment_discovered,
             total_plan_discovered,
             len(deduped),
             duplicates_removed,
             mapped_count,
             len(unsupported_issues),
+            manual_review_count,
         )
 
         return deduped, business_rules, telemetry
@@ -574,12 +578,14 @@ class IngestionBridge:
                     source_enum = ActionSource.CATALOG
 
                 s_action = StructuredAction(
+                    action_id=f"action_{c_iss.issue_id}",
                     action_type=action,
                     dataset_name=c_iss.dataset,
                     target_columns=cols,
                     parameters=dict(c_iss.parameters),
                     source=source_enum,
                     source_reference=c_iss.rule_id or c_iss.issue_id,
+                    source_issue_ids=[c_iss.issue_id],
                     extraction_method=c_iss.resolution_path or "deterministic",
                     confidence=1.0,
                     metadata={"canonical_source": c_iss.source, "issue_type": c_iss.issue_type},

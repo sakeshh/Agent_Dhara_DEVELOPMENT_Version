@@ -237,12 +237,23 @@ class StructuredAction(BaseModel):
     dataset_name: str
     target_columns: List[str] = Field(default_factory=list)
     parameters: Dict[str, Any] = Field(default_factory=dict)
+    action_id: Optional[str] = Field(default=None, description="Unique action identifier for lineage tracking")
+    source_issue_ids: List[str] = Field(default_factory=list, description="IDs of source assessment issues remediated by this action")
     source: ActionSource = ActionSource.ASSESSMENT
     source_reference: Optional[str] = Field(default=None, description="Original rule ID or issue ID")
     extraction_method: Optional[str] = Field(default=None, description="E.g. deterministic, llm, catalog")
     confidence: Optional[float] = Field(default=1.0, ge=0.0, le=1.0)
     requires_approval: bool = False
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _ensure_action_lineage(self) -> StructuredAction:
+        if not self.action_id:
+            cols_str = "_".join(self.target_columns) if self.target_columns else "global"
+            self.action_id = f"action_{self.dataset_name}_{self.action_type.value}_{cols_str}"
+        if not self.source_issue_ids and self.source_reference:
+            self.source_issue_ids = [self.source_reference]
+        return self
 
     @field_validator("target_columns")
     @classmethod

@@ -93,6 +93,10 @@ class LogicalPlanner(BaseAgent):
             effect = DataEffect.QUARANTINE_ROWS
 
         deps = list(action.metadata.get("depends_on_step_ids") or [])
+        source_act_id = getattr(action, "action_id", None) or f"action_{action.dataset_name}_{action.action_type.value}_{step_index}"
+        source_issues = list(getattr(action, "source_issue_ids", []) or [])
+        if not source_issues and action.source_reference:
+            source_issues = [action.source_reference]
 
         return LogicalStep(
             step_id=f"step_{action.dataset_name}_{action.action_type.value}_{step_index}",
@@ -104,7 +108,8 @@ class LogicalPlanner(BaseAgent):
             priority=self.ACTION_PRIORITY.get(action.action_type, 100),
             confidence=action.confidence if action.confidence is not None else 1.0,
             requires_user_approval=action.requires_approval,
-            source_issue_ids=[action.source_reference] if action.source_reference else [],
+            source_action_id=source_act_id,
+            source_issue_ids=source_issues,
             description=f"Apply {action.action_type.value} on {', '.join(action.target_columns)}",
             depends_on_step_ids=deps,
             source=action.source.value if action.source else None,
@@ -175,25 +180,27 @@ class LogicalPlanner(BaseAgent):
         steps: List[LogicalStep] = []
         dataset_names = set(context.dataset_profiles.keys())
         
-        # 1. Compile detected issues into logical steps (Level 1)
-        for idx, issue in enumerate(context.detected_issues):
-            step = self.issue_compiler.issue_to_logical_step(issue, idx)
-            step.priority = self.ACTION_PRIORITY.get(step.action, 100)
-            steps.append(step)
-            dataset_names.add(issue.dataset_name)
-
-        # 2. Compile structured actions into logical steps (Level 2 & Composable)
-        start_idx = len(steps)
-        for idx, action in enumerate(context.structured_actions):
-            if isinstance(action, StructuredAction):
-                step = self.action_to_logical_step(action, start_idx + idx, context.dataset_profiles)
-            elif isinstance(action, dict):
-                act_obj = StructuredAction.model_validate(action)
-                step = self.action_to_logical_step(act_obj, start_idx + idx, context.dataset_profiles)
-            else:
-                continue
-            steps.append(step)
-            dataset_names.add(step.dataset_name)
+        # Primary compilation: structured actions
+        if context.structured_actions:
+            for idx, action in enumerate(context.structured_actions):
+                if isinstance(action, StructuredAction):
+                    step = self.action_to_logical_step(action, idx, context.dataset_profiles)
+                elif isinstance(action, dict):
+                    act_obj = StructuredAction.model_validate(action)
+                    step = self.action_to_logical_step(act_obj, idx, context.dataset_profiles)
+                else:
+                    continue
+                steps.append(step)
+                dataset_names.add(step.dataset_name)
+        elif context.detected_issues:
+            # Fallback compilation for legacy contexts without structured actions
+            for idx, issue in enumerate(context.detected_issues):
+                step = self.issue_compiler.issue_to_logical_step(issue, idx)
+                step.priority = self.ACTION_PRIORITY.get(step.action, 100)
+                step.source_action_id = f"action_synthetic_{issue.issue_id}"
+                step.source_issue_ids = [issue.issue_id]
+                steps.append(step)
+                dataset_names.add(issue.dataset_name)
 
         # 3. Add business rules steps if applicable
         for rule in context.business_rules:

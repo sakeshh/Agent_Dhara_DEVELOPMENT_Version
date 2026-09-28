@@ -55,6 +55,7 @@ class LogicalStep(BaseModel):
     priority: int = 100
     confidence: float = 1.0  # 0.0 - 1.0
     requires_user_approval: bool = False
+    source_action_id: Optional[str] = Field(default=None, description="ID of source StructuredAction")
     source_issue_ids: List[str] = Field(default_factory=list)
     description: Optional[str] = None
     fused_operations: List[ActionType] = Field(default_factory=list)

@@ -46,9 +46,31 @@ def test_scenario_a_all_issues_supported():
 
     assert telemetry["ok"] is True
     assert telemetry["executable"] is True
+    assert telemetry["rendered_transformation_count"] == 2
     assert telemetry["rendered_step_count"] == 2
+    assert telemetry["physical_step_count"] == 2
+    assert telemetry["logical_step_count"] == 2
+    assert telemetry["structured_action_count"] == 2
     assert telemetry["unsupported_issue_count"] == 0
     assert telemetry["fallback_projection_used"] is False
+    assert telemetry["infrastructure_statement_count"] >= 3  # Proc DDL + Staging DDL
+    assert telemetry["projection_statement_count"] == 1
+
+    # Lineage invariants
+    assert all(s.source_action_id is not None for s in compiled_ctx.logical_plan.steps)
+    assert all(s.source_logical_step_id is not None for s in compiled_ctx.physical_plan.steps)
+    assert all(s.source_action_id is not None for s in compiled_ctx.physical_plan.steps)
+
+    # Compilation accounting invariant
+    assert (
+        telemetry["rendered_transformation_count"]
+        + telemetry["template_missing_count"]
+        + telemetry["parameter_missing_count"]
+        + telemetry["render_failed_count"]
+        + telemetry["skipped_step_count"]
+        + telemetry["unsupported_step_count"]
+        == telemetry["physical_step_count"]
+    )
 
 
 def test_scenario_b_issues_detected_none_mapped():
@@ -59,6 +81,7 @@ def test_scenario_b_issues_detected_none_mapped():
     ctx.metadata["ingestion_telemetry"] = {
         "assessment_discovered_count": 5,
         "mapped_action_count": 0,
+        "mapped_issue_count": 0,
         "unsupported_issue_count": 5,
     }
 
@@ -86,6 +109,7 @@ def test_scenario_c_action_mapped_template_missing(monkeypatch):
     ctx.metadata["ingestion_telemetry"] = {
         "assessment_discovered_count": 1,
         "mapped_action_count": 1,
+        "mapped_issue_count": 1,
         "unsupported_issue_count": 0,
     }
 
@@ -110,6 +134,7 @@ def test_scenario_d_strict_vs_preview_mode():
     ctx_strict.metadata["ingestion_telemetry"] = {
         "assessment_discovered_count": 20,
         "mapped_action_count": 12,
+        "mapped_issue_count": 12,
         "unsupported_issue_count": 8,
     }
 
@@ -128,6 +153,7 @@ def test_scenario_d_strict_vs_preview_mode():
     ctx_preview.metadata["ingestion_telemetry"] = {
         "assessment_discovered_count": 20,
         "mapped_action_count": 12,
+        "mapped_issue_count": 12,
         "unsupported_issue_count": 8,
     }
 
@@ -138,6 +164,7 @@ def test_scenario_d_strict_vs_preview_mode():
     assert telemetry["executable"] is False
     assert telemetry["partial"] is True
     assert telemetry["unsupported_issue_count"] == 8
+    assert telemetry["rendered_transformation_count"] == 1
     assert len(telemetry["warnings"]) > 0
 
 
@@ -149,6 +176,7 @@ def test_scenario_e_zero_issues_pass_through():
     ctx.metadata["ingestion_telemetry"] = {
         "assessment_discovered_count": 0,
         "mapped_action_count": 0,
+        "mapped_issue_count": 0,
         "unsupported_issue_count": 0,
     }
 
@@ -159,3 +187,79 @@ def test_scenario_e_zero_issues_pass_through():
     assert telemetry["executable"] is True
     assert telemetry["pipeline_type"] == "pass_through"
     assert "No cleaning transformations were required" in telemetry["message"]
+
+
+def test_end_to_end_lineage_and_accounting_invariants():
+    """Validates end-to-end lineage IDs and strict accounting across all layers."""
+    from agent.compiler.planners.ingestion_bridge import IngestionBridge
+
+    assessment = {
+        "datasets": {
+            "Employee": {
+                "columns": {
+                    "Email": {"dtype": "varchar(100)"},
+                    "Phone": {"dtype": "varchar(20)"},
+                },
+                "quality": {
+                    "issues": [
+                        {"column": "Email", "issue_type": "invalid_email", "severity": "medium"},
+                        {"column": "Phone", "issue_type": "invalid_phone", "severity": "medium"},
+                    ]
+                }
+            }
+        }
+    }
+
+    bridge = IngestionBridge(default_schema="dbo")
+    cols = {
+        "Email": ColumnProfile(name="Email", dtype="string"),
+        "Phone": ColumnProfile(name="Phone", dtype="string"),
+    }
+    profiles = {"Employee": DatasetProfile(dataset_id="Employee", columns=cols)}
+
+    deduped, rules, telemetry = bridge.extract_and_normalize(assess=assessment, plan={}, known_datasets={"Employee"})
+    detected_issues, structured_actions = bridge.bridge_to_compiler_models(deduped)
+
+    # Ingestion accounting invariant
+    assert (
+        telemetry["mapped_issue_count"]
+        + telemetry["unsupported_issue_count"]
+        + telemetry["manual_review_issue_count"]
+        == telemetry["assessment_discovered_count"]
+    )
+
+    ctx = CompilerContext(
+        session_id="lineage_test",
+        target_engine=ExecutionEngine.AZURE_SQL,
+        dataset_profiles=profiles,
+        detected_issues=detected_issues,
+        structured_actions=structured_actions,
+    )
+    ctx.metadata["ingestion_telemetry"] = telemetry
+
+    pipeline = CompilerPipeline()
+    compiled_ctx, artifact = pipeline.compile(ctx)
+    comp_telem = compiled_ctx.metadata.get("compilation_telemetry", {})
+
+    # Planner Lineage invariant
+    assert len(compiled_ctx.logical_plan.steps) == len(structured_actions)
+    assert len(compiled_ctx.physical_plan.steps) == len(structured_actions)
+    for l_step, p_step in zip(compiled_ctx.logical_plan.steps, compiled_ctx.physical_plan.steps):
+        assert l_step.source_action_id is not None
+        assert p_step.source_logical_step_id == l_step.step_id
+        assert p_step.source_action_id == l_step.source_action_id
+        assert len(p_step.source_issue_ids) > 0
+
+    # Compilation accounting invariant
+    assert (
+        comp_telem["rendered_transformation_count"]
+        + comp_telem["template_missing_count"]
+        + comp_telem["parameter_missing_count"]
+        + comp_telem["render_failed_count"]
+        + comp_telem["skipped_step_count"]
+        + comp_telem["unsupported_step_count"]
+        == comp_telem["physical_step_count"]
+    )
+    assert comp_telem["rendered_transformation_count"] == 2
+    assert comp_telem["infrastructure_statement_count"] >= 3
+

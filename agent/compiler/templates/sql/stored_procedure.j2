@@ -21,14 +21,24 @@ BEGIN
         IF OBJECT_ID('[ETL_REJECT].[Rejection_Log]', 'U') IS NULL
         BEGIN
             CREATE TABLE [ETL_REJECT].[Rejection_Log] (
-                [RejectionId] BIGINT IDENTITY(1,1) PRIMARY KEY,
+                [RejectionId] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
                 [PipelineId] VARCHAR(100) NOT NULL,
-                [DatasetName] VARCHAR(128) NOT NULL,
-                [Reason] NVARCHAR(500) NOT NULL,
+                [RunId] UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+                [DatasetName] NVARCHAR(256) NOT NULL,
+                [IssueId] NVARCHAR(200) NULL,
+                [StepId] NVARCHAR(200) NULL,
+                [ColumnName] NVARCHAR(128) NULL,
+                [Reason] NVARCHAR(1000) NOT NULL,
+                [Disposition] VARCHAR(30) NOT NULL DEFAULT 'REJECT',
+                [OriginalValue] NVARCHAR(MAX) NULL,
                 [RejectedRowData] NVARCHAR(MAX) NULL,
-                [RejectedAt] DATETIME2 DEFAULT SYSUTCDATETIME()
+                [RejectedAt] DATETIME2(7) NOT NULL
+                    CONSTRAINT [DF_RejectionLog_RejectedAt]
+                    DEFAULT SYSUTCDATETIME()
             );
         END;
+
+        DECLARE @RunId UNIQUEIDENTIFIER = NEWID();
 
 {% for dataset_name, ddl_and_ctes in dataset_transforms.items() %}
         -- --------------------------------------------------------------------
