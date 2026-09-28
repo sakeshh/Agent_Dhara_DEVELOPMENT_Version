@@ -205,13 +205,24 @@ def _run_compiler_codegen(
                 cols[c] = ColumnProfile(name=c, dtype="string")
             profiles[ds_name] = DatasetProfile(dataset_id=ds_name, columns=cols)
 
-    from agent.compiler.planners.issue_compiler import IssueCompiler
-    compiler = IssueCompiler()
-    detected_issues = []
-    for idx, iss in enumerate(assess.get("issues") or []):
-        if isinstance(iss, dict):
-            ds = iss.get("dataset") or (list(profiles.keys())[0] if profiles else "default")
-            detected_issues.append(compiler.compile_raw_issue(iss, ds, idx))
+    from agent.compiler.planners.ingestion_bridge import IngestionBridge
+    bridge = IngestionBridge(default_schema="dbo")
+
+    known_ds = set(profiles.keys())
+    canonical_issues, b_rules, telemetry = bridge.extract_and_normalize(
+        assess=assess,
+        plan=plan,
+        known_datasets=known_ds,
+    )
+    detected_issues, structured_actions = bridge.bridge_to_compiler_models(canonical_issues)
+
+    logger.info(
+        "[_run_compiler_codegen] IngestionBridge extracted: %d canonical issues, %d business rules, %d structured actions (telemetry: %s)",
+        len(canonical_issues),
+        len(b_rules),
+        len(structured_actions),
+        telemetry,
+    )
 
     compiler_ctx = CompilerContext(
         session_id=session_id,
@@ -221,7 +232,10 @@ def _run_compiler_codegen(
         include_operational_metadata=False,
         dataset_profiles=profiles,
         detected_issues=detected_issues,
+        structured_actions=structured_actions,
+        business_rules=b_rules,
     )
+    compiler_ctx.metadata["ingestion_telemetry"] = telemetry
 
     if plan.get("cleaning_approval"):
         compiler_ctx.metadata["cleaning_approval"] = plan["cleaning_approval"]
@@ -232,6 +246,7 @@ def _run_compiler_codegen(
     code = compiled_ctx.code_artifact.content if compiled_ctx.code_artifact else ""
     flow["output_contracts"] = compiled_ctx.metadata.get("output_contracts") or {}
     flow["latest_snapshot_id"] = snapshot.snapshot_id
+    flow["ingestion_telemetry"] = telemetry
     if compiled_ctx.metadata.get("deployment_manifest"):
         flow["deployment_manifest"] = compiled_ctx.metadata["deployment_manifest"]
 
