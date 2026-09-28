@@ -109,13 +109,24 @@ class Tier3ApprovalGate:
         requires_approval = self.is_approval_required(proposal)
 
         if not requires_approval:
-            # Low-risk canonical action backed by authoritative evidence: auto-approved
+            # Low-risk canonical action backed by authoritative evidence: auto-approved by policy
+            policy_record = ApprovalRecord(
+                approval_id=f"auto_{proposal.proposal_id}",
+                proposal_id=proposal.proposal_id,
+                proposal_fingerprint=proposal.fingerprint,
+                decision=ApprovalDecision.APPROVED,
+                approver_id="tier3-approval-policy-v1",
+                approver_role="SYSTEM_POLICY",
+                decided_at=datetime.now(timezone.utc),
+                reason="Auto-approved by policy: low-risk canonical action with authoritative evidence.",
+                approval_source="POLICY_ENGINE",
+            )
             return ApprovalEvaluationResult(
                 is_approved=True,
                 requires_approval=False,
                 decision=ApprovalDecision.APPROVED,
-                approval_record=None,
-                reason="Auto-approved by policy: low-risk canonical action with authoritative evidence.",
+                approval_record=policy_record,
+                reason=policy_record.reason,
             )
 
         if approval_record is None:

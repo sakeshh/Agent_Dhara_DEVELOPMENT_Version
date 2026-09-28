@@ -257,3 +257,157 @@ def test_unknown_action_type_is_blocked(adapter: Tier3ActionAdapter):
     )
     with pytest.raises(Tier3IntegrationError, match="not a registered compiler action"):
         adapter.adapt(proposal, val_res)
+
+
+def test_nested_mutation_recalculates_fingerprint_and_invalidates_approval(
+    adapter: Tier3ActionAdapter,
+):
+    """Mutating nested parameters recalculates fingerprint and invalidates prior approval."""
+    proposal = Tier3ResolutionProposal(
+        contract_version="1.0",
+        proposal_id="prop_map_nested",
+        issue_id="issue_map_nested",
+        dataset_name="dbo.Employees",
+        proposed_action_type="VALUE_MAP",
+        target_columns=["Status"],
+        disposition=ResolutionDisposition.CORRECT,
+        action_parameters={"mappings": {"A": "Active", "I": "Inactive"}},
+        evidence_authorities=[EvidenceAuthority.APPROVED_BUSINESS_RULE],
+        evidence_references=["RULE_STATUS"],
+        confidence=0.95,
+        risk_level=RiskLevel.MEDIUM,
+        approval_required=True,
+        status=ResolutionStatus.APPROVED,
+    )
+    original_fingerprint = proposal.fingerprint
+
+    approval = ApprovalRecord(
+        approval_id="appr_map_nested",
+        proposal_id=proposal.proposal_id,
+        proposal_fingerprint=original_fingerprint,
+        decision=ApprovalDecision.APPROVED,
+        approver_id="steward_bob",
+        approver_role="DATA_STEWARD",
+        decided_at=datetime.now(timezone.utc),
+        reason="Approved mapping",
+    )
+
+    # Mutate nested dictionary
+    proposal.action_parameters["mappings"]["A"] = "MODIFIED_UNAPPROVED"
+    assert proposal.fingerprint != original_fingerprint
+
+    val_res = Tier3ValidationResult(
+        valid=True,
+        findings=[],
+        normalized_proposal=proposal,
+        proposal_fingerprint=proposal.fingerprint,
+    )
+
+    # Approval record now points to stale fingerprint, adapter must block
+    with pytest.raises(Tier3IntegrationError, match="Approval fingerprint does not match"):
+        adapter.adapt(proposal, val_res, approval=approval)
+
+
+def test_reject_mismatched_proposal_combinations_a_b_c(
+    adapter: Tier3ActionAdapter,
+):
+    """Proposal A validated, Proposal B approved, Adapter given Proposal C -> must reject."""
+    p_a = Tier3ResolutionProposal(
+        proposal_id="prop_A",
+        issue_id="iss_A",
+        dataset_name="dbo.Employees",
+        proposed_action_type="TRIM",
+        target_columns=["FirstName"],
+        disposition=ResolutionDisposition.CORRECT,
+        action_parameters={"side": "both"},
+        evidence_authorities=[EvidenceAuthority.DECLARED_SCHEMA],
+        evidence_references=["REF_A"],
+        confidence=1.0,
+        risk_level=RiskLevel.LOW,
+        approval_required=True,
+        status=ResolutionStatus.APPROVED,
+    )
+    p_b = Tier3ResolutionProposal(
+        proposal_id="prop_B",
+        issue_id="iss_B",
+        dataset_name="dbo.Employees",
+        proposed_action_type="TRIM",
+        target_columns=["LastName"],
+        disposition=ResolutionDisposition.CORRECT,
+        action_parameters={"side": "both"},
+        evidence_authorities=[EvidenceAuthority.DECLARED_SCHEMA],
+        evidence_references=["REF_B"],
+        confidence=1.0,
+        risk_level=RiskLevel.LOW,
+        approval_required=True,
+        status=ResolutionStatus.APPROVED,
+    )
+    p_c = Tier3ResolutionProposal(
+        proposal_id="prop_C",
+        issue_id="iss_C",
+        dataset_name="dbo.Employees",
+        proposed_action_type="TRIM",
+        target_columns=["Department"],
+        disposition=ResolutionDisposition.CORRECT,
+        action_parameters={"side": "both"},
+        evidence_authorities=[EvidenceAuthority.DECLARED_SCHEMA],
+        evidence_references=["REF_C"],
+        confidence=1.0,
+        risk_level=RiskLevel.LOW,
+        approval_required=True,
+        status=ResolutionStatus.APPROVED,
+    )
+
+    val_res_a = Tier3ValidationResult(
+        valid=True, findings=[], normalized_proposal=p_a, proposal_fingerprint=p_a.fingerprint
+    )
+    approval_b = ApprovalRecord(
+        approval_id="appr_B",
+        proposal_id=p_b.proposal_id,
+        proposal_fingerprint=p_b.fingerprint,
+        decision=ApprovalDecision.APPROVED,
+        approver_id="steward",
+        approver_role="DATA_STEWARD",
+        decided_at=datetime.now(timezone.utc),
+        reason="Approved B",
+    )
+
+    # Calling adapter with proposal C, validation from A, approval from B
+    with pytest.raises(Tier3IntegrationError, match="Validation result does not match"):
+        adapter.adapt(p_c, val_res_a, approval=approval_b)
+
+
+def test_validate_range_disposition_action_mapping(adapter: Tier3ActionAdapter):
+    """VALIDATE_RANGE + CORRECT -> RANGE_CLIP; VALIDATE_RANGE + FLAG/REJECT -> CONDITIONAL_UPDATE."""
+    # 1. CORRECT disposition -> RANGE_CLIP
+    prop_clip = Tier3ResolutionProposal(
+        proposal_id="prop_clip",
+        issue_id="iss_clip",
+        dataset_name="dbo.Employees",
+        proposed_action_type="VALIDATE_RANGE",
+        target_columns=["Salary"],
+        disposition=ResolutionDisposition.CORRECT,
+        action_parameters={"min_value": 0.0, "max_value": 100000.0},
+        evidence_authorities=[EvidenceAuthority.APPROVED_BUSINESS_RULE],
+        evidence_references=["REF_CLIP"],
+        confidence=1.0,
+        risk_level=RiskLevel.MEDIUM,
+        approval_required=False,
+        status=ResolutionStatus.VALIDATED,
+    )
+    val_res = Tier3ValidationResult(
+        valid=True, findings=[], normalized_proposal=prop_clip, proposal_fingerprint=prop_clip.fingerprint
+    )
+    act_clip = adapter.adapt(prop_clip, val_res)
+    assert act_clip.action_type == ActionType.RANGE_CLIP
+
+    # 2. FLAG disposition -> CONDITIONAL_UPDATE
+    prop_flag = prop_clip.model_copy(update={
+        "proposal_id": "prop_flag",
+        "disposition": ResolutionDisposition.FLAG,
+    })
+    val_res_flag = Tier3ValidationResult(
+        valid=True, findings=[], normalized_proposal=prop_flag, proposal_fingerprint=prop_flag.fingerprint
+    )
+    act_flag = adapter.adapt(prop_flag, val_res_flag)
+    assert act_flag.action_type == ActionType.CONDITIONAL_UPDATE

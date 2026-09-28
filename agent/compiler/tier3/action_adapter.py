@@ -6,6 +6,7 @@ from agent.compiler.models.actions import ActionSource, StructuredAction
 from agent.compiler.models.logical import ActionType
 from agent.compiler.models.tier3_approval import ApprovalDecision, ApprovalRecord
 from agent.compiler.models.tier3_resolution import (
+    ResolutionDisposition,
     ResolutionStatus,
     Tier3ResolutionProposal,
 )
@@ -53,10 +54,14 @@ class Tier3ActionAdapter:
         Converts an eligible proposal into a compiler-ready StructuredAction.
         Raises Tier3IntegrationError if any eligibility check fails.
         """
-        # 1. Validation Status
+        # 1. Validation Status and Proposal Correspondence
         if not validation_result.is_valid:
             raise Tier3IntegrationError(
                 "Only validated Tier 3 proposals can become structured actions."
+            )
+        if validation_result.proposal_fingerprint != proposal.fingerprint:
+            raise Tier3IntegrationError(
+                "Validation result does not match the current proposal."
             )
 
         # 2. Lifecycle Status Eligibility
@@ -87,23 +92,12 @@ class Tier3ActionAdapter:
                     "Approval fingerprint does not match the current proposal."
                 )
 
-        # 4. Fingerprint Binding with Validation Result
-        if validation_result.proposal_fingerprint != proposal.fingerprint:
-            raise Tier3IntegrationError(
-                "Validation result does not match the current proposal."
-            )
-
-        # 5. Compiler Action Allowlist Check
-        act_key = proposal.proposed_action_type.upper().strip()
-        if act_key not in self.REGISTERED_ACTION_MAP:
-            raise Tier3IntegrationError(
-                f"Action '{proposal.proposed_action_type}' is not a registered compiler action."
-            )
-
-        resolved_action_type = self.REGISTERED_ACTION_MAP[act_key]
-        if act_key == "NORMALIZE_CASE":
-            target_case = str(proposal.action_parameters.get("case", "lower")).lower()
-            resolved_action_type = ActionType.UPPERCASE if target_case == "upper" else ActionType.LOWERCASE
+        # 5. Compiler Action Allowlist Check with Disposition Resolution
+        resolved_action_type = self._resolve_compiler_action(
+            proposal.proposed_action_type,
+            proposal.disposition,
+            proposal.action_parameters,
+        )
 
         # 6. Preserve typed AST and parameters (do not create raw SQL)
         validated_parameters: Dict[str, Any] = dict(proposal.action_parameters)
@@ -143,3 +137,32 @@ class Tier3ActionAdapter:
                 "risk_level": proposal.risk_level.value,
             },
         )
+
+    def _resolve_compiler_action(
+        self,
+        action_str: str,
+        disposition: ResolutionDisposition,
+        params: Dict[str, Any],
+    ) -> ActionType:
+        act_key = action_str.upper().strip()
+        if act_key not in self.REGISTERED_ACTION_MAP:
+            raise Tier3IntegrationError(
+                f"Action '{action_str}' is not a registered compiler action."
+            )
+
+        if act_key == "VALIDATE_RANGE":
+            if disposition in (
+                ResolutionDisposition.FLAG,
+                ResolutionDisposition.REJECT,
+                ResolutionDisposition.QUARANTINE,
+                ResolutionDisposition.NULLIFY,
+            ):
+                return ActionType.CONDITIONAL_UPDATE
+            return ActionType.RANGE_CLIP
+
+        if act_key == "NORMALIZE_CASE":
+            target_case = str(params.get("case", "lower")).lower()
+            return ActionType.UPPERCASE if target_case == "upper" else ActionType.LOWERCASE
+
+        return self.REGISTERED_ACTION_MAP[act_key]
+

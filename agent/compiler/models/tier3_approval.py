@@ -31,5 +31,6 @@ class ApprovalRecord:
     schema_fingerprint: Optional[str] = None
     rule_version: Optional[str] = None
     target_engine: Optional[str] = "AZURE_SQL"
+    approval_source: str = "HUMAN"  # "HUMAN" | "POLICY_ENGINE"
     is_revoked: bool = False
     metadata: Dict[str, Any] = field(default_factory=dict)

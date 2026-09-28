@@ -35,6 +35,19 @@ from agent.compiler.tier3.exceptions import (
 )
 from agent.compiler.tier3.fingerprint import compute_proposal_fingerprint
 from agent.compiler.tier3.reconciliation import IssueReconciliationTracker, ResolutionBucket
+from agent.compiler.tier3.cache import Tier3ReplayCache
+from agent.compiler.tier3.model_client import (
+    MockTier3ModelClient,
+    Tier3ModelClient,
+    Tier3ModelResponse,
+    Tier3ResolutionRequest,
+)
+from agent.compiler.tier3.prompt_builder import Tier3PromptBuilder
+from agent.compiler.tier3.proposal_service import (
+    ProposalGenerationResult,
+    Tier3ProposalService,
+)
+from agent.compiler.tier3.response_parser import ParsedProposalResult, Tier3ResponseParser
 from agent.compiler.tier3.safety_validator import Tier3SafetyValidator
 from agent.compiler.tier3.schema_validator import Tier3SchemaValidator
 from agent.compiler.tier3.type_validator import CastSafety, Tier3TypeValidator, TypeFamily
@@ -65,7 +78,10 @@ __all__ = [
     "IssueReconciliationTracker",
     "LikeExpression",
     "LiteralValue",
+    "MockTier3ModelClient",
     "NullCheckExpression",
+    "ParsedProposalResult",
+    "ProposalGenerationResult",
     "ResolutionBucket",
     "ResolutionDisposition",
     "ResolutionStatus",
@@ -78,8 +94,15 @@ __all__ = [
     "Tier3ContractValidator",
     "Tier3Error",
     "Tier3IntegrationError",
+    "Tier3ModelClient",
+    "Tier3ModelResponse",
+    "Tier3PromptBuilder",
+    "Tier3ProposalService",
     "Tier3RenderingError",
+    "Tier3ReplayCache",
     "Tier3ResolutionProposal",
+    "Tier3ResolutionRequest",
+    "Tier3ResponseParser",
     "Tier3SafetyValidator",
     "Tier3SchemaValidator",
     "Tier3TypeValidator",
