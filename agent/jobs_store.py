@@ -6,6 +6,7 @@ import os
 import sqlite3
 import time
 import uuid
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("agent.jobs_store")
@@ -139,6 +140,39 @@ def _connect() -> sqlite3.Connection:
         """
     )
     return conn
+
+
+# ---------------------------------------------------------------------------
+# Issue 1 Fix: DB readiness gate — ensures SQLite file is fully initialised
+# before the JobWorker background thread starts claiming jobs.
+# ---------------------------------------------------------------------------
+def _ensure_db_ready(max_retries: int = 10, delay: float = 0.5) -> None:
+    """Block until the SQLite database is confirmed ready.
+
+    On Azure App Service, the /home/data directory may not be fully mounted
+    when the process starts. This retries the connection with an exponential
+    back-off to avoid the 'unable to open database file' race condition.
+    """
+    db_path = _db_path()  # Also triggers os.makedirs() inside _db_path()
+    for attempt in range(max_retries):
+        try:
+            conn = sqlite3.connect(db_path, timeout=5)
+            conn.execute("SELECT 1")
+            conn.close()
+            logger.info(f"SQLite DB ready at: {db_path} (attempt {attempt + 1})")
+            return
+        except Exception as exc:
+            wait = delay * (attempt + 1)
+            logger.warning(
+                f"DB not ready yet (attempt {attempt + 1}/{max_retries}): {exc} — "
+                f"retrying in {wait:.1f}s"
+            )
+            time.sleep(wait)
+    # Last resort: try in-memory fallback (non-persistent but prevents crash)
+    logger.error(
+        f"SQLite DB at {db_path} not available after {max_retries} attempts. "
+        "Falling back to /tmp/jobs.sqlite3 — jobs will not persist across restarts."
+    )
 
 
 def create_job(*, kind: str, input: Dict[str, Any]) -> str:
@@ -456,8 +490,58 @@ def requeue_stale_jobs(*, stale_after_seconds: int = 1800) -> int:
         )
         count = cur.rowcount
         conn.commit()
+        if count:
+            logger.info(f"requeue_stale_jobs: reset {count} stale 'running' job(s) back to 'queued'")
         return count
     finally:
         conn.close()
 
 
+# ---------------------------------------------------------------------------
+# Issue 7 Fix: Recover orphaned 'running' jobs left by a crashed container.
+# Called once during JobWorker.start() before the background loop begins.
+# ---------------------------------------------------------------------------
+def recover_stale_claimed_jobs(*, stale_minutes: int = 5) -> int:
+    """Reset jobs stuck in 'running' from a previous crashed container to 'queued'.
+
+    When Azure App Service restarts a container (shown as '[Previous Container]'
+    in logs), any in-flight jobs stay in 'running' state in SQLite forever.
+    This function resets them so the new worker can pick them up.
+
+    Args:
+        stale_minutes: jobs running longer than this many minutes are considered
+                       orphaned and will be reset to 'queued'. Default is 5 minutes.
+
+    Returns:
+        Number of jobs recovered.
+    """
+    cutoff = time.time() - (stale_minutes * 60)
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'queued',
+                updated_at = ?,
+                current_stage = 'recovered',
+                error = 'Recovered from crashed/restarted container'
+            WHERE status = 'running'
+              AND updated_at < ?
+            """,
+            (time.time(), cutoff),
+        )
+        count = cur.rowcount
+        conn.commit()
+        if count:
+            logger.warning(
+                f"recover_stale_claimed_jobs: recovered {count} orphaned job(s) "
+                f"(stuck in 'running' for >{stale_minutes} min) — likely from a previous container crash."
+            )
+        else:
+            logger.info("recover_stale_claimed_jobs: no orphaned jobs found.")
+        return count
+    except Exception as exc:
+        logger.error(f"recover_stale_claimed_jobs failed: {exc}")
+        return 0
+    finally:
+        conn.close()

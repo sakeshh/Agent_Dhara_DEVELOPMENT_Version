@@ -15,6 +15,8 @@ from agent.jobs_store import (
     save_checkpoint,
     load_checkpoint,
     requeue_stale_jobs,
+    _ensure_db_ready,
+    recover_stale_claimed_jobs,
 )
 
 
@@ -204,6 +206,12 @@ class JobWorker:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        # Issue 1 Fix: Wait until SQLite DB is fully ready before starting the
+        # worker thread. Eliminates 'unable to open database file' on cold start.
+        _ensure_db_ready()
+        # Issue 7 Fix: Reset any 'running' jobs left by a previous crashed container
+        # so they get re-claimed and completed by this worker instance.
+        recover_stale_claimed_jobs(stale_minutes=5)
         requeue_stale_jobs(stale_after_seconds=0)
         logger.info("Starting JobWorker background thread...")
         self._thread = threading.Thread(target=self._loop, daemon=True)

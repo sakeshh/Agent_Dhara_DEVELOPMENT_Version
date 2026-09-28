@@ -499,8 +499,24 @@ def suggest_transformations(
                         "provenance": RuleProvenance.AUTO_DETECTED,
                     })
 
-    # Robust: add trim before coerce/parse (handles " 123 ", " 2024-01-15 ")
+    # Issue 6 Fix: add trim before coerce/parse BUT guard against date/numeric columns.
+    # The ETL step filter (llm_codegen.py) drops 'trim' on date/metric columns anyway,
+    # so emitting them here just wastes planning compute and inflates step counts.
+    _DATE_CLASSIFIERS = ("date", "datetime", "timestamp", "time")
+    _NUMERIC_CLASSIFIERS = ("int", "float", "double", "decimal", "numeric", "real", "money")
+
     for (ds_name, col) in trim_columns:
+        col_lower_chk = str(col).lower()
+        # Skip trim for columns that are clearly date or numeric by name pattern
+        is_date_col = any(x in col_lower_chk for x in ("date", "time", "stamp", "_at", "_on"))
+        is_numeric_col = any(x in col_lower_chk for x in (
+            "salary", "amount", "price", "cost", "qty", "quantity", "budget",
+            "revenue", "profit", "score", "count", "rate", "ratio",
+        ))
+        if is_date_col or is_numeric_col:
+            # Trim on date/numeric columns is meaningless — the step filter drops it;
+            # skip here to avoid polluting the step plan.
+            continue
         if not any(s["dataset"] == ds_name and s["column"] == col and s["suggested_action"] == "trim" for s in suggested):
             suggested.append(
                 {

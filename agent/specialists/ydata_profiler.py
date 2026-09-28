@@ -47,22 +47,24 @@ def _is_ydata_available() -> bool:
             return False
 
 
-def profile_dataframe(df, minimal: bool = False) -> Optional[Dict[str, Any]]:
+def profile_dataframe(df, minimal: bool = True) -> Optional[Dict[str, Any]]:
     """
     Run YData Profiling on a DataFrame and return a structured dict.
 
     Args:
         df:       pandas DataFrame to profile
-        minimal:  If True, runs a faster minimal profile (no correlations/interactions)
-                  Recommended for large datasets or quick checks.
+        minimal:  If True, runs a faster minimal profile (no correlations/interactions).
+                  Defaults to True for production use on Azure to avoid memory pressure.
+                  Set to False for detailed exploratory analysis.
 
     Returns:
         dict with profiling stats, or None if ydata-profiling is unavailable.
     """
     if not _is_ydata_available():
-        logger.info(
+        logger.warning(
             "ydata-profiling not installed — skipping profile enrichment. "
-            "Install with: pip install ydata-profiling"
+            "Install with: pip install ydata-profiling  "
+            "(ensure it is in requirements.txt and the Azure build is up to date)"
         )
         return None
 

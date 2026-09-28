@@ -46,7 +46,10 @@ langsmith>=0.1.0
 # YData Profiling (formerly pandas-profiling) — richer dataset assessment engine
 # Usage: from agent.specialists.ydata_profiler import enrich_assessment_with_profile
 # Docs: https://docs.profiling.ydata.ai/
-ydata-profiling>=4.0.0
+# IMPORTANT: Do NOT remove this line — if missing, profile enrichment is silently
+# skipped for ALL datasets. Verify this is installed in the Azure App Service
+# build (check Oryx build logs for 'Successfully installed ydata-profiling').
+ydata-profiling>=4.6.0
 
 # Sweetviz — visual cross-dataset EDA comparison reports
 # Usage: from agent.specialists.cross_dataset_agent import generate_sweetviz_comparison
