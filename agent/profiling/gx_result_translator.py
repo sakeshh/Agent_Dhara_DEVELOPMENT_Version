@@ -175,6 +175,7 @@ def translate_gx_result_list(
     semantic_classifications: Optional[Dict[str, Any]] = None,
     max_samples: int = 25,
     max_row_locators: int = 1000,
+    n_rows: Optional[int] = None,
 ) -> List[RuleEvaluationResult]:
     """
     Converts a raw list of GX result objects (from validator.validate()) into
@@ -289,6 +290,16 @@ def translate_gx_result_list(
         # ── Extract counts and evidence ───────────────────────────────────────
         unexp_count = int(res_dict.get("unexpected_count", 0) or 0)
         eval_count = int(res_dict.get("element_count", 0) or 0)
+
+        # Invariant guard: an evaluated check must have eval_count >= unexp_count
+        if eval_count == 0 and n_rows and n_rows > 0:
+            eval_count = n_rows
+        if eval_count < unexp_count:
+            eval_count = max(eval_count, unexp_count)
+        if eval_count == 0 and status in (RuleStatus.FAIL, RuleStatus.PASS):
+            eval_count = max(1, unexp_count)
+
+        unexp_count = min(unexp_count, eval_count)
         failure_rate = round(unexp_count / max(1, eval_count), 4) if eval_count else 0.0
 
         raw_rows = res_dict.get("unexpected_index_list") or []

@@ -25,6 +25,9 @@ class _GxDefaultValueFilter(logging.Filter):
 
 logging.getLogger("great_expectations.expectations.expectation").addFilter(_GxDefaultValueFilter())
 
+import warnings
+warnings.filterwarnings("ignore", message=".*result_format.*", category=UserWarning)
+
 # Fallback presets matching intelligent_data_assessment.py
 PLACEHOLDERS = {
     "", " ", "-", "--", "---", "n/a", "na", "none", "null", "nil",
@@ -2293,6 +2296,12 @@ def run_gx_validation(
                                 "unexpected_index_list": validation_df.index[empty_mask].tolist()[:50],
                                 "unexpected_values": [""]
                             })
+
+                # Ensure all processed results have element_count populated
+                total_val_rows = len(validation_df) if validation_df is not None else 0
+                for r_item in results_processed:
+                    if not r_item.get("element_count") and total_val_rows > 0:
+                        r_item["element_count"] = total_val_rows
 
                 # Statistics rollup
                 eval_cnt = len(results_processed)

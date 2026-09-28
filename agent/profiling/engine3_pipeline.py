@@ -268,6 +268,7 @@ def build_rule_results_from_issues(
                 gx_results_raw,
                 dataset_id=dataset_id,
                 gx_provider_version=gx_ver,
+                n_rows=n_rows,
             )
             # Deduplicate GX results against existing rule_results by rule_id+column
             existing_keys = {

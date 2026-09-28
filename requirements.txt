@@ -48,8 +48,9 @@ langsmith>=0.1.0
 # Docs: https://docs.profiling.ydata.ai/
 # IMPORTANT: Do NOT remove this line — if missing, profile enrichment is silently
 # skipped for ALL datasets. Verify this is installed in the Azure App Service
-# build (check Oryx build logs for 'Successfully installed ydata-profiling').
-ydata-profiling==4.7.0
+# setuptools<81 provides pkg_resources (removed in setuptools 81+) required by ydata-profiling
+setuptools>=65.0.0,<81.0.0
+ydata-profiling>=4.12.0
 
 # Sweetviz — visual cross-dataset EDA comparison reports
 # Usage: from agent.specialists.cross_dataset_agent import generate_sweetviz_comparison
