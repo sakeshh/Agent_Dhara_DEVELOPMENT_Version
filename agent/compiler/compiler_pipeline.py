@@ -78,12 +78,24 @@ class CompilerPipeline:
     def compile(self, context: CompilerContext) -> tuple[CompilerContext, CompilerSnapshot]:
         """Runs the compilation lifecycle synchronously."""
         logger.info(f"Starting compiler pipeline for session '{context.session_id}' [target: {context.target_engine.value}]")
+        logger.info("[CompilerPipeline] generation_path=deterministic_compiler")
 
         # 1. Enterprise Domain Pattern Matching
         context, _ = self.pattern_library.run_with_metrics(context)
 
         # 2. Logical Planning (Issue Compilation + Priority Topological Ordering + Confidence)
         context, _ = self.logical_planner.run_with_metrics(context)
+
+        # 2b. Universal Output Contract Resolution & Strict Lifecycle Validation
+        from agent.compiler.schema.schema_resolver import SchemaResolver
+        from agent.compiler.schema.schema_validator import SchemaValidator
+        contracts = SchemaResolver.resolve_all_contracts(context)
+        for ds_name, contract in contracts.items():
+            valid, schema_errs = SchemaValidator.validate_contract(contract)
+            if not valid:
+                logger.error(f"Output schema validation failed for '{ds_name}': {schema_errs}")
+                raise ValueError(f"Schema Contract Violation for '{ds_name}': {'; '.join(schema_errs)}")
+        context.metadata["output_contracts"] = {k: v.model_dump() for k, v in contracts.items()}
 
         # 3. AST Optimization (Operator Fusion + Redundancy Removal)
         context, _ = self.optimization_agent.run_with_metrics(context)
@@ -104,6 +116,13 @@ class CompilerPipeline:
             if context.validation_result and not context.validation_result.is_valid:
                 logger.info(f"Validation reported {context.validation_result.error_count} error(s). Triggering Auto-Repair agent...")
                 context = self.repair_agent.repair(context, validator)
+            if context.validation_result and context.validation_result.has_blocking_errors:
+                from agent.errors import CompilationBlockedError
+                from agent.compiler.models.validation import DiagnosticSeverity
+                blocking_msgs = [i.message for i in context.validation_result.issues if i.severity == DiagnosticSeverity.BLOCKING]
+                raise CompilationBlockedError(
+                    f"Execution blocked by compiler validation: {'; '.join(blocking_msgs)}"
+                )
 
         # 8. Companion Verification Test Suite Generation
         context, _ = self.test_generator.run_with_metrics(context)

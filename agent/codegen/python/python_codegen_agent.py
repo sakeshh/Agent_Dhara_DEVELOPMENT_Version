@@ -40,6 +40,18 @@ class PythonCodegenAgent(BaseCodegenAgent):
                     # Fallback generic inline comment if template is not found
                     rendered_steps.append(f"# Step: {step.step_id} ({step.strategy_name}) - custom")
 
+            # Retrieve output contract for this dataset
+            output_contracts = context.metadata.get("output_contracts") or {}
+            contract_data = output_contracts.get(ds_name) or {}
+            clean_columns = contract_data.get("clean_columns") or []
+
+            if clean_columns:
+                rendered_steps.append(
+                    f"# Strict Final Projection (Output Contract Conformance)\n"
+                    f"clean_cols = [c for c in {repr(clean_columns)} if c in df_clean.columns]\n"
+                    f"df_clean = df_clean[clean_cols]"
+                )
+
             dataset_transforms[ds_name] = "\n\n".join(rendered_steps) if rendered_steps else "# No transformations needed"
 
         # 2. Render master pipeline

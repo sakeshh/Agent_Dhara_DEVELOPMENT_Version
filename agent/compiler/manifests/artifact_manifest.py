@@ -67,6 +67,23 @@ class ArtifactManifestBuilder:
                 "mermaid_dag": lineage_mermaid,
             }
 
+        # 1b. Output Schema Contracts & Separate Output Structures
+        output_contracts = context.metadata.get("output_contracts") or {}
+        if output_contracts:
+            artifacts_bundle["manifest"] = {
+                "output_contracts": output_contracts,
+                "cleaning_mode": context.cleaning_mode.value,
+            }
+            artifacts_bundle["clean"] = {
+                ds: contract.get("clean_columns", []) for ds, contract in output_contracts.items()
+            }
+            artifacts_bundle["audit"] = {
+                ds: contract.get("audit_columns", []) for ds, contract in output_contracts.items()
+            }
+            artifacts_bundle["rejected"] = {
+                ds: contract.get("rejected_columns", []) for ds, contract in output_contracts.items()
+            }
+
         # 2. Validation status
         validation_info: Dict[str, Any] = {"status": "unvalidated"}
         if context.validation_result:
@@ -75,6 +92,7 @@ class ArtifactManifestBuilder:
                 "error_count": context.validation_result.error_count,
                 "has_security_hazards": context.validation_result.has_security_hazards,
                 "has_performance_anti_patterns": context.validation_result.has_performance_anti_patterns,
+                "has_blocking_errors": context.validation_result.has_blocking_errors,
             }
 
         # 3. Repair analytics
@@ -84,7 +102,7 @@ class ArtifactManifestBuilder:
         cost_est_data = context.metadata.get("cost_estimate")
         cost_est = CostEstimate(**cost_est_data) if cost_est_data else None
 
-        meta = {"session_id": context.session_id}
+        meta = {"session_id": context.session_id, "cleaning_mode": context.cleaning_mode.value}
         if "compiler_metrics" in context.metadata:
             meta["compiler_metrics"] = context.metadata["compiler_metrics"]
 

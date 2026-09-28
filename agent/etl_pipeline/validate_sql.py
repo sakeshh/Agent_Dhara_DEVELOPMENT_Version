@@ -4,9 +4,9 @@ import re
 from typing import List, Tuple
 
 _DANGEROUS = [
-    (r"\bdrop\s+table\s+(?!.*\b\w*(?:_clean|_transformed|_stg|temp_|_temp)\b|.*#)", "contains DROP TABLE on non-staging/clean/transformed table — remove for safety"),
-    (r"\btruncate\s+table\s+(?!.*\b\w*(?:_clean|_transformed|_stg|temp_|_temp)\b|.*#)", "contains TRUNCATE TABLE on non-staging/clean/transformed table — remove for safety"),
-    (r"\bdelete\s+from\s+(?!.*\b\w*(?:_clean|_transformed|_stg|_dedup|temp_|etl_log|cte|_temp)\b|.*#)", "contains DELETE FROM on non-staging/clean/transformed table — remove for safety"),
+    (r"\bdrop\s+table\s+(?!.*\b\w*(?:_clean|_transformed|_stg|_staging|temp_|_temp)\b|.*#)", "contains DROP TABLE on non-staging/clean/transformed table — remove for safety"),
+    (r"\btruncate\s+table\s+(?!.*\b\w*(?:_clean|_transformed|_stg|_staging|temp_|_temp)\b|.*#)", "contains TRUNCATE TABLE on non-staging/clean/transformed table — remove for safety"),
+    (r"\bdelete\s+from\s+(?!.*\b\w*(?:_clean|_transformed|_stg|_staging|_dedup|temp_|etl_log|cte|_temp)\b|.*#)", "contains DELETE FROM on non-staging/clean/transformed table — remove for safety"),
     (r"\bxp_cmdshell\b", "contains xp_cmdshell — system command execution not allowed"),
     (r"\bopenrowset\b", "contains OPENROWSET — external data source access not allowed in execution mode"),
 ]
@@ -252,7 +252,7 @@ def validate_sql_basic(source: str) -> Tuple[bool, List[str], List[str]]:
         (r"xp_cmdshell", "Forbidden: xp_cmdshell"),
         (r"BULK\s+INSERT", "Forbidden: BULK INSERT"),
         (r"OPENROWSET", "Forbidden: OPENROWSET"),
-        (r"DROP\s+TABLE\s+(?!\s*#|\s*dbo\.etl_)", "Dangerous DROP TABLE on non-temp/non-etl table"),
+        (r"DROP\s+TABLE\s+(?!\s*#|\s*(?:\[?dbo\]?\.)?\[?\w*(?:_staging|_clean|_transformed|etl_)\w*\]?)", "Dangerous DROP TABLE on non-temp/non-etl table"),
         (r"DELETE\s+FROM\s+\w+_Raw", "Forbidden: DELETE on Raw table"),
         (r"\bCREATE\s+OR\s+REPLACE\b", "Invalid T-SQL: CREATE OR REPLACE is not supported in T-SQL"),
         (r"\bCREATE\s+OR\s+ALTER\s+TABLE\b", "Invalid T-SQL: CREATE OR ALTER TABLE is not valid syntax in T-SQL"),

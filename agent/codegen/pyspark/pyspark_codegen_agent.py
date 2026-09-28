@@ -42,6 +42,18 @@ class PySparkCodegenAgent(BaseCodegenAgent):
                 except Exception:
                     rendered_steps.append(f"# Step: {step.step_id} ({step.strategy_name})")
 
+            # Retrieve output contract for this dataset
+            output_contracts = context.metadata.get("output_contracts") or {}
+            contract_data = output_contracts.get(ds_name) or {}
+            clean_columns = contract_data.get("clean_columns") or []
+
+            if clean_columns:
+                rendered_steps.append(
+                    f"# Strict Final Clean Projection (Output Contract Conformance)\n"
+                    f"clean_cols = [c for c in {repr(clean_columns)} if c in df_clean.columns]\n"
+                    f"df_clean = df_clean.select(*clean_cols)"
+                )
+
             dataset_transforms[ds_name] = "\n\n".join(rendered_steps) if rendered_steps else "# No transformations needed"
 
         clean_plan_id = re.sub(r"[^a-zA-Z0-9_]", "_", physical_plan.plan_id)

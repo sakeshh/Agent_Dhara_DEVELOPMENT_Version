@@ -10,11 +10,15 @@ from agent.compiler.models.logical import LogicalPlan
 from agent.compiler.models.physical import PhysicalPlan, ExecutionEngine
 from agent.compiler.models.artifacts import CodeArtifact, ArtifactManifest
 from agent.compiler.models.validation import ValidationResult
+from agent.compiler.models.cleaning import CleaningMode
 
 
 class CompilerContext(BaseModel):
     session_id: str = "default"
     target_engine: ExecutionEngine = ExecutionEngine.PYTHON
+    cleaning_mode: CleaningMode = CleaningMode.CLEANSE_WITH_AUDIT
+    preserve_source_schema: bool = True
+    include_operational_metadata: bool = False
     dataset_profiles: Dict[str, DatasetProfile] = Field(default_factory=dict)
     business_rules: List[BusinessRule] = Field(default_factory=list)
     detected_issues: List[Issue] = Field(default_factory=list)

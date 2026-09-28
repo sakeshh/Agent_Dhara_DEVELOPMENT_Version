@@ -7,6 +7,7 @@ from agent.compiler.models.logical import ActionType, DataEffect, LogicalPlan, L
 from agent.compiler.models.physical import ExecutionEngine, PhysicalPlan, PhysicalStep
 from agent.compiler.models.artifacts import ArtifactManifest, CodeArtifact, CostEstimate
 from agent.compiler.models.validation import DiagnosticIssue, DiagnosticSeverity, ValidationIssueType, ValidationResult
+from agent.compiler.models.cleaning import CleaningMode
 from agent.compiler.models.context import CompilerContext
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
     "DiagnosticSeverity",
     "ValidationIssueType",
     "ValidationResult",
+    "CleaningMode",
     "CompilerContext",
 ]

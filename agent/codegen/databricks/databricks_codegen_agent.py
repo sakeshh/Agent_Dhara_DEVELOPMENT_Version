@@ -19,7 +19,7 @@ class DatabricksCodegenAgent(BaseCodegenAgent):
     def __init__(self, template_engine: Optional[TemplateEngine] = None):
         self.template_engine = template_engine or TemplateEngine()
 
-    def generate(self, physical_plan: PhysicalPlan) -> CodeArtifact:
+    def generate(self, physical_plan: PhysicalPlan, context: Optional[CompilerContext] = None) -> CodeArtifact:
         clean_plan_id = re.sub(r"[^a-zA-Z0-9_]", "_", physical_plan.plan_id)
         now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -99,6 +99,18 @@ class DatabricksCodegenAgent(BaseCodegenAgent):
 
             silver_transform = "\n".join(indented_steps) if indented_steps else "    # Pass-through clean data"
 
+            output_contracts = (context.metadata.get("output_contracts") if context else {}) or {}
+            contract_data = output_contracts.get(ds) or {}
+            clean_columns = contract_data.get("clean_columns") or []
+            if clean_columns:
+                clean_cols_expr = repr(clean_columns)
+                projection_code = (
+                    f"    clean_cols = [c for c in {clean_cols_expr} if c in df_{clean_ds}.columns]\n"
+                    f"    df_{clean_ds} = df_{clean_ds}.select(*clean_cols)"
+                )
+            else:
+                projection_code = "    # No clean projection contract specified"
+
             sections.extend([
                 f"# ===========================================================================",
                 f"# Silver / Cleaned Curated Table: {clean_ds}_curated (Unity Catalog)",
@@ -116,6 +128,7 @@ class DatabricksCodegenAgent(BaseCodegenAgent):
                 f"    df = dlt.read_stream(\"{clean_ds}_raw\")",
                 f"    df_{clean_ds} = df",
                 silver_transform,
+                projection_code,
                 f"    return df_{clean_ds}",
                 "",
             ])

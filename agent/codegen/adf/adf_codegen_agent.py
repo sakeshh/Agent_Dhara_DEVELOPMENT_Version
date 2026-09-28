@@ -15,7 +15,7 @@ from agent.compiler.models.physical import PhysicalPlan
 class ADFCodegenAgent(BaseCodegenAgent):
     """Generates enterprise Azure Data Factory (ADF) pipeline JSON definitions with Linked Services, Datasets, Activities, and Triggers."""
 
-    def generate(self, physical_plan: PhysicalPlan) -> CodeArtifact:
+    def generate(self, physical_plan: PhysicalPlan, context: Optional[CompilerContext] = None) -> CodeArtifact:
         clean_plan_id = re.sub(r"[^a-zA-Z0-9_]", "_", physical_plan.plan_id)
         now_iso = datetime.now(timezone.utc).isoformat()
 

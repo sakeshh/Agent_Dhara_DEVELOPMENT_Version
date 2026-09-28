@@ -75,16 +75,21 @@ def build_impact_preview(
                     est_source = "profile_heuristic"
             if est is not None and isinstance(est, (int, float)) and est >= 0:
                 pct = (100.0 * float(est) / total) if total > 0 else None
-                line = f"[{ds_name}] {action}" + (f" on `{col}`" if col else "") + f" — ~{int(est)} rows ({est_source})"
+                source_label = {
+                    "dq_issue_count": "detected data quality issues",
+                    "profile_heuristic": "statistical profile estimate",
+                    "actual_run_delta": "verified delta from previous run",
+                }.get(est_source, est_source)
+                line = f"[{ds_name}] {action}" + (f" on `{col}`" if col else "") + f" — ~{int(est)} rows ({source_label})"
                 if pct is not None:
                     line += f" (~{pct:.1f}% of {total:,} rows)"
             else:
                 line = (
                     f"[{ds_name}] {action}"
                     + (f" on `{col}`" if col else "")
-                    + " — impact volume unknown (no DQ count + no usable column profile)"
+                    + f" — full-column standardizer (evaluates all {total:,} rows during pipeline execution)"
                 )
-                est_source = "unknown"
+                est_source = "column_rule"
             bullets.append(line)
             detail.append(
                 {

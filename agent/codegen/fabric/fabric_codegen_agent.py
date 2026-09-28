@@ -19,7 +19,7 @@ class FabricCodegenAgent(BaseCodegenAgent):
     def __init__(self, template_engine: Optional[TemplateEngine] = None):
         self.template_engine = template_engine or TemplateEngine()
 
-    def generate(self, physical_plan: PhysicalPlan) -> CodeArtifact:
+    def generate(self, physical_plan: PhysicalPlan, context: Optional[CompilerContext] = None) -> CodeArtifact:
         clean_plan_id = re.sub(r"[^a-zA-Z0-9_]", "_", physical_plan.plan_id)
         now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -92,6 +92,17 @@ class FabricCodegenAgent(BaseCodegenAgent):
                     rendered_steps.append(step_code)
                 except Exception:
                     rendered_steps.append(f"# Step: {step.step_id} ({step.strategy_name})")
+
+            # Retrieve output contract for this dataset
+            output_contracts = (context.metadata.get("output_contracts") if context else {}) or {}
+            contract_data = output_contracts.get(ds_name) or {}
+            clean_columns = contract_data.get("clean_columns") or []
+            if clean_columns:
+                rendered_steps.append(
+                    f"# Strict Final Projection (Output Contract Conformance)\n"
+                    f"clean_cols = [c for c in {repr(clean_columns)} if c in df_{clean_ds}.columns]\n"
+                    f"df_{clean_ds} = df_{clean_ds}.select(*clean_cols)"
+                )
 
             transform_code = "\n".join(rendered_steps) if rendered_steps else "# No active transformation steps"
             cells.append({

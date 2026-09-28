@@ -53,6 +53,12 @@ class FeatureFlags:
         # ── Business Rules Pipeline ──────────────────────────────────────────────
         self.notes_assessment_mode: str = os.environ.get("DHARA_NOTES_ASSESSMENT_MODE", "pre_assessment").strip().lower()
 
+        # ── Compiler & Universal Cleaning Runtime Pipeline ─────────────────────
+        self.compiler_codegen_enabled: bool = _env_bool("COMPILER_CODEGEN_ENABLED", True)
+        self.legacy_llm_codegen_enabled: bool = _env_bool("LEGACY_LLM_CODEGEN_ENABLED", False)
+        self.allow_llm_direct_execution: bool = _env_bool("ALLOW_LLM_DIRECT_EXECUTION", False)
+        self.cleaning_default_mode: str = os.environ.get("CLEANING_DEFAULT_MODE", "cleanse_with_audit").strip().lower()
+
         self._log_startup()
 
     def _log_startup(self) -> None:

@@ -49,7 +49,20 @@ class SQLCodegenAgent(BaseCodegenAgent):
                     step_code = self.template_engine.render(template_path, **params)
                     rendered_steps.append(step_code)
                 except Exception:
-                    rendered_steps.append(f"-- Step: {step.step_id} ({step.strategy_name})")
+                    rendered_steps.append(f"-- Step {step.step_id}: {step.strategy_name}")
+            # Retrieve output contract for this dataset
+            output_contracts = context.metadata.get("output_contracts") or {}
+            contract_data = output_contracts.get(ds_name) or {}
+            clean_columns = contract_data.get("clean_columns") or []
+
+            if clean_columns:
+                cols_quoted = ",\n    ".join(f"[{c}]" for c in clean_columns)
+                projection_sql = (
+                    f"-- Strict Final Clean Projection (Output Contract Conformance)\n"
+                    f"IF OBJECT_ID('[dbo].[{ds_name}_Clean]', 'U') IS NOT NULL DROP TABLE [dbo].[{ds_name}_Clean];\n"
+                    f"SELECT\n    {cols_quoted}\nINTO [dbo].[{ds_name}_Clean]\nFROM {staging_table};"
+                )
+                rendered_steps.append(projection_sql)
 
             dataset_transforms[ds_name] = "\n\n".join(rendered_steps) if rendered_steps else "-- No transformations"
 

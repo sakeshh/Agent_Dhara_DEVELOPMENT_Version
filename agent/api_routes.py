@@ -1356,5 +1356,232 @@ def api_pipeline_run(payload: PipelineRunPayload, request: Request, _auth: None 
     )
 
 
+# ── Universal Cleaning Endpoints ─────────────────────────────────────────────
+
+class CleaningPlanPayload(BaseModel):
+    session_id: str = "default"
+    cleaning_mode: str = "cleanse_with_audit"
+    preserve_source_schema: bool = True
+    include_operational_metadata: bool = False
+    target_engine: str = "python"
+
+
+@router.post("/cleaning/plan")
+def api_cleaning_plan(payload: CleaningPlanPayload, _auth: None = Depends(require_backend_token)) -> Dict[str, Any]:
+    """Compiles a cleaning plan with explicit CleaningMode and builds OutputSchemaContracts."""
+    from agent.session_store import load_session, save_session
+    from agent.compiler.models.cleaning import CleaningMode
+    from agent.compiler.models.context import CompilerContext
+    from agent.compiler.models.physical import ExecutionEngine
+    from agent.compiler.schema.schema_resolver import SchemaResolver
+
+    sid = (payload.session_id or "default").strip() or "default"
+    sess = load_session(sid)
+    ctx_data = sess.setdefault("context", {})
+    assess = ctx_data.get("last_assessment_result") or {}
+
+    try:
+        clean_mode = CleaningMode(payload.cleaning_mode)
+    except ValueError:
+        clean_mode = CleaningMode.CLEANSE_WITH_AUDIT
+
+    eng_map = {
+        "python": ExecutionEngine.PYTHON,
+        "sql": ExecutionEngine.AZURE_SQL,
+        "tsql": ExecutionEngine.AZURE_SQL,
+        "pyspark": ExecutionEngine.PYSPARK,
+        "spark": ExecutionEngine.PYSPARK,
+        "fabric": ExecutionEngine.FABRIC,
+        "adf": ExecutionEngine.ADF,
+        "databricks": ExecutionEngine.DATABRICKS,
+    }
+    target_eng = eng_map.get(payload.target_engine.lower(), ExecutionEngine.PYTHON)
+
+    compiler_ctx = CompilerContext(
+        session_id=sid,
+        target_engine=target_eng,
+        cleaning_mode=clean_mode,
+        preserve_source_schema=payload.preserve_source_schema,
+        include_operational_metadata=payload.include_operational_metadata,
+    )
+
+    contracts = SchemaResolver.resolve_all_contracts(compiler_ctx)
+    ctx_data["cleaning_mode"] = clean_mode.value
+    ctx_data["output_contracts"] = {k: v.model_dump() for k, v in contracts.items()}
+    save_session(sess)
+
+    return {
+        "ok": True,
+        "session_id": sid,
+        "cleaning_mode": clean_mode.value,
+        "contracts": {k: v.model_dump() for k, v in contracts.items()},
+    }
+
+
+class KeyResolvePayload(BaseModel):
+    session_id: str = "default"
+    dataset_name: str
+    user_approved_keys: Optional[List[str]] = None
+    db_primary_keys: Optional[List[str]] = None
+
+
+@router.post("/cleaning/keys/resolve")
+def api_cleaning_keys_resolve(payload: KeyResolvePayload, _auth: None = Depends(require_backend_token)) -> Dict[str, Any]:
+    """Resolves business key for a dataset using the 7-level priority hierarchy."""
+    from agent.session_store import load_session
+    from agent.compiler.keys.business_key_resolver import BusinessKeyResolver
+    from agent.compiler.models.profile import DatasetProfile, ColumnProfile
+
+    sid = (payload.session_id or "default").strip() or "default"
+    sess = load_session(sid)
+    assess = sess.get("context", {}).get("last_assessment_result") or {}
+    ds_meta = (assess.get("datasets") or {}).get(payload.dataset_name) or {}
+
+    col_profiles = {}
+    for cname, cmeta in (ds_meta.get("columns") or {}).items():
+        col_profiles[cname] = ColumnProfile(
+            name=cname,
+            dtype=cmeta.get("type", "string"),
+            null_count=cmeta.get("null_count", 0),
+            distinct_count=cmeta.get("distinct_count", 1),
+        )
+
+    profile = DatasetProfile(
+        dataset_name=payload.dataset_name,
+        row_count=ds_meta.get("row_count", 1),
+        columns=col_profiles,
+    )
+
+    resolver = BusinessKeyResolver()
+    res = resolver.resolve_key(
+        dataset_name=payload.dataset_name,
+        profile=profile,
+        user_approved_keys=payload.user_approved_keys,
+        db_primary_keys=payload.db_primary_keys,
+    )
+
+    return {
+        "ok": True,
+        "dataset_name": payload.dataset_name,
+        "resolution": res.model_dump(),
+        "is_usable_for_destructive_dedup": res.is_usable_for_destructive_dedup,
+    }
+
+
+class VerifyPayload(BaseModel):
+    dataset_name: str
+    input_rows: int
+    clean_rows: int
+    quarantined_rows: int = 0
+    removed_redundant_rows: int = 0
+    remaining_duplicates: int = 0
+    expected_clean_cols: Optional[List[str]] = None
+    actual_clean_cols: Optional[List[str]] = None
+    is_audit_only: bool = False
+
+
+@router.post("/cleaning/verify")
+def api_cleaning_verify(payload: VerifyPayload, _auth: None = Depends(require_backend_token)) -> Dict[str, Any]:
+    """Verifies that actual cleaning succeeded and row-counts reconcile."""
+    from agent.compiler.verification.post_cleaning_verifier import PostCleaningVerifier
+
+    report = PostCleaningVerifier.verify(
+        dataset_name=payload.dataset_name,
+        input_rows=payload.input_rows,
+        clean_rows=payload.clean_rows,
+        quarantined_rows=payload.quarantined_rows,
+        removed_redundant_rows=payload.removed_redundant_rows,
+        remaining_duplicates=payload.remaining_duplicates,
+        expected_clean_cols=payload.expected_clean_cols,
+        actual_clean_cols=payload.actual_clean_cols,
+        is_audit_only=payload.is_audit_only,
+    )
+
+    return {
+        "ok": True,
+        "report": report.model_dump(),
+        "is_fully_verified": report.is_fully_verified,
+    }
+
+
+@router.get("/etl/artifacts/download/{artifact_type}")
+def api_download_artifact(
+    artifact_type: str,
+    session_id: str = "default",
+    run_id: Optional[str] = None,
+    _auth: None = Depends(require_backend_token),
+):
+    """
+    Downloads partitioned output artifacts:
+    - clean: output/<run_id>/clean/cleaned_data.xlsx or .csv
+    - audit: output/<run_id>/audit/audit_data.xlsx or .csv
+    - rejected: output/<run_id>/rejected/rejected_data.xlsx or .csv
+    - manifest: output/<run_id>/manifest/manifest.json
+    - bundle: zip bundle of output/<run_id>
+    """
+    import zipfile
+    import tempfile
+    from pathlib import Path
+    from agent.session_store import load_session
+
+    sid = (session_id or "default").strip() or "default"
+    sess = load_session(sid)
+    flow = sess.get("context", {}).get("etl_flow") or {}
+    active_run = run_id or flow.get("run_id") or "latest"
+
+    base_dirs = [
+        Path(f"output/{active_run}"),
+        Path(f"output/{sid}"),
+        Path("output"),
+    ]
+
+    target_type = artifact_type.lower()
+    for base in base_dirs:
+        if not base.exists():
+            continue
+
+        if target_type in ("bundle", "package", "full"):
+            zip_tmp = Path(tempfile.gettempdir()) / f"dhara_bundle_{active_run}.zip"
+            with zipfile.ZipFile(zip_tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+                for file_path in base.rglob("*"):
+                    if file_path.is_file():
+                        zf.write(file_path, arcname=file_path.relative_to(base))
+            return FileResponse(
+                path=str(zip_tmp),
+                filename=f"dhara_{active_run}_bundle.zip",
+                media_type="application/zip",
+            )
+
+        type_dir = base / target_type
+        if type_dir.is_dir():
+            files = list(type_dir.glob("*.*"))
+            if files:
+                target_file = files[0]
+                media_type = "text/csv" if target_file.suffix == ".csv" else (
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    if target_file.suffix in (".xlsx", ".xls")
+                    else "application/json" if target_file.suffix == ".json"
+                    else "application/octet-stream"
+                )
+                return FileResponse(
+                    path=str(target_file),
+                    filename=target_file.name,
+                    media_type=media_type,
+                )
+
+        matches = list(base.glob(f"*{target_type}*.*"))
+        if matches:
+            target_file = matches[0]
+            return FileResponse(
+                path=str(target_file),
+                filename=target_file.name,
+                media_type="application/octet-stream",
+            )
+
+    raise HTTPException(status_code=404, detail=f"Artifact {artifact_type} not found for run {active_run}")
+
+
+
+
 
 

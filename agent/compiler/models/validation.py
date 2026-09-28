@@ -6,9 +6,10 @@ from pydantic import BaseModel, Field
 
 
 class DiagnosticSeverity(str, Enum):
-    ERROR = "error"
-    WARNING = "warning"
     INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    BLOCKING = "blocking"
 
 
 class ValidationIssueType(str, Enum):
@@ -19,6 +20,8 @@ class ValidationIssueType(str, Enum):
     DIALECT = "DIALECT"
     PERFORMANCE = "PERFORMANCE"
     GOVERNANCE = "GOVERNANCE"
+    SCHEMA_CONTRACT = "SCHEMA_CONTRACT"
+    DESTRUCTIVE_UNAPPROVED = "DESTRUCTIVE_UNAPPROVED"
 
 
 class DiagnosticIssue(BaseModel):
@@ -44,4 +47,8 @@ class ValidationResult(BaseModel):
 
     @property
     def error_count(self) -> int:
-        return sum(1 for i in self.issues if i.severity == DiagnosticSeverity.ERROR)
+        return sum(1 for i in self.issues if i.severity in (DiagnosticSeverity.ERROR, DiagnosticSeverity.BLOCKING))
+
+    @property
+    def has_blocking_errors(self) -> bool:
+        return any(i.severity == DiagnosticSeverity.BLOCKING for i in self.issues)

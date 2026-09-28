@@ -344,10 +344,14 @@ def _orchestrate_sql_execution_impl(
         sess = load_session(session_id)
         if sess:
             flow = sess.get("context", {}).get("etl_flow", {}) or {}
+            if flow.get("has_blocking_errors"):
+                from agent.errors import CompilationBlockedError
+                raise CompilationBlockedError("Execution blocked by compiler validation")
             plan = flow.get("approved_plan") or flow.get("plan") or {}
             rules = plan.get("business_rules") or {}
-    except Exception:
-        pass
+    except Exception as e:
+        if "Execution blocked by compiler validation" in str(e):
+            raise
 
     dq_warnings = []
     if assessment:

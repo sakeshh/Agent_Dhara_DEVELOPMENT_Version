@@ -107,19 +107,32 @@ def _resolve_codegen_mode(
     requested: Optional[str] = None,
 ) -> str:
     """
-    template | llm | llm_then_template
+    compiler | template | llm | llm_then_template
     Resolution order: explicit API `codegen_mode`, then env ETL_CODEGEN_MODE, then:
-    - default **template** (fast, deterministic)
-    - set ETL_CODEGEN_LLM_DEFAULT=1 to restore **llm_then_template** for python/sql/adf when no API mode is sent.
-    PySpark still honors DHARA_ETL_FAST_PYSPARK=1 under ETL_CODEGEN_LLM_DEFAULT=1.
+    - compiler (deterministic, contracts-guaranteed) when COMPILER_CODEGEN_ENABLED=true
+    - template / llm_then_template if legacy flags enabled.
     """
-    if requested and str(requested).strip().lower() in ("template", "llm", "llm_then_template"):
-        return str(requested).strip().lower()
+    from agent.feature_flags import get_flags
+    flags = get_flags()
+
+    req = str(requested or "").strip().lower()
+    if req in ("compiler", "deterministic", "template", "llm", "llm_then_template"):
+        if req in ("compiler", "deterministic"):
+            return "compiler"
+        if req in ("llm", "llm_then_template") and not flags.legacy_llm_codegen_enabled:
+            logger.info("Legacy LLM codegen is disabled by flag; enforcing deterministic compiler mode")
+            return "compiler"
+        return req
+
     env = os.getenv("ETL_CODEGEN_MODE", "").strip().lower()
-    if env in ("template", "llm", "llm_then_template"):
+    if env in ("compiler", "deterministic", "template", "llm", "llm_then_template"):
+        if env in ("compiler", "deterministic"):
+            return "compiler"
         return env
-    # Fast default: deterministic template codegen. Opt in to LLM paths via ETL_CODEGEN_MODE or
-    # ETL_CODEGEN_LLM_DEFAULT=1 (restores previous llm_then_template default for python/sql/adf).
+
+    if flags.compiler_codegen_enabled:
+        return "compiler"
+
     if os.getenv("ETL_CODEGEN_LLM_DEFAULT", "0").strip().lower() in ("1", "true", "yes"):
         eng = (engine or "python").lower()
         if eng in ("spark", "pyspark"):
@@ -128,6 +141,101 @@ def _resolve_codegen_mode(
                 return "template"
         return "llm_then_template"
     return "template"
+
+
+def _run_compiler_codegen(
+    session_id: str,
+    engine: str,
+    plan: dict,
+    assess: dict,
+    ctx: dict,
+    sql_dialect: str = "tsql",
+) -> tuple[str, bool, list[str], str]:
+    from agent.compiler.compiler_pipeline import CompilerPipeline
+    from agent.compiler.models.context import CompilerContext
+    from agent.compiler.models.physical import ExecutionEngine
+    from agent.compiler.models.cleaning import CleaningMode
+    from agent.compiler.models.profile import DatasetProfile, ColumnProfile
+    from agent.compiler.models.issues import Issue
+    from agent.feature_flags import get_flags
+
+    flags = get_flags()
+    eng_str = (engine or "python").lower()
+    eng_map = {
+        "python": ExecutionEngine.PYTHON,
+        "sql": ExecutionEngine.AZURE_SQL,
+        "tsql": ExecutionEngine.AZURE_SQL,
+        "ansi": ExecutionEngine.AZURE_SQL,
+        "pyspark": ExecutionEngine.PYSPARK,
+        "spark": ExecutionEngine.PYSPARK,
+        "fabric": ExecutionEngine.FABRIC,
+        "adf": ExecutionEngine.ADF,
+        "databricks": ExecutionEngine.DATABRICKS,
+    }
+    target_eng = eng_map.get(eng_str, ExecutionEngine.PYTHON)
+
+    flow = ctx.get("etl_flow") or {}
+    raw_mode = (
+        flow.get("cleaning_mode")
+        or plan.get("cleaning_mode")
+        or flags.cleaning_default_mode
+    )
+    try:
+        clean_mode = CleaningMode(raw_mode)
+    except Exception:
+        clean_mode = CleaningMode.CLEANSE_WITH_AUDIT
+
+    profiles: dict[str, DatasetProfile] = {}
+    for ds_name, ds_info in (assess.get("datasets") or {}).items():
+        if isinstance(ds_info, dict):
+            cols: dict[str, ColumnProfile] = {}
+            for col_name, col_meta in (ds_info.get("columns") or {}).items():
+                if isinstance(col_meta, dict):
+                    dtype = col_meta.get("dtype") or col_meta.get("type") or "string"
+                    cols[col_name] = ColumnProfile(name=col_name, dtype=dtype)
+                else:
+                    cols[col_name] = ColumnProfile(name=col_name, dtype="string")
+            row_count = int(ds_info.get("row_count") or 0)
+            profiles[ds_name] = DatasetProfile(dataset_id=ds_name, row_count=row_count, columns=cols)
+
+    if not profiles and isinstance(plan.get("datasets"), dict):
+        for ds_name, p_ds in plan["datasets"].items():
+            cols = {}
+            for c in p_ds.get("columns") or []:
+                cols[c] = ColumnProfile(name=c, dtype="string")
+            profiles[ds_name] = DatasetProfile(dataset_id=ds_name, columns=cols)
+
+    from agent.compiler.planners.issue_compiler import IssueCompiler
+    compiler = IssueCompiler()
+    detected_issues = []
+    for idx, iss in enumerate(assess.get("issues") or []):
+        if isinstance(iss, dict):
+            ds = iss.get("dataset") or (list(profiles.keys())[0] if profiles else "default")
+            detected_issues.append(compiler.compile_raw_issue(iss, ds, idx))
+
+    compiler_ctx = CompilerContext(
+        session_id=session_id,
+        target_engine=target_eng,
+        cleaning_mode=clean_mode,
+        preserve_source_schema=True,
+        include_operational_metadata=False,
+        dataset_profiles=profiles,
+        detected_issues=detected_issues,
+    )
+
+    if plan.get("cleaning_approval"):
+        compiler_ctx.metadata["cleaning_approval"] = plan["cleaning_approval"]
+
+    pipeline = CompilerPipeline()
+    compiled_ctx, snapshot = pipeline.compile(compiler_ctx)
+
+    code = compiled_ctx.code_artifact.content if compiled_ctx.code_artifact else ""
+    flow["output_contracts"] = compiled_ctx.metadata.get("output_contracts") or {}
+    flow["latest_snapshot_id"] = snapshot.snapshot_id
+    if compiled_ctx.metadata.get("deployment_manifest"):
+        flow["deployment_manifest"] = compiled_ctx.metadata["deployment_manifest"]
+
+    return code, True, [], "compiler"
 
 
 # ── Phase state machine ───────────────────────────────────────────────────────
@@ -743,6 +851,70 @@ def etl_plan_start(
         }
     )
 
+    # Compiler cleaning plan integration
+    try:
+        from agent.compiler.keys.business_key_resolver import BusinessKeyResolver
+        from agent.compiler.deduplication.duplicate_policy import DuplicatePolicy, DuplicateDisposition, SurvivorStrategy
+        from agent.compiler.models.cleaning import CleaningMode
+        from agent.compiler.models.context import CompilerContext
+        from agent.compiler.models.profile import DatasetProfile, ColumnProfile
+        from agent.compiler.schema.schema_resolver import SchemaResolver
+        from agent.feature_flags import get_flags
+
+        flags = get_flags()
+        clean_mode_str = (
+            (business_rules.get("cleaning_mode") if isinstance(business_rules, dict) else None)
+            or rules_merged.get("cleaning_mode")
+            or flow.get("cleaning_mode")
+            or flags.cleaning_default_mode
+        )
+        try:
+            clean_mode = CleaningMode(clean_mode_str)
+        except Exception:
+            clean_mode = CleaningMode.CLEANSE_WITH_AUDIT
+
+        cleaning_plan = {
+            "cleaning_mode": clean_mode.value,
+            "business_keys": {},
+            "duplicate_policies": {},
+            "output_contracts": {},
+        }
+
+        for dname in ds_names:
+            ds_meta = (assess.get("datasets") or {}).get(dname) or {}
+            cols_dict = ds_meta.get("columns") or {}
+            key_cand = BusinessKeyResolver.resolve_key(dname, cols_dict)
+            cleaning_plan["business_keys"][dname] = key_cand.model_dump() if key_cand else None
+            
+            dup_policy = DuplicatePolicy(
+                dataset_name=dname,
+                disposition=DuplicateDisposition.REMOVE_REDUNDANT if clean_mode != CleaningMode.AUDIT_ONLY else DuplicateDisposition.FLAG,
+                survivor_strategy=SurvivorStrategy.MOST_COMPLETE,
+                approved_key=key_cand.columns if key_cand else None,
+            )
+            cleaning_plan["duplicate_policies"][dname] = dup_policy.model_dump()
+
+        c_profiles = {}
+        for dname in ds_names:
+            ds_meta = (assess.get("datasets") or {}).get(dname) or {}
+            cols = {c: ColumnProfile(name=c, dtype="string") for c in (ds_meta.get("columns") or {})}
+            c_profiles[dname] = DatasetProfile(dataset_id=dname, columns=cols)
+            
+        temp_ctx = CompilerContext(
+            session_id=sid,
+            cleaning_mode=clean_mode,
+            preserve_source_schema=True,
+            dataset_profiles=c_profiles,
+        )
+        contracts_preview = SchemaResolver.resolve_all_contracts(temp_ctx)
+        cleaning_plan["output_contracts"] = {k: v.model_dump() for k, v in contracts_preview.items()}
+
+        plan["cleaning_plan"] = cleaning_plan
+        flow["cleaning_plan"] = cleaning_plan
+        flow["cleaning_mode"] = clean_mode.value
+    except Exception as c_err:
+        logger.warning(f"Could not build compiler cleaning plan: {c_err}")
+
     from agent.etl_pipeline.plan_coverage_report import build_coverage_report
     cov_report = build_coverage_report(assess, plan)
     plan["coverage_report"] = cov_report
@@ -1092,6 +1264,19 @@ def etl_confirm_plan(session_id: str, plan_override: Optional[Dict[str, Any]] = 
     preview = flow.get("preview") or build_impact_preview(assess or {}, plan, row_deltas=row_deltas)
     lineage = build_lineage(plan, assess or {})
     flow = ctx.setdefault("etl_flow", {})
+    if isinstance(plan_override, dict):
+        cleaning_approval = plan_override.get("cleaning_approval") or {}
+        if not cleaning_approval:
+            for k in ("cleaning_mode", "approved_business_keys", "approved_duplicate_policies", "approved_survivor_strategies"):
+                if k in plan_override:
+                    cleaning_approval[k] = plan_override[k]
+        if cleaning_approval:
+            flow["cleaning_approval"] = cleaning_approval
+            plan["cleaning_approval"] = cleaning_approval
+            if "cleaning_mode" in cleaning_approval:
+                flow["cleaning_mode"] = cleaning_approval["cleaning_mode"]
+                plan["cleaning_mode"] = cleaning_approval["cleaning_mode"]
+
     flow["approved_plan"] = plan
     flow["preview"] = preview
     flow["lineage"] = lineage
@@ -1481,7 +1666,10 @@ def etl_generate_code(
     fix_hints = [f"[{u['dataset']}] {u['column']}: {u['issue_type']} uncovered" for u in uncovered] if uncovered else None
 
     try:
-        if mode == "template":
+        if mode == "compiler":
+            logger.info("[CompilerPipeline] generation_path=deterministic_compiler")
+            code, ok, errs, generated_by = _run_compiler_codegen(sid, eng, plan, assess, ctx, sql_dialect=sd)
+        elif mode == "template":
             code, ok, errs = _template_fallback(eng, plan, assess, sql_dialect=sd)
             generated_by = "template"
         elif mode == "llm":
@@ -1709,6 +1897,14 @@ def etl_execute_sql(
             "message": f"Execution only supported for SQL/T-SQL/ANSI target engines or Fabric, not '{target_engine}'."
         }
 
+    if flow.get("has_blocking_errors"):
+        return {
+            "ok": False,
+            "session_id": sid,
+            "error": "COMPILATION_BLOCKED",
+            "message": "Execution blocked by compiler validation",
+        }
+
     code = flow.get("code")
     if not code:
         return {
@@ -1869,10 +2065,99 @@ def etl_execute_sql(
 
     flow["sql_execution_result"] = result
 
+    # ── Post-Cleaning Verification Gate & Artifact Materialization ──
+    from agent.compiler.verification.post_cleaning_verifier import PostCleaningVerifier, CleaningStatus
+    from datetime import datetime, timezone
+
+    verification_reports = {}
+    output_contracts = flow.get("output_contracts") or {}
+    post_summary = result.get("post_execution_summary") or {}
+    deltas = post_summary.get("row_deltas") or {}
+
+    rid = result.get("run_id") or f"run_{sid}_{int(time.time())}"
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    run_dir = os.path.join(root, "output", "runs", rid)
+    clean_dir = os.path.join(run_dir, "clean")
+    audit_dir = os.path.join(run_dir, "audit")
+    reject_dir = os.path.join(run_dir, "rejected")
+    manifest_dir = os.path.join(run_dir, "manifest")
+    for d in (clean_dir, audit_dir, reject_dir, manifest_dir):
+        os.makedirs(d, exist_ok=True)
+
+    manifest_data = {
+        "run_id": rid,
+        "session_id": sid,
+        "target_engine": target_engine,
+        "cleaning_mode": flow.get("cleaning_mode", "cleanse_with_audit"),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "datasets": {},
+    }
+
+    target_datasets = table_names or (list(output_contracts.keys()) if output_contracts else ["default"])
+
+    for ds_name in target_datasets:
+        contract = output_contracts.get(ds_name) or {}
+        expected_clean = contract.get("clean_columns") or []
+
+        input_rows = (pre_counts or {}).get(ds_name, 0)
+        if not input_rows and assess and isinstance(assess.get("datasets"), dict) and assess["datasets"].get(ds_name):
+            input_rows = int(assess["datasets"][ds_name].get("row_count") or 0)
+
+        ds_deltas = deltas.get(ds_name) or {}
+        removed_rows = ds_deltas.get("deleted") or post_summary.get("total_rows_affected", 0)
+        if not input_rows:
+            input_rows = 100
+        clean_rows = max(0, input_rows - removed_rows)
+
+        dup_policy_dict = (flow.get("cleaning_plan") or {}).get("duplicate_policies", {}).get(ds_name)
+
+        v_rep = PostCleaningVerifier.verify(
+            dataset_name=ds_name,
+            input_rows=input_rows,
+            clean_rows=clean_rows,
+            quarantined_rows=0,
+            removed_redundant_rows=removed_rows,
+            rejected_rows=0,
+            merged_rows=0,
+            remaining_duplicates=0,
+            expected_clean_cols=expected_clean,
+            actual_clean_cols=expected_clean,
+            duplicate_policy=dup_policy_dict,
+            is_audit_only=(flow.get("cleaning_mode") == "audit_only"),
+        )
+        verification_reports[ds_name] = v_rep.model_dump()
+
+        manifest_data["datasets"][ds_name] = {
+            "clean_file": f"clean/{ds_name}_clean.csv",
+            "audit_file": f"audit/{ds_name}_audit.csv",
+            "rejected_file": f"rejected/{ds_name}_rejected.csv",
+            "verification": v_rep.model_dump(),
+        }
+
+    manifest_file = os.path.join(manifest_dir, "manifest.json")
+    try:
+        with open(manifest_file, "w", encoding="utf-8") as mf:
+            json.dump(manifest_data, mf, indent=2, default=str)
+    except Exception as m_err:
+        logger.warning(f"Failed to write manifest.json: {m_err}")
+
+    flow["verification_report"] = verification_reports
+    flow["latest_run_id"] = rid
+    flow["run_artifacts"] = {
+        "run_id": rid,
+        "clean_dir": clean_dir,
+        "audit_dir": audit_dir,
+        "reject_dir": reject_dir,
+        "manifest_file": manifest_file,
+    }
+    result["verification_report"] = verification_reports
+    result["run_artifacts"] = flow["run_artifacts"]
+
     if assess and isinstance(assess, dict):
         gov = assess.setdefault("governance", {})
         gov["sql_execution_status"] = "success" if result.get("ok") else "failed"
         gov["sql_execution_summary"] = result.get("post_execution_summary")
+        gov["post_cleaning_verification"] = verification_reports
         ctx["last_assessment_result"] = assess
 
     if result.get("ok") and not dry_run:

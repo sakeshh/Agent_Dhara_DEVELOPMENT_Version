@@ -59,6 +59,13 @@ class ConnectorConfigError(Exception):
     pass
 
 
+class CompilationBlockedError(AgentError):
+    """Raised when pipeline compilation or execution is blocked by compiler validation diagnostics."""
+    def __init__(self, message: str, details: dict | None = None):
+        super().__init__(AgentErrorCode.ETL_GENERATION_FAILED, message, recoverable=False)
+        self.details = details or {}
+
+
 class GeneratedCodeIncompleteError(Exception):
     """Exception raised when generated code has incomplete transform functions."""
     def __init__(self, code: str, missing_functions: list[str]):
