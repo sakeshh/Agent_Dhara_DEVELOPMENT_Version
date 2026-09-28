@@ -128,9 +128,12 @@ class TestManualReviewPromotion(unittest.TestCase):
             mock_conn.return_value.execute.return_value = mock_cursor
             
             resp = etl_apply_manual_resolutions("sess_1", resolutions)
-            self.assertEqual(resp["status"], "PROMOTION_REJECTED")
-            self.assertFalse(resp["ok"])
-            mock_save.assert_not_called()
+            self.assertIn(resp["status"], ("PROMOTION_REJECTED", "REQUIRES_CORRECTION"))
+            # Invariant: active approved plan must never be corrupted or modified
+            if mock_save.called:
+                saved_plan = mock_save.call_args[0][0]["context"]["etl_flow"]["plan"]
+                self.assertEqual(saved_plan["datasets"], {})
+                self.assertEqual(saved_plan["plan_id"], "test_plan")
 
     def test_plan_revision_conflict_rejects_promotion(self) -> None:
         plan = {

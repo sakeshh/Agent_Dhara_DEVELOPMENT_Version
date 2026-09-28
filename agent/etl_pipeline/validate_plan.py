@@ -419,8 +419,11 @@ class PlanValidationIssue:
     dataset_id: str | None = None
     column: str | None = None
     step_id: str | None = None
+    item_id: str | None = None
     policy_card_id: str | None = None
     severity: str = "ERROR"
+    attempted_action: str | None = None
+    attempted_params: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -505,22 +508,28 @@ def validate_promoted_plan(
                 params.setdefault("reason_column", f"{col}_validation_reason")
             policy_card_id = st.get("evidence", {}).get("user_resolution") or st.get("note")
 
-            # 1. Step ID uniqueness
-            if not step_id:
+            source_issues = st.get("source_issue_ids") or []
+            item_id = source_issues[0] if (isinstance(source_issues, list) and source_issues) else (st.get("item_id") or st.get("source_issue_id"))
+
+            def add_issue(code: str, message: str, severity: str = "ERROR") -> None:
                 issues.append(PlanValidationIssue(
-                    code="MISSING_STEP_ID",
-                    message=f"Step on column '{col}' is missing a step_id.",
-                    dataset_id=ds_name,
-                    column=col,
-                ))
-            elif step_id in seen_step_ids:
-                issues.append(PlanValidationIssue(
-                    code="DUPLICATE_STEP_ID",
-                    message=f"Duplicate step ID '{step_id}' found in plan.",
+                    code=code,
+                    message=message,
                     dataset_id=ds_name,
                     column=col,
                     step_id=step_id,
+                    item_id=item_id,
+                    policy_card_id=policy_card_id,
+                    severity=severity,
+                    attempted_action=action,
+                    attempted_params=params,
                 ))
+
+            # 1. Step ID uniqueness
+            if not step_id:
+                add_issue("MISSING_STEP_ID", f"Step on column '{col}' is missing a step_id.")
+            elif step_id in seen_step_ids:
+                add_issue("DUPLICATE_STEP_ID", f"Duplicate step ID '{step_id}' found in plan.")
             else:
                 seen_step_ids.add(step_id)
 
@@ -538,33 +547,15 @@ def validate_promoted_plan(
             # 2. Unknown or legacy actions check
             meta = get_action_meta(action)
             if meta.get("_unknown"):
-                issues.append(PlanValidationIssue(
-                    code="UNKNOWN_ACTION",
-                    message=f"Unknown action '{action}' on column '{col}'.",
-                    dataset_id=ds_name,
-                    column=col,
-                    step_id=step_id,
-                ))
+                add_issue("UNKNOWN_ACTION", f"Unknown action '{action}' on column '{col}'.")
                 continue
 
             if meta.get("legacy") or is_invalid_action(action) or is_legacy_action(action):
-                issues.append(PlanValidationIssue(
-                    code="AMBIGUOUS_LEGACY_ACTION",
-                    message=f"Action '{action}' on column '{col}' is a legacy ambiguous action and cannot be executed.",
-                    dataset_id=ds_name,
-                    column=col,
-                    step_id=step_id,
-                ))
+                add_issue("AMBIGUOUS_LEGACY_ACTION", f"Action '{action}' on column '{col}' is a legacy ambiguous action and cannot be executed.")
 
             # 3. Phase check
             if is_phase1 and meta.get("phase") == 2:
-                issues.append(PlanValidationIssue(
-                    code="PHASE_MISMATCH",
-                    message=f"Action '{action}' on column '{col}' is Phase 2 but this is a Phase 1 plan.",
-                    dataset_id=ds_name,
-                    column=col,
-                    step_id=step_id,
-                ))
+                add_issue("PHASE_MISMATCH", f"Action '{action}' on column '{col}' is Phase 2 but this is a Phase 1 plan.")
 
             # 4. Required parameters check
             if action in ("range_clip", "clip_outliers"):
@@ -582,85 +573,42 @@ def validate_promoted_plan(
             req_params = meta.get("required_params") or []
             for rp in req_params:
                 if rp not in params:
-                    issues.append(PlanValidationIssue(
-                        code="MISSING_REQUIRED_PARAMETER",
-                        message=f"Action '{action}' is missing required parameter '{rp}' on column '{col}'.",
-                        dataset_id=ds_name,
-                        column=col,
-                        step_id=step_id,
-                    ))
+                    add_issue("MISSING_REQUIRED_PARAMETER", f"Action '{action}' is missing required parameter '{rp}' on column '{col}'.")
 
             # 5. Conditional parameters and semantic rules
             if action == "fill_null_with_constant":
                 if "value" not in params:
-                    issues.append(PlanValidationIssue(
-                        code="MISSING_REQUIRED_PARAMETER",
-                        message=f"Action 'fill_null_with_constant' is missing constant 'value' parameter on column '{col}'.",
-                        dataset_id=ds_name,
-                        column=col,
-                        step_id=step_id,
-                    ))
+                    add_issue("MISSING_REQUIRED_PARAMETER", f"Action 'fill_null_with_constant' is missing constant 'value' parameter on column '{col}'.")
             elif action == "impute_numeric":
                 strategy = params.get("strategy")
                 if not strategy:
-                    issues.append(PlanValidationIssue(
-                        code="MISSING_REQUIRED_PARAMETER",
-                        message=f"Action 'impute_numeric' is missing 'strategy' parameter.",
-                        dataset_id=ds_name,
-                        column=col,
-                        step_id=step_id,
-                    ))
+                    add_issue("MISSING_REQUIRED_PARAMETER", f"Action 'impute_numeric' is missing 'strategy' parameter.")
                 elif strategy == "constant" and "value" not in params:
-                    issues.append(PlanValidationIssue(
-                        code="MISSING_REQUIRED_PARAMETER",
-                        message="Action 'impute_numeric' strategy 'constant' requires 'value' parameter.",
-                        dataset_id=ds_name,
-                        column=col,
-                        step_id=step_id,
-                    ))
+                    add_issue("MISSING_REQUIRED_PARAMETER", "Action 'impute_numeric' strategy 'constant' requires 'value' parameter.")
                 elif strategy in ("grouped_mean", "grouped_median") and not params.get("group_by"):
-                    issues.append(PlanValidationIssue(
-                        code="MISSING_REQUIRED_PARAMETER",
-                        message=f"Action 'impute_numeric' strategy '{strategy}' requires 'group_by' parameter.",
-                        dataset_id=ds_name,
-                        column=col,
-                        step_id=step_id,
-                    ))
+                    add_issue("MISSING_REQUIRED_PARAMETER", f"Action 'impute_numeric' strategy '{strategy}' requires 'group_by' parameter.")
             elif action == "deduplicate":
                 if not params.get("key_columns") or not params.get("survivorship_policy"):
-                    issues.append(PlanValidationIssue(
-                        code="INCOMPLETE_DEDUPLICATION_POLICY",
-                        message=f"Deduplication action on column '{col}' is missing key_columns or survivorship_policy.",
-                        dataset_id=ds_name,
-                        column=col,
-                        step_id=step_id,
-                    ))
+                    add_issue("INCOMPLETE_DEDUPLICATION_POLICY", f"Deduplication action on column '{col}' is missing key_columns or survivorship_policy.")
 
             # 6. Semantic role prohibitions (key imputation check)
+            # 6. Semantic role prohibitions (key imputation check and row dropping)
+            if rules.get("never_drop_rows"):
+                if action in ("drop_rows", "drop_row", "dropna") or (action == "filter_rows" and params.get("mode") == "drop"):
+                    add_issue("UNSAFE_ROW_DELETION", f"Action '{action}' is prohibited because business rule 'never_drop_rows' is enabled.")
+
             prohibitions = get_semantic_prohibitions(action)
             if prohibitions:
                 is_key = is_key_or_identifier_column(ds_name, col, plan, assessment)
                 if is_key:
-                    issues.append(PlanValidationIssue(
-                        code="ILLEGAL_KEY_IMPUTATION",
-                        message=f"Action '{action}' is prohibited on key/identifier column '{col}' (prohibited types: {prohibitions}).",
-                        dataset_id=ds_name,
-                        column=col,
-                        step_id=step_id,
-                    ))
+                    add_issue("ILLEGAL_KEY_IMPUTATION", f"Action '{action}' is prohibited on key/identifier column '{col}' (prohibited types: {prohibitions}).")
 
             # 7. Conflicting writes to the same output column
             out_col = params.get("output_column")
             if out_col:
                 key = (ds_name, out_col)
                 if key in written_outputs:
-                    issues.append(PlanValidationIssue(
-                        code="CONFLICTING_WRITE_COLUMN",
-                        message=f"Conflict: steps '{step_id}' and '{written_outputs[key]}' both write to the output column '{out_col}'.",
-                        dataset_id=ds_name,
-                        column=col,
-                        step_id=step_id,
-                    ))
+                    add_issue("CONFLICTING_WRITE_COLUMN", f"Conflict: steps '{step_id}' and '{written_outputs[key]}' both write to the output column '{out_col}'.")
                 else:
                     written_outputs[key] = step_id
 
@@ -674,34 +622,16 @@ def validate_promoted_plan(
             )
             if is_promoted_manual:
                 if not mr_prov or not isinstance(mr_prov, dict):
-                    issues.append(PlanValidationIssue(
-                        code="MISSING_PROVENANCE",
-                        message=f"Step '{step_id}' is missing manual resolution provenance.",
-                        dataset_id=ds_name,
-                        column=col,
-                        step_id=step_id,
-                    ))
+                    add_issue("MISSING_PROVENANCE", f"Step '{step_id}' is missing manual resolution provenance.")
                 else:
                     sel_opt = mr_prov.get("selected_option_id")
                     if not sel_opt:
-                        issues.append(PlanValidationIssue(
-                            code="MISSING_PROVENANCE",
-                            message=f"Step '{step_id}' manual resolution is missing 'selected_option_id'.",
-                            dataset_id=ds_name,
-                            column=col,
-                            step_id=step_id,
-                        ))
+                        add_issue("MISSING_PROVENANCE", f"Step '{step_id}' manual resolution is missing 'selected_option_id'.")
                     else:
                         # Check mapping mismatch
                         canonical_action = RESOLUTION_TO_ACTION_MAP.get(sel_opt)
                         if canonical_action and canonical_action != action:
-                            issues.append(PlanValidationIssue(
-                                code="PROMOTION_ACTION_MISMATCH",
-                                message=f"Step '{step_id}' action '{action}' does not match canonical action '{canonical_action}' for selected option '{sel_opt}'.",
-                                dataset_id=ds_name,
-                                column=col,
-                                step_id=step_id,
-                            ))
+                            add_issue("PROMOTION_ACTION_MISMATCH", f"Step '{step_id}' action '{action}' does not match canonical action '{canonical_action}' for selected option '{sel_opt}'.")
 
     return len(issues) == 0, issues
 

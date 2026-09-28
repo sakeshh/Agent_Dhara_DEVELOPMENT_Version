@@ -110,12 +110,15 @@ class EtlPlanPayload(BaseModel):
 class EtlConfirmPayload(BaseModel):
     session_id: str = "default"
     plan: Optional[Dict[str, Any]] = None
+    expected_plan_version: Optional[int] = None
 
 
 class EtlApplyManualResolutionsPayload(BaseModel):
     session_id: str = "default"
     plan: Optional[Dict[str, Any]] = None
     resolutions: List[Dict[str, Any]] = []
+    expected_plan_version: Optional[int] = None
+    idempotency_key: Optional[str] = None
 
 
 class EtlEnrichReviewOptionsPayload(BaseModel):
@@ -144,6 +147,7 @@ class EtlGeneratePayload(BaseModel):
     sql_dialect: Optional[str] = "tsql"
     codegen_mode: Optional[str] = None  # template | llm | llm_then_template
     generation_mode: Optional[str] = "full"
+    expected_plan_version: Optional[int] = None
 
 
 class EtlDeployPayload(BaseModel):
@@ -678,11 +682,16 @@ def api_etl_apply_manual_resolutions(payload: EtlApplyManualResolutionsPayload, 
     """Promote user-selected manual review resolutions into plan steps."""
     from agent.etl_handlers import etl_apply_manual_resolutions
 
-    return etl_apply_manual_resolutions(
+    result = etl_apply_manual_resolutions(
         payload.session_id,
         payload.resolutions or [],
         plan_override=payload.plan,
+        expected_plan_version=payload.expected_plan_version,
+        idempotency_key=payload.idempotency_key,
     )
+    if result.get("http_status") == 409 or result.get("status") in ("STALE_PLAN_VERSION", "PLAN_REVISION_CONFLICT"):
+        raise HTTPException(status_code=409, detail=result)
+    return result
 
 
 @router.post("/etl/enrich-review-options")
@@ -748,13 +757,19 @@ def api_etl_preflight(payload: EtlPreflightPayload, _auth: None = Depends(requir
     return {"ok": res.get("passed", True), "preflight": res}
 
 
-
 @router.post("/etl/confirm")
 def api_etl_confirm(payload: EtlConfirmPayload, _auth: None = Depends(require_backend_token)) -> Dict[str, Any]:
     """Confirm (optionally edited) plan and compute impact preview."""
     from agent.etl_handlers import etl_confirm_plan
 
-    return etl_confirm_plan(payload.session_id, plan_override=payload.plan)
+    result = etl_confirm_plan(
+        payload.session_id,
+        plan_override=payload.plan,
+        expected_plan_version=payload.expected_plan_version,
+    )
+    if result.get("http_status") == 409 or result.get("status") in ("STALE_PLAN_VERSION", "SCHEMA_DRIFT"):
+        raise HTTPException(status_code=409, detail=result)
+    return result
 
 
 @router.post("/etl/generate")
@@ -769,10 +784,32 @@ def api_etl_generate(payload: EtlGeneratePayload, request: Request, _auth: None 
         sql_dialect=payload.sql_dialect or "tsql",
         codegen_mode=payload.codegen_mode,
         generation_mode=payload.generation_mode,
+        expected_plan_version=payload.expected_plan_version,
     )
     if not result.get("ok") and result.get("http_status") == 409:
         raise HTTPException(status_code=409, detail=result)
     return result
+
+
+@router.get("/etl/session-plan")
+def api_etl_session_plan(session_id: str = "default", _auth: None = Depends(require_backend_token)) -> Dict[str, Any]:
+    """Fetch current approved plan, active candidate plan, and resolutions for session rehydration."""
+    from agent.session_store import load_session
+    sid = (session_id or "default").strip() or "default"
+    sess = load_session(sid)
+    ctx = sess.get("context", {}) or {}
+    flow = ctx.get("etl_flow", {}) or {}
+    return {
+        "ok": True,
+        "session_id": sid,
+        "plan_version": flow.get("plan_version", 1),
+        "lifecycle_state": flow.get("lifecycle_state", "READY_TO_PLAN"),
+        "plan": flow.get("plan"),
+        "approved_plan": flow.get("approved_plan"),
+        "candidate_plan": flow.get("candidate_plan"),
+        "manual_review_resolutions": ctx.get("manual_review_resolutions", []),
+        "last_step": sess.get("last_step"),
+    }
 
 
 @router.post("/etl/flush-codegen-cache")

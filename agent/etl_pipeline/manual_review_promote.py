@@ -6,7 +6,10 @@ from __future__ import annotations
 import json as _json
 import hashlib as _hashlib
 import re as _re
+import logging
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger("agent.etl_pipeline.manual_review_promote")
 
 from agent.etl_pipeline.classify_steps import classify_step_bucket
 from agent.etl_pipeline.manual_review_catalog import (
@@ -154,8 +157,13 @@ def apply_manual_resolutions(
             errs.append(f"Unknown manual review item: {iid}")
             continue
         if str(item.get("status") or "pending") != "pending":
-            errs.append(f"Item already resolved: {iid}")
-            continue
+            # Re-resolution support: user is editing/updating an existing decision (Scenario 2)
+            logger.info(f"Re-resolving manual review item {iid} with new choice {rid}")
+            for d_name, d_obj in datasets.items():
+                if isinstance(d_obj, dict) and "steps" in d_obj:
+                    d_obj["steps"] = [s for s in d_obj["steps"] if s.get("item_id") != iid]
+            resolved_log = [r for r in resolved_log if (r.get("id") != iid and r.get("item_id") != iid)]
+            item["status"] = "pending"
 
         issue_type = str(item.get("issue_type") or "")
         
@@ -436,6 +444,8 @@ def apply_manual_resolutions(
         })
         step["step_id"] = step_id
         step["action_fingerprint"] = action_fingerprint
+        step["item_id"] = iid
+        step["source_issue_ids"] = [iid]
 
         if "llm_recommendation" in item:
             step["llm_recommendation"] = item["llm_recommendation"]

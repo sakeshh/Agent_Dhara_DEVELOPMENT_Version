@@ -961,6 +961,8 @@ def etl_apply_manual_resolutions(
     session_id: str,
     resolutions: List[Dict[str, Any]],
     plan_override: Optional[Dict[str, Any]] = None,
+    expected_plan_version: Optional[int] = None,
+    idempotency_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Apply user picks for manual_review items; promotes steps into plan.datasets."""
     sid = (session_id or "default").strip() or "default"
@@ -976,12 +978,19 @@ def etl_apply_manual_resolutions(
         conn.close()
     
     loaded_version = sess.get("_version")
-    if loaded_version is not None and db_version != loaded_version:
-        return {
-            "status": "PLAN_REVISION_CONFLICT",
-            "ok": False,
-            "message": "The plan has been modified by another process. Please refresh and try again."
-        }
+    if loaded_version is not None and db_version > loaded_version:
+        from agent.etl_pipeline.recovery_contract import build_stale_plan_recovery_envelope
+        current_v = int((sess.get("context", {}).get("etl_flow", {}).get("plan_version")) or 1)
+        envelope = build_stale_plan_recovery_envelope(
+            current_plan_version=current_v,
+            expected_plan_version=loaded_version,
+            details={"reason": "session_version_mismatch"}
+        )
+        resp = envelope.to_dict()
+        resp["ok"] = False
+        resp["status"] = "PLAN_REVISION_CONFLICT"
+        resp["http_status"] = 409
+        return resp
 
     ctx = _ctx(sess)
     assess = _get_assessment(sess, None)
@@ -995,6 +1004,38 @@ def etl_apply_manual_resolutions(
     if not isinstance(plan, dict):
         return {"ok": False, "error": "NO_PLAN", "message": "Create a plan first (POST /etl/plan)."}
 
+    current_plan_version = int(flow.get("plan_version") or 1)
+
+    # ── Stale Plan Concurrency Guard ──
+    if expected_plan_version is not None and expected_plan_version != current_plan_version:
+        from agent.etl_pipeline.recovery_contract import build_stale_plan_recovery_envelope
+        envelope = build_stale_plan_recovery_envelope(
+            current_plan_version=current_plan_version,
+            expected_plan_version=expected_plan_version,
+        )
+        resp = envelope.to_dict()
+        resp["ok"] = False
+        resp["http_status"] = 409
+        return resp
+
+    # ── Idempotency Guard ──
+    import copy
+    import hashlib
+    res_str = json.dumps(resolutions, sort_keys=True, default=str)
+    op_hash = hashlib.sha256(f"{sid}:{current_plan_version}:{res_str}".encode("utf-8")).hexdigest()
+    if idempotency_key and flow.get("last_idempotency_key") == idempotency_key:
+        cached = flow.get("last_promotion_result")
+        if cached:
+            cached_copy = copy.deepcopy(cached)
+            cached_copy["idempotent_replay"] = True
+            return cached_copy
+    if flow.get("last_operation_hash") == op_hash and not flow.get("candidate_plan"):
+        cached = flow.get("last_promotion_result")
+        if cached:
+            cached_copy = copy.deepcopy(cached)
+            cached_copy["idempotent_replay"] = True
+            return cached_copy
+
     # Store resolutions in session context
     saved_resolutions = ctx.get("manual_review_resolutions") or []
     res_map = {r.get("item_id") or r.get("id"): r for r in saved_resolutions if r}
@@ -1007,7 +1048,6 @@ def etl_apply_manual_resolutions(
     ctx["manual_review_resolutions"] = list(res_map.values())
     
     # We apply manual resolutions to candidates to avoid altering original until validation passes
-    import copy
     candidate_plan = copy.deepcopy(plan)
     rules = copy.deepcopy(flow.get("business_rules") or plan.get("business_rules") or {})
     
@@ -1018,16 +1058,75 @@ def etl_apply_manual_resolutions(
     # Validate candidate plan
     valid, issues = validate_promoted_plan(updated, assess, rules)
     if not valid:
-        return {
-            "status": "PROMOTION_REJECTED",
-            "ok": False,
-            "errors": [
-                f"{issue.message} (Column: '{issue.column}' in Dataset: '{issue.dataset_id or 'global'}')"
-                if issue.column else issue.message
-                for issue in issues
-            ],
-            "message": "Promotion rejected due to validation failures in candidate plan."
+        from agent.etl_pipeline.resolution_advisor import ResolutionAdvisor
+        advisor = ResolutionAdvisor()
+        advisories = advisor.advise(issues, plan=updated, assessment=assess, business_rules=rules)
+
+        offending_items = set(adv.item_id for adv in advisories if adv.item_id)
+        accepted_decisions = [
+            r for r in resolutions 
+            if (r.get("item_id") or r.get("id")) not in offending_items
+        ]
+
+        # Candidate plan tracking: preserve valid decisions without committing an invalid executable plan
+        candidate_plan = {
+            "candidate_version": int(flow.get("candidate_version") or 0) + 1,
+            "status": "CORRECTION_REQUIRED",
+            "lifecycle_state": "CORRECTION_REQUIRED",
+            "accepted_decisions": accepted_decisions,
+            "unresolved_items": list(offending_items),
+            "issues": [adv.to_dict() for adv in advisories],
         }
+
+        # Persist candidate plan and decisions into session for browser refresh restoration
+        flow["candidate_plan"] = candidate_plan
+        flow["candidate_version"] = candidate_plan["candidate_version"]
+        flow["lifecycle_state"] = "CORRECTION_REQUIRED"
+        save_session(sess)
+
+        return {
+            "status": "REQUIRES_CORRECTION",
+            "lifecycle_state": "CORRECTION_REQUIRED",
+            "promotion_status": "PROMOTION_REJECTED",
+            "ok": False,
+            "recoverable": True,
+            "plan_version": current_plan_version,
+            "candidate_version": candidate_plan["candidate_version"],
+            "candidate_plan": candidate_plan,
+            "accepted_decisions_count": len(accepted_decisions),
+            "unresolved_issues_count": len(advisories),
+            "errors": [adv.explanation for adv in advisories],
+            "issues": [adv.to_dict() for adv in advisories],
+            "validation_issues": [adv.to_dict() for adv in advisories],
+            "message": f"{len(advisories)} item(s) require adjustment before plan approval.",
+            # Unified 5-part explanation:
+            "what_happened": f"{len(advisories)} of {len(resolutions)} selected resolutions failed compiler safety validation.",
+            "what_protected": f"Your approved Plan v{current_plan_version} remains unchanged and safe.",
+            "what_needs_attention": f"{len(advisories)} of {len(resolutions)} transformations require correction.",
+            "available_transitions": [
+                {
+                    "transition_id": "EDIT",
+                    "label": "Review and Fix Conflicting Decisions",
+                    "is_recommended": True,
+                    "explanation": f"Modify the highlighted invalid choices while preserving the other {len(accepted_decisions)} decisions.",
+                },
+                {
+                    "transition_id": "RESET_CANDIDATE",
+                    "label": "Reset to Approved Plan",
+                    "is_recommended": False,
+                    "explanation": f"Discard candidate edits and return to Plan v{current_plan_version}.",
+                }
+            ],
+            "afterward_explanation": "Corrected items will be revalidated; accepted decisions will remain intact.",
+        }
+
+    # All decisions valid: bump plan version and promote candidate atomically
+    new_version = current_plan_version + 1
+    flow["plan_version"] = new_version
+    flow["candidate_plan"] = None
+    flow["candidate_version"] = 0
+    updated["plan_version"] = new_version
+    updated["lifecycle_state"] = "READY_TO_GENERATE"
     
     if rules:
         flow["business_rules"] = rules
@@ -1133,14 +1232,15 @@ def etl_apply_manual_resolutions(
     flow["plan_validation_ok"] = plan_ok
     flow["plan_validation_errors"] = plan_errs
 
-    save_session(sess)
-
     pending_manual = count_pending_manual_review(updated)
     ce = flow.get("codegen_engine")
     sd = flow.get("sql_dialect")
 
-    return {
+    result_resp = {
         "ok": plan_ok and not updated.get("blocked"),
+        "status": "VALID" if (plan_ok and not updated.get("blocked")) else "WARNING",
+        "lifecycle_state": "READY_TO_GENERATE" if (plan_ok and not updated.get("blocked")) else "REVIEW_REQUIRED",
+        "plan_version": flow.get("plan_version", 1),
         "session_id": sid,
         "plan": updated,
         "blocked": updated.get("blocked") or [],
@@ -1159,9 +1259,21 @@ def etl_apply_manual_resolutions(
         ),
     }
 
+    if idempotency_key:
+        flow["last_idempotency_key"] = idempotency_key
+    flow["last_operation_hash"] = op_hash
+    flow["last_promotion_result"] = result_resp
+
+    save_session(sess)
+    return result_resp
+
 
 @with_session_lock
-def etl_confirm_plan(session_id: str, plan_override: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def etl_confirm_plan(
+    session_id: str,
+    plan_override: Optional[Dict[str, Any]] = None,
+    expected_plan_version: Optional[int] = None,
+) -> Dict[str, Any]:
     sid = (session_id or "default").strip() or "default"
     sess = load_session(sid)
     ctx = _ctx(sess)
@@ -1169,16 +1281,35 @@ def etl_confirm_plan(session_id: str, plan_override: Optional[Dict[str, Any]] = 
     flow = ctx.setdefault("etl_flow", {})
     _migrate_phase(flow)
 
+    current_plan_version = int(flow.get("plan_version") or 1)
+    if expected_plan_version is not None and expected_plan_version != current_plan_version:
+        from agent.etl_pipeline.recovery_contract import build_stale_plan_recovery_envelope
+        envelope = build_stale_plan_recovery_envelope(
+            current_plan_version=current_plan_version,
+            expected_plan_version=expected_plan_version,
+        )
+        resp = envelope.to_dict()
+        resp["ok"] = False
+        resp["http_status"] = 409
+        return resp
+
     schema_sig = _assessment_schema_signature(assess or {})
     saved_sig = flow.get("assessment_schema_signature")
     if saved_sig and schema_sig != saved_sig:
         rollback_on_failure(flow, reason="Schema signature mismatch (underlying dataset/schema changed).")
         save_session(sess)
-        return {
-            "ok": False,
-            "error": "SCHEMA_INVALIDATED",
-            "message": "The underlying dataset schema or connection has changed, invalidating the planned transformations. Rollback to planned state triggered.",
-        }
+        from agent.etl_pipeline.recovery_contract import build_schema_drift_recovery_envelope
+        affected_datasets = list((assess or {}).get("datasets", {}).keys())
+        envelope = build_schema_drift_recovery_envelope(
+            affected_datasets=affected_datasets,
+            current_hash=schema_sig,
+            original_hash=saved_sig,
+        )
+        resp = envelope.to_dict()
+        resp["ok"] = False
+        resp["error"] = "SCHEMA_DRIFT"
+        resp["http_status"] = 409
+        return resp
 
     plan = (
         plan_override
@@ -1465,6 +1596,7 @@ def etl_generate_code(
     *,
     codegen_mode: Optional[str] = None,
     generation_mode: Optional[str] = "full",
+    expected_plan_version: Optional[int] = None,
 ) -> Dict[str, Any]:
     sid = (session_id or "default").strip() or "default"
     sess = load_session(sid)
@@ -1473,16 +1605,35 @@ def etl_generate_code(
     flow = ctx.setdefault("etl_flow", {})
     _migrate_phase(flow)
 
+    current_plan_version = int(flow.get("plan_version") or 1)
+    if expected_plan_version is not None and expected_plan_version != current_plan_version:
+        from agent.etl_pipeline.recovery_contract import build_stale_plan_recovery_envelope
+        envelope = build_stale_plan_recovery_envelope(
+            current_plan_version=current_plan_version,
+            expected_plan_version=expected_plan_version,
+        )
+        resp = envelope.to_dict()
+        resp["ok"] = False
+        resp["http_status"] = 409
+        return resp
+
     schema_sig = _assessment_schema_signature(assess)
     saved_sig = flow.get("assessment_schema_signature")
     if saved_sig and schema_sig != saved_sig:
         rollback_on_failure(flow, reason="Schema signature mismatch (underlying dataset/schema changed).")
         save_session(sess)
-        return {
-            "ok": False,
-            "error": "SCHEMA_INVALIDATED",
-            "message": "The underlying dataset schema or connection has changed, invalidating the planned transformations. Rollback to planned state triggered.",
-        }
+        from agent.etl_pipeline.recovery_contract import build_schema_drift_recovery_envelope
+        affected_datasets = list(assess.get("datasets", {}).keys())
+        envelope = build_schema_drift_recovery_envelope(
+            affected_datasets=affected_datasets,
+            current_hash=schema_sig,
+            original_hash=saved_sig,
+        )
+        resp = envelope.to_dict()
+        resp["ok"] = False
+        resp["error"] = "SCHEMA_DRIFT"
+        resp["http_status"] = 409
+        return resp
 
     _migrate_phase(flow)
     current_phase = flow.get("phase", "planned")
