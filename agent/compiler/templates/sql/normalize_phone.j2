@@ -1,0 +1,50 @@
+-- Step: {{ step_id }} ({{ description }})
+-- Strategy: Normalize & Validate Phone Numbers on [{{ dataset_name }}]
+{% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
+{% set disp = disposition | default('NULLIFY') | upper %}
+
+{% for col in columns %}
+-- 1. Strip formatting characters (spaces, dashes, parentheses, plus, dots)
+UPDATE {{ target_table }}
+SET [{{ col }}] = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE([{{ col }}], ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')
+WHERE [{{ col }}] IS NOT NULL;
+
+-- 2. Audit & Remediate invalid phone numbers (length < 7 or non-digits)
+{% if disp == 'REJECT' and not never_drop_rows %}
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
+SELECT '{{ pipeline_id | default("adhoc") }}', '{{ dataset_name }}', 'Invalid phone number format in [{{ col }}] (length < 7 or non-digits)', (
+    SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+)
+FROM {{ target_table }} s
+WHERE s.[{{ col }}] IS NOT NULL 
+  AND (LEN(s.[{{ col }}]) < 7 OR s.[{{ col }}] LIKE '%[^0-9]%');
+
+DELETE FROM {{ target_table }}
+WHERE [{{ col }}] IS NOT NULL 
+  AND (LEN([{{ col }}]) < 7 OR [{{ col }}] LIKE '%[^0-9]%');
+
+{% elif disp == 'REJECT' or disp == 'NULLIFY' %}
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
+SELECT '{{ pipeline_id | default("adhoc") }}', '{{ dataset_name }}', 'Invalid phone format in [{{ col }}] (nullified)', (
+    SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+)
+FROM {{ target_table }} s
+WHERE s.[{{ col }}] IS NOT NULL 
+  AND (LEN(s.[{{ col }}]) < 7 OR s.[{{ col }}] LIKE '%[^0-9]%');
+
+UPDATE {{ target_table }}
+SET [{{ col }}] = NULL
+WHERE [{{ col }}] IS NOT NULL 
+  AND (LEN([{{ col }}]) < 7 OR [{{ col }}] LIKE '%[^0-9]%');
+
+{% elif disp == 'FLAG' or disp == 'MANUAL_REVIEW' %}
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
+SELECT '{{ pipeline_id | default("adhoc") }}', '{{ dataset_name }}', 'Flagged phone for manual review in [{{ col }}]', (
+    SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+)
+FROM {{ target_table }} s
+WHERE s.[{{ col }}] IS NOT NULL 
+  AND (LEN(s.[{{ col }}]) < 7 OR s.[{{ col }}] LIKE '%[^0-9]%');
+
+{% endif %}
+{% endfor %}

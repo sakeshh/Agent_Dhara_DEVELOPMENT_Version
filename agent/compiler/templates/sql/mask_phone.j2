@@ -1,0 +1,13 @@
+-- Step: {{ step_id }} ({{ description }})
+-- Strategy: Mask Phone PII on [{{ dataset_name }}]
+{% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
+
+{% for col in columns %}
+UPDATE {{ target_table }}
+SET [{{ col }}] = CASE 
+    WHEN [{{ col }}] IS NULL THEN NULL
+    WHEN LEN([{{ col }}]) <= 4 THEN REPLICATE('*', LEN([{{ col }}]))
+    ELSE REPLICATE('*', LEN([{{ col }}]) - 4) + RIGHT([{{ col }}], 4)
+END
+WHERE [{{ col }}] IS NOT NULL;
+{% endfor %}

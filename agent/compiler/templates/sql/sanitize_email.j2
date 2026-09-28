@@ -1,0 +1,50 @@
+-- Step: {{ step_id }} ({{ description }})
+-- Strategy: Sanitize & Validate Email on [{{ dataset_name }}]
+{% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
+{% set disp = disposition | default('NULLIFY') | upper %}
+
+{% for col in columns %}
+-- 1. Standardize format (Trim and Lowercase)
+UPDATE {{ target_table }}
+SET [{{ col }}] = LOWER(RTRIM(LTRIM([{{ col }}])))
+WHERE [{{ col }}] IS NOT NULL;
+
+-- 2. Audit & Remediate malformed emails
+{% if disp == 'REJECT' and not never_drop_rows %}
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
+SELECT '{{ pipeline_id | default("adhoc") }}', '{{ dataset_name }}', 'Invalid email syntax or domain in [{{ col }}]', (
+    SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+)
+FROM {{ target_table }} s
+WHERE s.[{{ col }}] IS NOT NULL 
+  AND NOT (s.[{{ col }}] LIKE '%_@_%._%' AND s.[{{ col }}] NOT LIKE '%[ %<>;:]%');
+
+DELETE FROM {{ target_table }}
+WHERE [{{ col }}] IS NOT NULL 
+  AND NOT ([{{ col }}] LIKE '%_@_%._%' AND [{{ col }}] NOT LIKE '%[ %<>;:]%');
+
+{% elif disp == 'REJECT' or disp == 'NULLIFY' %}
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
+SELECT '{{ pipeline_id | default("adhoc") }}', '{{ dataset_name }}', 'Invalid email syntax in [{{ col }}] (nullified)', (
+    SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+)
+FROM {{ target_table }} s
+WHERE s.[{{ col }}] IS NOT NULL 
+  AND NOT (s.[{{ col }}] LIKE '%_@_%._%' AND s.[{{ col }}] NOT LIKE '%[ %<>;:]%');
+
+UPDATE {{ target_table }}
+SET [{{ col }}] = NULL
+WHERE [{{ col }}] IS NOT NULL 
+  AND NOT ([{{ col }}] LIKE '%_@_%._%' AND [{{ col }}] NOT LIKE '%[ %<>;:]%');
+
+{% elif disp == 'FLAG' or disp == 'MANUAL_REVIEW' %}
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [DatasetName], [Reason], [RejectedRowData])
+SELECT '{{ pipeline_id | default("adhoc") }}', '{{ dataset_name }}', 'Flagged email for manual review in [{{ col }}]', (
+    SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+)
+FROM {{ target_table }} s
+WHERE s.[{{ col }}] IS NOT NULL 
+  AND NOT (s.[{{ col }}] LIKE '%_@_%._%' AND s.[{{ col }}] NOT LIKE '%[ %<>;:]%');
+
+{% endif %}
+{% endfor %}

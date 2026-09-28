@@ -24,8 +24,16 @@ STRATEGY_PARAMETER_CONTRACTS: Dict[str, Set[str]] = {
     "tsql_suffix_add": {"suffix"},
     "tsql_pattern_replace": {"pattern"},
     "tsql_value_map": {"mapping"},
-    "tsql_pad": {"width"},
+    "tsql_pad": {"length"},
     "tsql_conditional_update": {"sql_condition", "rendered_new_value"},
+    "tsql_regex_email": {"source_table", "dataset_name", "pipeline_id"},
+    "sanitize_email": {"source_table", "dataset_name", "pipeline_id"},
+    "tsql_clean_digits": {"source_table", "dataset_name", "pipeline_id"},
+    "normalize_phone": {"source_table", "dataset_name", "pipeline_id"},
+    "tsql_mask_phone": {"source_table", "dataset_name", "pipeline_id"},
+    "mask_phone": {"source_table", "dataset_name", "pipeline_id"},
+    "tsql_case_boolean": {"source_table", "dataset_name", "pipeline_id"},
+    "standardize_boolean": {"source_table", "dataset_name", "pipeline_id"},
 }
 
 
@@ -84,6 +92,33 @@ class SQLCodegenAgent(BaseCodegenAgent):
                         pass
                 params["never_drop_rows"] = never_drop
                 params["pipeline_id"] = physical_plan.plan_id
+
+                # Normalize parameter aliases across planners and test fixtures
+                if "mapping" in params and "mappings" not in params:
+                    params["mappings"] = params["mapping"]
+                elif "mappings" in params and "mapping" not in params:
+                    params["mapping"] = params["mappings"]
+
+                if "width" in params and "length" not in params:
+                    params["length"] = params["width"]
+                elif "length" in params and "width" not in params:
+                    params["width"] = params["length"]
+
+                if "side" in params and "direction" not in params:
+                    params["direction"] = params["side"]
+                elif "direction" in params and "side" not in params:
+                    params["side"] = params["direction"]
+
+                if "fill_character" in params and "pad_char" not in params:
+                    params["pad_char"] = params["fill_character"]
+                elif "pad_char" in params and "fill_character" not in params:
+                    params["fill_character"] = params["pad_char"]
+
+                if "disposition" not in params:
+                    params["disposition"] = "CORRECT"
+
+                if "target_column" not in params and step.target_columns:
+                    params["target_column"] = step.target_columns[0]
 
                 # 1. Parameter contract validation
                 required_params = STRATEGY_PARAMETER_CONTRACTS.get(step.strategy_name, set())

@@ -69,14 +69,19 @@ def test_scenario_b_issues_detected_none_mapped():
     assert exc_info.value.failure_stage == "capability_validation"
 
 
-def test_scenario_c_action_mapped_template_missing():
+def test_scenario_c_action_mapped_template_missing(monkeypatch):
     """Scenario C: Action mapped, but template is missing -> raises CodeGenerationError."""
     pipeline = CompilerPipeline()
     ctx = _build_context()
 
-    # SANITIZE_EMAIL currently has no sanitize_email.j2 template (before Step 3)
+    # Intentionally point an action to a missing template
+    monkeypatch.setitem(
+        pipeline.physical_planner.SQL_STRATEGIES,
+        ActionType.DROP_COLUMN,
+        ("tsql_drop", "missing_non_existent.j2"),
+    )
     ctx.structured_actions = [
-        StructuredAction(action_type=ActionType.SANITIZE_EMAIL, dataset_name="Employee", target_columns=["email"]),
+        StructuredAction(action_type=ActionType.DROP_COLUMN, dataset_name="Employee", target_columns=["email"]),
     ]
     ctx.metadata["ingestion_telemetry"] = {
         "assessment_discovered_count": 1,

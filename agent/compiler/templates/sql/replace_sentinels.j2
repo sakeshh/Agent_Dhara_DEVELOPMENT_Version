@@ -1,0 +1,10 @@
+-- Step: {{ step_id }} ({{ description }})
+UPDATE [dbo].[{{ dataset_name }}_Staging]
+SET
+{% for col in columns %}
+    [{{ col }}] = CASE 
+        WHEN [{{ col }}] IN ({% for s in sentinel_values | default(['NA', 'N/A', 'NULL', 'None', '-999', '?', '-']) %}'{{ s }}'{% if not loop.last %}, {% endif %}{% endfor %}) THEN NULL 
+        ELSE [{{ col }}] 
+    END{% if not loop.last %},{% endif %}
+{% endfor %}
+;

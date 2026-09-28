@@ -4,7 +4,7 @@ SET
 {% for col in columns %}
     [{{ col }}] = CASE 
         WHEN [{{ col }}] IS NULL THEN NULL
-        {% for src_val, tgt_val in mappings.items() %}
+        {% for src_val, tgt_val in (mappings | default(mapping | default({}))).items() %}
         WHEN [{{ col }}] = {{ src_val | render_literal }} THEN {{ tgt_val | render_literal }}
         {% endfor %}
         {% if preserve_unmapped %}

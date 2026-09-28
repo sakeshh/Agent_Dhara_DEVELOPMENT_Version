@@ -1,0 +1,13 @@
+-- Step: {{ step_id }} ({{ description }})
+-- Strategy: Standardize Boolean Representation on [{{ dataset_name }}]
+{% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
+
+{% for col in columns %}
+UPDATE {{ target_table }}
+SET [{{ col }}] = CASE
+    WHEN UPPER(LTRIM(RTRIM(CAST([{{ col }}] AS NVARCHAR(50))))) IN ('1', 'TRUE', 'T', 'YES', 'Y') THEN '1'
+    WHEN UPPER(LTRIM(RTRIM(CAST([{{ col }}] AS NVARCHAR(50))))) IN ('0', 'FALSE', 'F', 'NO', 'N') THEN '0'
+    ELSE NULL
+END
+WHERE [{{ col }}] IS NOT NULL;
+{% endfor %}

@@ -1,0 +1,7 @@
+-- Step: {{ step_id }} ({{ description }})
+UPDATE [dbo].[{{ dataset_name }}_Staging]
+SET
+{% for col in columns %}
+    [{{ col }}] = {% if "trim" in fused_operations %}UPPER(RTRIM(LTRIM([{{ col }}]))){% else %}UPPER([{{ col }}]){% endif %}{% if not loop.last %},{% endif %}
+{% endfor %}
+;
