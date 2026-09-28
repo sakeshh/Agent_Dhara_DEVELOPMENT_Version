@@ -22,16 +22,30 @@ class SQLCodegenAgent(BaseCodegenAgent):
         dataset_transforms: Dict[str, str] = {}
         never_drop = context.options.get("never_drop_rows", False)
 
+        def _format_table(raw_name: str, suffix: str = "") -> str:
+            clean = raw_name.strip("[]")
+            if "." in clean:
+                parts = clean.split(".", 1)
+                schema = parts[0].strip("[]")
+                tbl = parts[1].strip("[]")
+            else:
+                schema = "dbo"
+                tbl = clean
+            return f"[{schema}].[{tbl}{suffix}]"
+
         for ds_name in physical_plan.dataset_names:
             steps = physical_plan.get_steps_for_dataset(ds_name)
             rendered_steps: List[str] = []
 
             # Add staging table preparation header
-            staging_table = f"[dbo].[{ds_name}_Staging]"
+            source_table = _format_table(ds_name)
+            staging_table = _format_table(ds_name, "_Staging")
+            clean_table = _format_table(ds_name, "_Clean")
+
             prep_ddl = (
                 f"-- Ensure Staging table exists\n"
                 f"IF OBJECT_ID('{staging_table}', 'U') IS NOT NULL DROP TABLE {staging_table};\n"
-                f"SELECT * INTO {staging_table} FROM [dbo].[{ds_name}];"
+                f"SELECT * INTO {staging_table} FROM {source_table};"
             )
             rendered_steps.append(prep_ddl)
 
@@ -42,6 +56,9 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 params["description"] = step.description or step.strategy_name
                 params["columns"] = step.target_columns
                 params["dataset_name"] = ds_name
+                params["source_table"] = source_table
+                params["staging_table"] = staging_table
+                params["clean_table"] = clean_table
                 params["never_drop_rows"] = never_drop
                 params["pipeline_id"] = physical_plan.plan_id
 
@@ -59,8 +76,8 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 cols_quoted = ",\n    ".join(f"[{c}]" for c in clean_columns)
                 projection_sql = (
                     f"-- Strict Final Clean Projection (Output Contract Conformance)\n"
-                    f"IF OBJECT_ID('[dbo].[{ds_name}_Clean]', 'U') IS NOT NULL DROP TABLE [dbo].[{ds_name}_Clean];\n"
-                    f"SELECT\n    {cols_quoted}\nINTO [dbo].[{ds_name}_Clean]\nFROM {staging_table};"
+                    f"IF OBJECT_ID('{clean_table}', 'U') IS NOT NULL DROP TABLE {clean_table};\n"
+                    f"SELECT\n    {cols_quoted}\nINTO {clean_table}\nFROM {staging_table};"
                 )
                 rendered_steps.append(projection_sql)
 
