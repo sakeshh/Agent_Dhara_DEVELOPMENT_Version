@@ -141,6 +141,34 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_db_ready(max_retries: int = 10, delay: float = 0.5) -> None:
+    """Block until the SQLite database is confirmed ready.
+
+    On Azure App Service, the /home/data directory may not be fully mounted
+    when the process starts. This retries the connection with an exponential
+    back-off to avoid the 'unable to open database file' race condition.
+    """
+    db_path = _db_path()
+    for attempt in range(max_retries):
+        try:
+            conn = sqlite3.connect(db_path, timeout=5)
+            conn.execute("SELECT 1")
+            conn.close()
+            logger.info(f"SQLite DB ready at: {db_path} (attempt {attempt + 1})")
+            return
+        except Exception as exc:
+            wait = delay * (attempt + 1)
+            logger.warning(
+                f"DB not ready yet (attempt {attempt + 1}/{max_retries}): {exc} — "
+                f"retrying in {wait:.1f}s"
+            )
+            time.sleep(wait)
+    logger.error(
+        f"SQLite DB at {db_path} not available after {max_retries} attempts. "
+        "Falling back to /tmp/jobs.sqlite3 — jobs will not persist across restarts."
+    )
+
+
 def create_job(*, kind: str, input: Dict[str, Any]) -> str:
     job_id = str(uuid.uuid4())
     now = time.time()
@@ -457,6 +485,40 @@ def requeue_stale_jobs(*, stale_after_seconds: int = 1800) -> int:
         count = cur.rowcount
         conn.commit()
         return count
+    finally:
+        conn.close()
+
+
+def recover_stale_claimed_jobs(*, stale_minutes: int = 5) -> int:
+    """Reset jobs stuck in 'running' from a previous crashed container to 'queued'."""
+    cutoff = time.time() - (stale_minutes * 60)
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'queued',
+                updated_at = ?,
+                current_stage = 'recovered',
+                error = 'Recovered from crashed/restarted container'
+            WHERE status = 'running'
+              AND updated_at < ?
+            """,
+            (time.time(), cutoff),
+        )
+        count = cur.rowcount
+        conn.commit()
+        if count:
+            logger.warning(
+                f"recover_stale_claimed_jobs: recovered {count} orphaned job(s) "
+                f"(stuck in 'running' for >{stale_minutes} min) — likely from a previous container crash."
+            )
+        else:
+            logger.info("recover_stale_claimed_jobs: no orphaned jobs found.")
+        return count
+    except Exception as exc:
+        logger.error(f"recover_stale_claimed_jobs failed: {exc}")
+        return 0
     finally:
         conn.close()
 
