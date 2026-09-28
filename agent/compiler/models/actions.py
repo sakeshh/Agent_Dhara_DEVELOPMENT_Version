@@ -3,9 +3,13 @@ from __future__ import annotations
 from enum import Enum
 import re
 from typing import Any, Dict, List, Literal, Optional, Type, Union
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agent.compiler.models.logical import ActionType
+
+
+class GenericActionParameters(BaseModel):
+    model_config = ConfigDict(extra="allow")
 
 
 class ActionSource(str, Enum):
@@ -280,5 +284,5 @@ class StructuredAction(BaseModel):
         param_cls = ACTION_PARAMETER_REGISTRY.get(self.action_type)
         if not param_cls:
             # For actions without a specialized parameter model, return a generic wrapper
-            return BaseModel()
+            return GenericActionParameters(**self.parameters)
         return param_cls.model_validate(self.parameters)

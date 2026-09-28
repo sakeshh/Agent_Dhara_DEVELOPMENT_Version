@@ -509,3 +509,91 @@ def test_logical_planner_boundary_strictly_blocks_naked_range_clip():
         planner.action_to_logical_step(naked_action, 0, {})
 
 
+def test_cast_type_without_target_type_is_not_emitted():
+    """Verify that CAST_TYPE without target_type is not emitted and routed cleanly."""
+    bridge = IngestionBridge(default_schema="dbo")
+    plan = {
+        "datasets": {
+            "dbo.Dhara_Employee": {
+                "steps": [
+                    {
+                        "action": "cast_type",
+                        "column": "Salary",
+                        "params": {},
+                    }
+                ]
+            }
+        }
+    }
+    assess = {"datasets": {}}
+
+    canonical_issues, b_rules, telemetry = bridge.extract_and_normalize(
+        assess=assess,
+        plan=plan,
+        known_datasets={"dbo.Dhara_Employee"},
+    )
+    detected_issues, structured_actions = bridge.bridge_to_compiler_models(canonical_issues)
+
+    assert not any(act.action_type == ActionType.CAST_TYPE for act in structured_actions)
+    assert telemetry["unsupported_missing_target_type_count"] == 1
+
+
+def test_cast_type_with_valid_target_type_is_emitted():
+    """Verify that CAST_TYPE with valid target_type is emitted properly."""
+    bridge = IngestionBridge(default_schema="dbo")
+    plan = {
+        "datasets": {
+            "dbo.Dhara_Employee": {
+                "steps": [
+                    {
+                        "action": "cast_type",
+                        "column": "Salary",
+                        "params": {"target_type": "DECIMAL(18,2)"},
+                    }
+                ]
+            }
+        }
+    }
+    assess = {"datasets": {}}
+
+    canonical_issues, b_rules, telemetry = bridge.extract_and_normalize(
+        assess=assess,
+        plan=plan,
+        known_datasets={"dbo.Dhara_Employee"},
+    )
+    detected_issues, structured_actions = bridge.bridge_to_compiler_models(canonical_issues)
+
+    cast_actions = [act for act in structured_actions if act.action_type == ActionType.CAST_TYPE]
+    assert len(cast_actions) == 1
+    assert cast_actions[0].parameters["target_type"] == "DECIMAL(18,2)"
+
+
+def test_malformed_action_is_intercepted_by_universal_guard():
+    """Verify that any action with invalid parameters failing Pydantic contract is dropped by universal guard."""
+    from agent.compiler.planners.ingestion_bridge import CanonicalIssue
+
+    bridge = IngestionBridge(default_schema="dbo")
+    # Manually construct a canonical issue that resolved to PATTERN_REPLACE but lacks required 'pattern'
+    bad_canonical = CanonicalIssue(
+        issue_id="bad_pattern_01",
+        dataset="dbo.Dhara_Employee",
+        raw_dataset="dbo.Dhara_Employee",
+        column="EmployeeName",
+        issue_type="regex_cleaning",
+        suggested_action="pattern_replace",
+        severity="medium",
+        parameters={},  # Missing required 'pattern'
+        source="plan_dataset_steps",
+        message="Bad pattern replace",
+        resolved_action=ActionType.PATTERN_REPLACE,
+        resolution_path="explicit_planned_action",
+    )
+
+    detected_issues, structured_actions = bridge.bridge_to_compiler_models([bad_canonical])
+
+    assert structured_actions == []
+    assert bad_canonical.resolved_action is None
+    assert "unsupported_invalid_parameters" in bad_canonical.resolution_path
+
+
+

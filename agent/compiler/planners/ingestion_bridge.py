@@ -427,6 +427,20 @@ class IngestionBridge:
                         if not final_params.get("approved"):
                             final_params["requires_approval"] = True
 
+            elif action == ActionType.CAST_TYPE:
+                target_type = (
+                    final_params.get("target_type")
+                    or final_params.get("to_type")
+                    or final_params.get("dtype")
+                    or final_params.get("data_type")
+                    or final_params.get("type")
+                )
+                if target_type and str(target_type).strip():
+                    final_params["target_type"] = str(target_type).strip()
+                else:
+                    action = None
+                    res_path = "unsupported_missing_target_type"
+
             elif action == ActionType.TRIM:
                 final_params.setdefault("side", "both")
 
@@ -682,6 +696,7 @@ class IngestionBridge:
 
         missing_range_bounds_count = sum(1 for iss in deduped if iss.resolution_path == "unsupported_missing_range_bounds")
         missing_target_cols_count = sum(1 for iss in deduped if iss.resolution_path == "unsupported_missing_target_columns")
+        missing_target_type_count = sum(1 for iss in deduped if iss.resolution_path == "unsupported_missing_target_type")
 
         telemetry = {
             "assessment_discovered_count": total_assessment_discovered,
@@ -693,6 +708,7 @@ class IngestionBridge:
             "unsupported_issue_count": len(unsupported_issues),
             "unsupported_missing_range_bounds_count": missing_range_bounds_count,
             "unsupported_missing_target_columns_count": missing_target_cols_count,
+            "unsupported_missing_target_type_count": missing_target_type_count,
             "manual_review_issue_count": len(manual_review_issues),
             "unsupported_issues": unsupported_issues,
             "manual_review_issues": manual_review_issues,
@@ -800,6 +816,18 @@ class IngestionBridge:
                         c_iss.resolution_path = "unsupported_missing_range_bounds"
                         continue
 
+                # DEFENSE IN DEPTH GUARD 3: Missing target_type for CAST_TYPE
+                if action == ActionType.CAST_TYPE:
+                    if not c_iss.parameters.get("target_type"):
+                        logger.warning(
+                            "[IngestionBridge] Dropping CAST_TYPE on %s.%s because target_type was not provided.",
+                            c_iss.dataset,
+                            cols,
+                        )
+                        c_iss.resolved_action = None
+                        c_iss.resolution_path = "unsupported_missing_target_type"
+                        continue
+
                 source_enum = ActionSource.ASSESSMENT
                 if c_iss.source.startswith("plan_"):
                     source_enum = ActionSource.CATALOG
@@ -818,6 +846,22 @@ class IngestionBridge:
                     requires_approval=bool(c_iss.parameters.get("requires_approval", False)),
                     metadata={"canonical_source": c_iss.source, "issue_type": c_iss.issue_type},
                 )
+
+                # UNIVERSAL DEFENSE IN DEPTH GUARD: Validate typed parameter contract before emission
+                try:
+                    s_action.get_typed_parameters()
+                except Exception as val_err:
+                    logger.warning(
+                        "[IngestionBridge] Dropping action '%s' on %s.%s due to invalid parameter contract: %s",
+                        action.value,
+                        c_iss.dataset,
+                        cols,
+                        val_err,
+                    )
+                    c_iss.resolved_action = None
+                    c_iss.resolution_path = f"unsupported_invalid_parameters:{action.value}"
+                    continue
+
                 structured_actions.append(s_action)
 
         return issues, structured_actions
