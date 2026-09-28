@@ -213,15 +213,63 @@ def _run_compiler_codegen(
             ds = iss.get("dataset") or (list(profiles.keys())[0] if profiles else "default")
             detected_issues.append(compiler.compile_raw_issue(iss, ds, idx))
 
-    compiler_ctx = CompilerContext(
-        session_id=session_id,
-        target_engine=target_eng,
-        cleaning_mode=clean_mode,
-        preserve_source_schema=True,
-        include_operational_metadata=False,
-        dataset_profiles=profiles,
-        detected_issues=detected_issues,
-    )
+    user_prompt = plan.get("user_prompt") or plan.get("description") or (flow.get("user_prompt") if flow else None)
+    if flags.llm_ir_planner_enabled and user_prompt:
+        from agent.ir import IrExtractor, IrNormalizer, IrValidator, IrFixer, IrBuilder
+        from agent.ir.semantic_validator import BusinessRuleValidator
+        from agent.router import IntentRouter, RouteTarget
+
+        # 1. Sub-millisecond Intent Routing
+        route_decision = IntentRouter.classify(user_prompt, profiles)
+        logger.info(
+            "[Router] Routed prompt '%s...' to %s (complexity=%s, confidence=%.2f, latency=%.2fms)",
+            user_prompt[:50],
+            route_decision.route.value,
+            route_decision.complexity.value,
+            route_decision.confidence,
+            route_decision.latency_ms,
+        )
+
+        # 2. Extract IR (Fast path compiler-direct bypasses LLM completely)
+        if route_decision.route == RouteTarget.COMPILER_DIRECT:
+            raw_ir = IrExtractor._heuristic_fallback_extract(user_prompt, profiles, session_id=session_id)
+            raw_ir.metadata.tags = ["compiler_direct"]
+        else:
+            raw_ir = IrExtractor.extract(user_prompt, profiles, session_id=session_id)
+            raw_ir.metadata.tags = [route_decision.route.value]
+
+        # 3. Normalize & Self-Healing Loop
+        norm_ir = IrNormalizer.normalize(raw_ir, profiles)
+        healed_ir, val_res, is_valid = IrFixer.heal_plan(norm_ir, profiles, max_attempts=2)
+
+        # 4. Semantic Business Rule Validation
+        semantic_val = BusinessRuleValidator.validate_semantics(healed_ir, profiles)
+        if not semantic_val.valid:
+            logger.warning("[SemanticValidator] Flagged semantic issues: %s", [e.message for e in semantic_val.errors])
+
+        # 5. Build Compiler Context
+        compiler_ctx = IrBuilder.build(
+            ir_plan=healed_ir,
+            session_id=session_id,
+            target_engine=target_eng,
+            existing_profiles=profiles,
+            cleaning_mode=clean_mode,
+        )
+        if compiler_ctx.metrics:
+            compiler_ctx.metrics.route_taken = route_decision.route.value
+            compiler_ctx.metrics.planner_latency_ms = route_decision.latency_ms
+
+        compiler_ctx.detected_issues.extend(detected_issues)
+    else:
+        compiler_ctx = CompilerContext(
+            session_id=session_id,
+            target_engine=target_eng,
+            cleaning_mode=clean_mode,
+            preserve_source_schema=True,
+            include_operational_metadata=False,
+            dataset_profiles=profiles,
+            detected_issues=detected_issues,
+        )
 
     if plan.get("cleaning_approval"):
         compiler_ctx.metadata["cleaning_approval"] = plan["cleaning_approval"]
@@ -234,6 +282,100 @@ def _run_compiler_codegen(
     flow["latest_snapshot_id"] = snapshot.snapshot_id
     if compiled_ctx.metadata.get("deployment_manifest"):
         flow["deployment_manifest"] = compiled_ctx.metadata["deployment_manifest"]
+
+    # Phase 7 & 7.5: Pre-Execution Validation & Cost Estimation
+    from agent.compiler.execution_validation import ExecutionValidator
+    exec_val = ExecutionValidator.validate(compiled_ctx)
+    flow["execution_validation"] = exec_val.model_dump()
+    flow["explain_plan"] = exec_val.explain_plan
+    flow["cost_estimate"] = exec_val.cost_estimate.model_dump()
+
+    # Phase 8: Pattern Learning Engine
+    # Persist Canonical IR, validation, cost estimate, and repair history for continuous learning
+    if flags.llm_ir_planner_enabled and "healed_ir" in locals():
+        try:
+            from agent.learning import get_pattern_learning_engine
+            learning_engine = get_pattern_learning_engine()
+            learned_rec = learning_engine.learn_from_compilation(
+                session_id=session_id,
+                user_prompt=user_prompt,
+                ir_plan=healed_ir,
+                validation_result=exec_val,
+                target_engine=target_eng.value,
+            )
+            flow["learned_pattern_id"] = learned_rec.pattern_id
+        except Exception as e:
+            logger.warning("[PatternLearningEngine] Failed to learn pattern: %s", e)
+
+    # Phase 9: Human Approval Workflow
+    # Mandatory approval gates for DROP, DELETE, TRUNCATE, MERGE DELETE, OVERWRITE
+    try:
+        from agent.governance import get_approval_engine, ApprovalStatus
+        approval_engine = get_approval_engine()
+        approval_decision = approval_engine.evaluate(
+            session_id=session_id,
+            code=code,
+            ir_plan=healed_ir if "healed_ir" in locals() else None,
+            pattern_id=flow.get("learned_pattern_id"),
+        )
+        flow["approval_decision"] = approval_decision.model_dump()
+        flow["requires_approval"] = (approval_decision.status == ApprovalStatus.PENDING)
+    except Exception as e:
+        logger.warning("[HumanApprovalEngine] Failed to evaluate approval: %s", e)
+
+    # Phase 10: OpenTelemetry Export
+    # Emits unified RouteMetrics, IRMetrics, CompilerMetrics, ApprovalMetrics, and ExecutionMetrics
+    try:
+        from agent.observability import (
+            get_opentelemetry_exporter,
+            RouteMetrics,
+            IRMetrics,
+            CompilerMetrics,
+            ApprovalMetrics,
+            ExecutionMetrics,
+        )
+        otel_exporter = get_opentelemetry_exporter()
+        route_meta = route_decision if "route_decision" in locals() else None
+        healed_plan = healed_ir if "healed_ir" in locals() else None
+
+        span = otel_exporter.create_span(
+            session_id=session_id,
+            route=RouteMetrics(
+                route_type=route_meta.route.value if route_meta else "compiler_direct",
+                route_latency_ms=route_meta.latency_ms if route_meta else 0.0,
+                planner_type="heuristic" if route_meta and route_meta.route.value == "compiler_direct" else "ir_compiler",
+                confidence=route_meta.confidence if route_meta else 1.0,
+            ),
+            ir=IRMetrics(
+                validation_count=len(healed_plan.metadata.repair_history) + 1 if healed_plan and healed_plan.metadata else 1,
+                repair_count=len(healed_plan.metadata.repair_history) if healed_plan and healed_plan.metadata else 0,
+                repair_success=True if healed_plan else False,
+                semantic_failures=0 if "semantic_val" in locals() and semantic_val.valid else 0,
+            ),
+            compiler=CompilerMetrics(
+                target=target_eng.value,
+                compile_time=compiled_ctx.metrics.total_compilation_time_ms / 1000.0 if compiled_ctx.metrics else 0.05,
+                artifact_size=len(code),
+                success=bool(code),
+            ),
+            approval=ApprovalMetrics(
+                approval_tier=approval_decision.approval_tier.value if "approval_decision" in locals() else "auto_approved",
+                approver=approval_decision.approver if "approval_decision" in locals() else None,
+                risk_level=approval_decision.risk_level.value if "approval_decision" in locals() else "low",
+                requires_human_gate=flow.get("requires_approval", False),
+            ),
+            execution=ExecutionMetrics(
+                runtime=0.0,
+                rows_processed=sum(p.row_count for p in profiles.values()) if profiles else 0,
+                cost_estimate=exec_val.cost_estimate.estimated_cost if "exec_val" in locals() else "low",
+                execution_success=True,
+                shuffle_operations=exec_val.cost_estimate.shuffle_operations if "exec_val" in locals() else 0,
+                confidence_score=exec_val.confidence_score if "exec_val" in locals() else 1.0,
+            ),
+        )
+        flow["telemetry_trace_id"] = span.trace_id
+    except Exception as e:
+        logger.warning("[OpenTelemetryExporter] Failed to record span: %s", e)
 
     return code, True, [], "compiler"
 

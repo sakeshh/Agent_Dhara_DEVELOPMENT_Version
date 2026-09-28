@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Dict, Optional, Type
+
+from agent.compiler.models.metrics import CompilerMetrics
 
 from agent.compiler.base.agent import BaseAgent
 from agent.compiler.base.validation import BaseValidationAgent
@@ -77,6 +80,7 @@ class CompilerPipeline:
 
     def compile(self, context: CompilerContext) -> tuple[CompilerContext, CompilerSnapshot]:
         """Runs the compilation lifecycle synchronously."""
+        t_compile_start = time.perf_counter()
         logger.info(f"Starting compiler pipeline for session '{context.session_id}' [target: {context.target_engine.value}]")
         logger.info("[CompilerPipeline] generation_path=deterministic_compiler")
 
@@ -145,5 +149,25 @@ class CompilerPipeline:
         snapshot = self.snapshot_store.create_snapshot(context)
         context.metadata["latest_snapshot_id"] = snapshot.snapshot_id
 
-        logger.info(f"Compilation finished for session '{context.session_id}' (snapshot: {snapshot.snapshot_id})")
+        # 14. Record Compiler Observability Metrics
+        compile_latency = round((time.perf_counter() - t_compile_start) * 1000, 2)
+        if context.metrics:
+            context.metrics.compile_latency_ms = compile_latency
+            context.metrics.total_latency_ms = round(
+                context.metrics.planner_latency_ms
+                + context.metrics.validation_latency_ms
+                + context.metrics.repair_latency_ms
+                + compile_latency,
+                2,
+            )
+            context.metrics.success = True
+        else:
+            context.metrics = CompilerMetrics(
+                compile_latency_ms=compile_latency,
+                total_latency_ms=compile_latency,
+                target_language=context.target_engine.value,
+                success=True,
+            )
+
+        logger.info(f"Compilation finished for session '{context.session_id}' (snapshot: {snapshot.snapshot_id}, latency: {compile_latency}ms)")
         return context, snapshot

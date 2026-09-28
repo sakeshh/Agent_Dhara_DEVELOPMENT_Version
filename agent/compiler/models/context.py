@@ -12,6 +12,8 @@ from agent.compiler.models.artifacts import CodeArtifact, ArtifactManifest
 from agent.compiler.models.validation import ValidationResult
 from agent.compiler.models.cleaning import CleaningMode
 
+from agent.compiler.models.metrics import CompilerMetrics
+
 
 class CompilerContext(BaseModel):
     session_id: str = "default"
@@ -27,6 +29,7 @@ class CompilerContext(BaseModel):
     code_artifact: Optional[CodeArtifact] = None
     validation_result: Optional[ValidationResult] = None
     artifact_manifest: Optional[ArtifactManifest] = None
+    metrics: Optional[CompilerMetrics] = None
     options: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
