@@ -15,6 +15,7 @@ class ActionSource(str, Enum):
     CATALOG = "catalog"
     PROMOTED_RULE = "promoted_rule"
     USER_OVERRIDE = "user_override"
+    TIER3 = "tier3"
 
 
 # ==============================================================================
@@ -121,13 +122,17 @@ class StructuredCondition(BaseModel):
 
 
 class ConditionalUpdateParameters(BaseModel):
-    condition: Union[StructuredCondition, Dict[str, Any], str] = Field(..., description="Structured condition or safe comparison predicate")
-    new_value: Any = Field(..., description="Value or expression when condition is true")
+    condition: Optional[Union[StructuredCondition, Dict[str, Any], str]] = Field(default=None, description="Structured condition or safe comparison predicate")
+    condition_ast: Optional[Dict[str, Any]] = Field(default=None, description="Condition AST dict conforming to ConditionAstNode")
+    new_value: Optional[Any] = Field(default=None, description="Value or expression when condition is true")
     else_value: Optional[Any] = Field(default=None, description="Value or expression when condition is false (None retains existing column)")
+    disposition: Optional[str] = Field(default=None, description="Remediation disposition")
 
     @field_validator("condition")
     @classmethod
-    def validate_condition(cls, v: Union[StructuredCondition, Dict[str, Any], str]) -> Union[StructuredCondition, Dict[str, Any], str]:
+    def validate_condition(cls, v: Optional[Union[StructuredCondition, Dict[str, Any], str]]) -> Optional[Union[StructuredCondition, Dict[str, Any], str]]:
+        if v is None:
+            return v
         if isinstance(v, str):
             if not v or not v.strip():
                 raise ValueError("condition cannot be empty")
@@ -137,6 +142,12 @@ class ConditionalUpdateParameters(BaseModel):
                 raise ValueError("Structured condition dict must specify 'column'")
             return v
         return v
+
+    @model_validator(mode="after")
+    def validate_condition_presence(self) -> ConditionalUpdateParameters:
+        if self.condition is None and self.condition_ast is None:
+            raise ValueError("ConditionalUpdateParameters requires either 'condition' or 'condition_ast'.")
+        return self
 
 
 # --- Level 1 Deterministic Operators ---

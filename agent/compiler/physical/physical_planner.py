@@ -80,7 +80,12 @@ class PhysicalPlanner(BaseAgent):
         import re
 
         template_params = dict(step.parameters)
-        template_params["columns"] = step.target_columns
+        cols = list(step.target_columns)
+        if step.action == ActionType.DEDUPLICATE and not cols:
+            sub = step.parameters.get("subset_columns") or step.parameters.get("keys") or step.parameters.get("candidate_keys") or []
+            if isinstance(sub, list):
+                cols = [c for c in sub if c and str(c).strip().strip("[]").lower() not in ("row-level", "table-level", "*", "")]
+        template_params["columns"] = cols
         template_params["dataset_name"] = step.dataset_name
         template_params["fused_operations"] = [op.value for op in step.fused_operations]
         step_meta = getattr(step, "metadata", {}) or {}
@@ -110,64 +115,69 @@ class PhysicalPlanner(BaseAgent):
 
             elif step.action == ActionType.CONDITIONAL_UPDATE:
                 from agent.compiler.templates.engine import render_literal
-                raw_cond = step.parameters.get("condition")
+                from agent.compiler.renderers.sql_expression_renderer import SqlExpressionRenderer
 
-                if isinstance(raw_cond, dict):
-                    col = str(raw_cond.get("column") or "").strip().replace("[", "").replace("]", "")
-                    raw_op = raw_cond.get("operator") or "EQ"
-                    if hasattr(raw_op, "value"):
-                        op = str(raw_op.value).upper().strip()
-                    elif "." in str(raw_op):
-                        op = str(raw_op).split(".")[-1].upper().strip()
-                    else:
-                        op = str(raw_op).upper().strip()
-                    val = raw_cond.get("value")
-                    op_map = {
-                        "EQ": "=", "NEQ": "<>", "IS_NULL": "IS NULL", "IS_NOT_NULL": "IS NOT NULL",
-                        "GT": ">", "LT": "<", "GTE": ">=", "LTE": "<=", "LIKE": "LIKE"
-                    }
-                    if not col or op not in op_map:
-                        raise UnsupportedCapabilityError(
-                            f"Invalid structured condition operator '{op}' or missing column in conditional_update.",
-                            engine="sql", action="conditional_update"
-                        )
-                    sql_op = op_map[op]
-                    if sql_op in ("IS NULL", "IS NOT NULL"):
-                        sql_cond = f"[{col}] {sql_op}"
-                    else:
-                        sql_cond = f"[{col}] {sql_op} {render_literal(val)}"
-                elif isinstance(raw_cond, str):
-                    forbidden = [";", "--", "/*", "DROP", "ALTER", "EXEC", "DELETE", "TRUNCATE", "INSERT"]
-                    if any(f in raw_cond.upper() for f in forbidden):
-                        raise UnsupportedCapabilityError(
-                            f"Azure SQL conditional_update rejects arbitrary unvalidated expression '{raw_cond}'.",
-                            engine="sql", action="conditional_update"
-                        )
-                    safe_pat = r"^\s*\[?([a-zA-Z0-9_]+)\]?\s+(IS\s+NULL|IS\s+NOT\s+NULL|=|<>|!=|>|<|>=|<=|LIKE)\s*(.*)$"
-                    m = re.match(safe_pat, raw_cond.strip(), re.IGNORECASE)
-                    if not m:
-                        raise UnsupportedCapabilityError(
-                            f"Azure SQL conditional_update rejects arbitrary expression '{raw_cond}'. "
-                            f"Use structured condition {{column, operator, value}} or simple predicate '[col] = val'.",
-                            engine="sql", action="conditional_update"
-                        )
-                    col_name = m.group(1)
-                    op_str = m.group(2).upper()
-                    val_part = m.group(3).strip()
-                    if op_str in ("IS NULL", "IS NOT NULL"):
-                        sql_cond = f"[{col_name}] {op_str}"
-                    else:
-                        if (val_part.startswith("'") and val_part.endswith("'")) or (val_part.startswith('"') and val_part.endswith('"')):
-                            val_to_render = val_part[1:-1]
-                        elif re.match(r"^-?\d+$", val_part):
-                            val_to_render = int(val_part)
-                        elif re.match(r"^-?\d+\.\d+$", val_part):
-                            val_to_render = float(val_part)
-                        else:
-                            val_to_render = val_part
-                        sql_cond = f"[{col_name}] {op_str} {render_literal(val_to_render)}"
+                if step.parameters.get("condition_ast"):
+                    sql_cond = SqlExpressionRenderer().render(step.parameters["condition_ast"])
                 else:
-                    raise UnsupportedCapabilityError("Conditional update requires a valid condition.", engine="sql", action="conditional_update")
+                    raw_cond = step.parameters.get("condition")
+
+                    if isinstance(raw_cond, dict):
+                        col = str(raw_cond.get("column") or "").strip().replace("[", "").replace("]", "")
+                        raw_op = raw_cond.get("operator") or "EQ"
+                        if hasattr(raw_op, "value"):
+                            op = str(raw_op.value).upper().strip()
+                        elif "." in str(raw_op):
+                            op = str(raw_op).split(".")[-1].upper().strip()
+                        else:
+                            op = str(raw_op).upper().strip()
+                        val = raw_cond.get("value")
+                        op_map = {
+                            "EQ": "=", "NEQ": "<>", "IS_NULL": "IS NULL", "IS_NOT_NULL": "IS NOT NULL",
+                            "GT": ">", "LT": "<", "GTE": ">=", "LTE": "<=", "LIKE": "LIKE"
+                        }
+                        if not col or op not in op_map:
+                            raise UnsupportedCapabilityError(
+                                f"Invalid structured condition operator '{op}' or missing column in conditional_update.",
+                                engine="sql", action="conditional_update"
+                            )
+                        sql_op = op_map[op]
+                        if sql_op in ("IS NULL", "IS NOT NULL"):
+                            sql_cond = f"[{col}] {sql_op}"
+                        else:
+                            sql_cond = f"[{col}] {sql_op} {render_literal(val)}"
+                    elif isinstance(raw_cond, str):
+                        forbidden = [";", "--", "/*", "DROP", "ALTER", "EXEC", "DELETE", "TRUNCATE", "INSERT"]
+                        if any(f in raw_cond.upper() for f in forbidden):
+                            raise UnsupportedCapabilityError(
+                                f"Azure SQL conditional_update rejects arbitrary unvalidated expression '{raw_cond}'.",
+                                engine="sql", action="conditional_update"
+                            )
+                        safe_pat = r"^\s*\[?([a-zA-Z0-9_]+)\]?\s+(IS\s+NULL|IS\s+NOT\s+NULL|=|<>|!=|>|<|>=|<=|LIKE)\s*(.*)$"
+                        m = re.match(safe_pat, raw_cond.strip(), re.IGNORECASE)
+                        if not m:
+                            raise UnsupportedCapabilityError(
+                                f"Azure SQL conditional_update rejects arbitrary expression '{raw_cond}'. "
+                                f"Use structured condition {{column, operator, value}} or simple predicate '[col] = val'.",
+                                engine="sql", action="conditional_update"
+                            )
+                        col_name = m.group(1)
+                        op_str = m.group(2).upper()
+                        val_part = m.group(3).strip()
+                        if op_str in ("IS NULL", "IS NOT NULL"):
+                            sql_cond = f"[{col_name}] {op_str}"
+                        else:
+                            if (val_part.startswith("'") and val_part.endswith("'")) or (val_part.startswith('"') and val_part.endswith('"')):
+                                val_to_render = val_part[1:-1]
+                            elif re.match(r"^-?\d+$", val_part):
+                                val_to_render = int(val_part)
+                            elif re.match(r"^-?\d+\.\d+$", val_part):
+                                val_to_render = float(val_part)
+                            else:
+                                val_to_render = val_part
+                            sql_cond = f"[{col_name}] {op_str} {render_literal(val_to_render)}"
+                    else:
+                        raise UnsupportedCapabilityError("Conditional update requires a valid condition.", engine="sql", action="conditional_update")
 
                 template_params["sql_condition"] = sql_cond
                 template_params["rendered_new_value"] = render_literal(step.parameters.get("new_value"))

@@ -111,7 +111,7 @@ class LogicalPlanner(BaseAgent):
             requires_user_approval=action.requires_approval,
             source_action_id=source_act_id,
             source_issue_ids=source_issues,
-            description=f"Apply {action.action_type.value} on {', '.join(action.target_columns)}",
+            description=f"Apply {action.action_type.value} on {', '.join(action.target_columns) if action.target_columns else action.dataset_name}",
             depends_on_step_ids=deps,
             source=action.source.value if action.source else None,
             source_reference=action.source_reference,

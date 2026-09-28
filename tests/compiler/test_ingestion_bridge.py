@@ -248,3 +248,80 @@ def test_diagnostic_context_and_mapping():
     unsupported_names = [u["issue_type"] for u in telemetry["unsupported_issues"]]
     assert "circular_management_reference" in unsupported_names
     assert "complex_vat_checksum_failure" in unsupported_names
+
+
+def test_row_level_deduplicate_with_pseudo_column_compiles_successfully():
+    """Verify that a row-level deduplicate step marked with [Row-level] pseudo-column
+    does NOT fail schema validation with ACTION_UNKNOWN_COLUMN and compiles cleanly.
+    """
+    from agent.compiler.compiler_pipeline import CompilerPipeline
+    from agent.compiler.models import ColumnProfile, CompilerContext, DatasetProfile, ExecutionEngine
+
+    bridge = IngestionBridge(default_schema="dbo")
+
+    plan = {
+        "datasets": {
+            "dbo.Dhara_EmployeeStatusHistory": {
+                "steps": [
+                    {
+                        "action": "deduplicate",
+                        "column": "[Row-level]",
+                        "params": {
+                            "keys": ["EmployeeID", "StatusEventID", "ReasonCode"]
+                        },
+                        "order": 1,
+                    }
+                ]
+            }
+        }
+    }
+    assess = {"datasets": {"dbo.Dhara_EmployeeStatusHistory": {"columns": {}}}}
+
+    canonical_issues, b_rules, telemetry = bridge.extract_and_normalize(
+        assess=assess,
+        plan=plan,
+        known_datasets={"dbo.Dhara_EmployeeStatusHistory"},
+    )
+    detected_issues, structured_actions = bridge.bridge_to_compiler_models(canonical_issues)
+
+    assert len(structured_actions) == 1
+    act = structured_actions[0]
+    assert act.action_type == ActionType.DEDUPLICATE
+    # Target columns must be the candidate keys, not "[Row-level]"
+    assert "Row-level" not in act.target_columns
+    assert "[Row-level]" not in act.target_columns
+    assert act.target_columns == ["EmployeeID", "StatusEventID", "ReasonCode"]
+
+    # Active dataset profile has real database columns
+    dataset_prof = DatasetProfile(
+        dataset_name="dbo.Dhara_EmployeeStatusHistory",
+        dataset_id="dbo.Dhara_EmployeeStatusHistory",
+        columns={
+            "StatusHistoryRowID": ColumnProfile(name="StatusHistoryRowID", dtype="int"),
+            "EmployeeID": ColumnProfile(name="EmployeeID", dtype="int"),
+            "StatusEventID": ColumnProfile(name="StatusEventID", dtype="int"),
+            "EffectiveFrom": ColumnProfile(name="EffectiveFrom", dtype="date"),
+            "ChangedAt": ColumnProfile(name="ChangedAt", dtype="date"),
+            "ChangedBy": ColumnProfile(name="ChangedBy", dtype="string"),
+            "ReasonCode": ColumnProfile(name="ReasonCode", dtype="string"),
+        },
+    )
+
+    ctx = CompilerContext(
+        session_id="test_row_level_dedup",
+        target_engine=ExecutionEngine.AZURE_SQL,
+        dataset_profiles={"dbo.Dhara_EmployeeStatusHistory": dataset_prof},
+        detected_issues=detected_issues,
+        structured_actions=structured_actions,
+        business_rules=b_rules,
+    )
+
+    pipeline = CompilerPipeline()
+    compiled_ctx, snapshot = pipeline.compile(ctx)
+
+    assert compiled_ctx.code_artifact is not None
+    sql_code = compiled_ctx.code_artifact.content
+    assert "PARTITION BY [EmployeeID], [StatusEventID], [ReasonCode]" in sql_code
+    assert "[Row-level]" not in sql_code
+    assert "Row-level" not in sql_code
+

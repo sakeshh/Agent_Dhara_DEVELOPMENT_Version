@@ -38,6 +38,12 @@ class IngestionBridge:
     into canonical Issue and StructuredAction models for the CompilerPipeline.
     """
 
+    PSEUDO_COLUMNS: Set[str] = {
+        "row-level", "[row-level]", "table-level", "[table-level]",
+        "dataset-level", "[dataset-level]", "dataset", "table",
+        "unknown", "none", "null", "all", "[all]", "-", "global", "*", "[*]", ""
+    }
+
     # Tier 1 & 2 Action mapping
     EXPLICIT_ACTION_MAP: Dict[str, ActionType] = {
         "trim": ActionType.TRIM,
@@ -298,7 +304,14 @@ class IngestionBridge:
             explicit_act: Optional[str] = None,
         ):
             norm_ds = self.normalize_dataset_name(ds_name, known_datasets=known_datasets)
-            col_clean = str(col).strip("[]") if col else None
+            if col:
+                col_str = str(col).strip()
+                if col_str.lower() in self.PSEUDO_COLUMNS or col_str.strip("[]").lower() in self.PSEUDO_COLUMNS:
+                    col_clean = None
+                else:
+                    col_clean = col_str.strip("[]")
+            else:
+                col_clean = None
             iss_id = f"iss_{norm_ds}_{col_clean or 'global'}_{len(raw_issues) + 1}"
             
             action, res_path = self.resolve_action(
@@ -700,6 +713,36 @@ class IngestionBridge:
                 # Referential integrity actions use child_key from parameters if column is missing
                 if action == ActionType.VALIDATE_REFERENTIAL_INTEGRITY and not cols and c_iss.parameters.get("child_key"):
                     cols = [c_iss.parameters["child_key"]]
+
+                # Handle composite column strings (e.g., "EmployeeID, EffectiveFrom")
+                if cols and "," in cols[0]:
+                    cols = [c.strip().strip("[]") for c in cols[0].split(",") if c.strip()]
+
+                # Filter out pseudo-column markers from target_columns
+                cols = [
+                    c for c in cols
+                    if c and str(c).strip().lower() not in self.PSEUDO_COLUMNS and str(c).strip("[]").lower() not in self.PSEUDO_COLUMNS
+                ]
+
+                # Deduplicate actions: if target_columns is empty, auto-assign from parameters keys/subset_columns
+                if action == ActionType.DEDUPLICATE:
+                    if not cols:
+                        candidate_keys = (
+                            c_iss.parameters.get("subset_columns")
+                            or c_iss.parameters.get("keys")
+                            or c_iss.parameters.get("candidate_keys")
+                            or c_iss.parameters.get("column_keys")
+                            or []
+                        )
+                        if isinstance(candidate_keys, str):
+                            candidate_keys = [k.strip().strip("[]") for k in candidate_keys.split(",") if k.strip()]
+                        if isinstance(candidate_keys, (list, tuple)):
+                            cols = [
+                                k for k in candidate_keys
+                                if k and str(k).strip().lower() not in self.PSEUDO_COLUMNS and str(k).strip("[]").lower() not in self.PSEUDO_COLUMNS
+                            ]
+                    # Ensure parameters have subset_columns set
+                    c_iss.parameters["subset_columns"] = list(cols)
 
                 source_enum = ActionSource.ASSESSMENT
                 if c_iss.source.startswith("plan_"):

@@ -39,6 +39,12 @@ class ActionValidator:
       Layer 5: Engine Capability Validation (engine support for requested action)
     """
 
+    PSEUDO_COLUMNS: Set[str] = {
+        "row-level", "[row-level]", "table-level", "[table-level]",
+        "dataset-level", "[dataset-level]", "dataset", "table",
+        "unknown", "none", "null", "all", "[all]", "-", "global", "*", "[*]", ""
+    }
+
     STRING_OPS: Set[ActionType] = {
         ActionType.PREFIX_ADD,
         ActionType.SUFFIX_ADD,
@@ -218,6 +224,9 @@ class ActionValidator:
 
         existing_cols = set(profile.columns.keys())
         for col in action.target_columns:
+            clean_col = str(col).strip().strip("[]").lower()
+            if action.action_type in (ActionType.DEDUPLICATE, ActionType.VALIDATE_REFERENTIAL_INTEGRITY) and clean_col in self.PSEUDO_COLUMNS:
+                continue
             if col not in existing_cols:
                 issues.append(
                     DiagnosticIssue(
@@ -242,6 +251,8 @@ class ActionValidator:
             return issues
 
         for col in action.target_columns:
+            if str(col).strip().strip("[]").lower() in self.PSEUDO_COLUMNS:
+                continue
             col_prof = profile.get_column(col)
             if not col_prof:
                 continue

@@ -3,7 +3,7 @@
 WITH [DedupCTE] AS (
     SELECT *,
            ROW_NUMBER() OVER (
-               PARTITION BY {% for col in columns %}[{{ col }}]{% if not loop.last %}, {% endif %}{% endfor %}
+               {% if columns %}PARTITION BY {% for col in columns %}[{{ col }}]{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
                ORDER BY {{ survivor_order | default(order_by_clause) | default("[" ~ columns[0] ~ "] ASC" if columns else "(SELECT 1)") }}
            ) AS [__duplicate_rank]
     FROM {{ target_table }}
