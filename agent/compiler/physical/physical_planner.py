@@ -114,7 +114,13 @@ class PhysicalPlanner(BaseAgent):
 
                 if isinstance(raw_cond, dict):
                     col = str(raw_cond.get("column") or "").strip().replace("[", "").replace("]", "")
-                    op = str(raw_cond.get("operator") or "EQ").upper().strip()
+                    raw_op = raw_cond.get("operator") or "EQ"
+                    if hasattr(raw_op, "value"):
+                        op = str(raw_op.value).upper().strip()
+                    elif "." in str(raw_op):
+                        op = str(raw_op).split(".")[-1].upper().strip()
+                    else:
+                        op = str(raw_op).upper().strip()
                     val = raw_cond.get("value")
                     op_map = {
                         "EQ": "=", "NEQ": "<>", "IS_NULL": "IS NULL", "IS_NOT_NULL": "IS NOT NULL",

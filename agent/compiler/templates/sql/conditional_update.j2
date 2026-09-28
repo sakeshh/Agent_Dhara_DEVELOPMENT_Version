@@ -1,4 +1,28 @@
 -- Step: {{ step_id }} ({{ description }})
+{% set disp = disposition | default('CORRECT') | upper %}
+{% if disp == 'REJECT' and not never_drop_rows %}
+-- 1. Quarantine / Reject rows matching condition
+INSERT INTO [ETL_REJECT].[Rejection_Log] (
+    [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
+)
+SELECT 
+    @PipelineId,
+    @RunId,
+    '{{ dataset_name }}',
+    '{{ issue_id | default("") }}',
+    '{{ step_id }}',
+    '{{ columns | join(", ") }}',
+    'Conditional rule violation: {{ description | default(sql_condition) }}',
+    'REJECT',
+    CAST(s.[{{ columns[0] }}] AS NVARCHAR(MAX)),
+    (SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+FROM [dbo].[{{ dataset_name }}_Staging] s
+WHERE {{ sql_condition }};
+
+DELETE FROM [dbo].[{{ dataset_name }}_Staging]
+WHERE {{ sql_condition }};
+
+{% else %}
 UPDATE [dbo].[{{ dataset_name }}_Staging]
 SET
 {% for col in columns %}
@@ -12,3 +36,4 @@ SET
     END{% if not loop.last %},{% endif %}
 {% endfor %}
 ;
+{% endif %}

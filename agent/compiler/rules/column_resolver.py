@@ -24,12 +24,15 @@ class ColumnResolver:
     def resolve_column(
         cls, candidate_token: str, available_columns: List[str]
     ) -> Optional[str]:
-        if not candidate_token or not available_columns:
+        if not candidate_token:
             return None
 
         cand_raw = candidate_token.strip().replace("[", "").replace("]", "")
         if not cand_raw:
             return None
+
+        if not available_columns:
+            return cand_raw
 
         # 1. Exact match (case-sensitive)
         if cand_raw in available_columns:

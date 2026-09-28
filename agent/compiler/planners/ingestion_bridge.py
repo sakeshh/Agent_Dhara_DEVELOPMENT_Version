@@ -305,6 +305,18 @@ class IngestionBridge:
                 message=msg,
             )
 
+            # Parameter enrichment for Tier 2 decomposable primitives
+            final_params = dict(params)
+            if action == ActionType.RANGE_CLIP:
+                if "min_value" not in final_params and "max_value" not in final_params:
+                    if any(w in itype.lower() for w in ("negative", "non_negative", "min_zero")):
+                        final_params["min_value"] = 0.0
+            elif action == ActionType.REPLACE_SENTINELS:
+                if "sentinel_values" not in final_params:
+                    final_params["sentinel_values"] = ['NA', 'N/A', 'NULL', 'None', '-999', '?', '-', 'UNKNOWN']
+            elif action == ActionType.TRIM:
+                final_params.setdefault("side", "both")
+
             raw_issues.append(
                 CanonicalIssue(
                     issue_id=iss_id,
@@ -314,7 +326,7 @@ class IngestionBridge:
                     issue_type=itype,
                     suggested_action=sug,
                     severity=sev,
-                    parameters=dict(params),
+                    parameters=final_params,
                     source=source,
                     rule_id=rule_id,
                     message=msg,
@@ -438,11 +450,35 @@ class IngestionBridge:
                     )
 
         # ── 5. plan["domain_rules"] ───────────────────────────────────────────
+        from agent.compiler.rules.decomposer import RuleDecomposer
+        from agent.compiler.rules.models import DecompositionStatus
+        decomposer = RuleDecomposer()
+
         for rule_k, rule_data in (plan.get("domain_rules") or {}).items():
             if isinstance(rule_data, dict):
                 ds = rule_data.get("dataset") or (rule_k.split(".")[0] if "." in rule_k else "")
                 col = rule_data.get("column") or (rule_k.split(".")[1] if "." in rule_k else None)
                 norm_ds = self.normalize_dataset_name(ds, known_datasets=known_datasets)
+                rule_text = rule_data.get("rule") or rule_data.get("expression") or rule_data.get("text") or rule_data.get("description") or ""
+
+                # Tier 2: Decompose business rule text into StructuredActions
+                if rule_text:
+                    decomp_res = decomposer.decompose(rule_text, norm_ds)
+                    if decomp_res.status == DecompositionStatus.RESOLVED and decomp_res.actions:
+                        for act in decomp_res.actions:
+                            _add_raw(
+                                ds_name=norm_ds,
+                                col=act.target_columns[0] if act.target_columns else col,
+                                itype=f"rule_{act.action_type.value}",
+                                sug=act.action_type.value,
+                                sev="medium",
+                                params=dict(act.parameters),
+                                source="plan_domain_rules_decomposed",
+                                msg=rule_text,
+                                rule_id=rule_k,
+                                explicit_act=act.action_type.value,
+                            )
+
                 b_rule = BusinessRule(
                     rule_id=rule_data.get("rule_id") or rule_k,
                     name=rule_data.get("name") or rule_k,

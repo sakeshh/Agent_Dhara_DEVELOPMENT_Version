@@ -314,3 +314,91 @@ class TestPhase3RuleDecomposition:
         assert val_result.is_valid is True
         assert val_result.error_count == 0
         assert not val_result.has_blocking_errors
+
+    def test_16_ingestion_bridge_domain_rule_decomposition_e2e(self, sample_dataset_profiles):
+        """Test 16: IngestionBridge decomposes domain rules and enriches range params end-to-end."""
+        from agent.compiler.compiler_pipeline import CompilerPipeline
+        from agent.compiler.planners.ingestion_bridge import IngestionBridge
+
+        bridge = IngestionBridge(default_schema="dbo")
+
+        # 1. Assessment finding: negative_values without explicit min_value parameter
+        assessment = {
+            "data_quality_issues": {
+                "datasets": {
+                    "Employees": {
+                        "issues": [
+                            {
+                                "column": "Salary",
+                                "issue_type": "negative_values",
+                                "severity": "high",
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+
+        # 2. Plan domain rule: textual condition
+        plan = {
+            "domain_rules": {
+                "rule_contractor_type": {
+                    "dataset": "Employees",
+                    "column": "EmployeeType",
+                    "rule": "If Department equals Contractor, set EmployeeType to External",
+                }
+            }
+        }
+
+        # Enrich sample profiles with Salary column
+        profiles = dict(sample_dataset_profiles)
+        profiles["Employees"].columns["Salary"] = ColumnProfile(name="Salary", dtype="float")
+
+        canonical_issues, b_rules, telemetry = bridge.extract_and_normalize(
+            assess=assessment,
+            plan=plan,
+            known_datasets=set(profiles.keys()),
+        )
+        detected_issues, structured_actions = bridge.bridge_to_compiler_models(canonical_issues)
+
+        # Both the negative_values and the decomposed domain rule are mapped
+        assert len(structured_actions) == 2
+        act_types = {a.action_type for a in structured_actions}
+        assert ActionType.RANGE_CLIP in act_types
+        assert ActionType.CONDITIONAL_UPDATE in act_types
+
+        # Verify RANGE_CLIP received enriched min_value=0.0
+        range_act = next(a for a in structured_actions if a.action_type == ActionType.RANGE_CLIP)
+        assert range_act.parameters.get("min_value") == 0.0
+
+        # Verify CONDITIONAL_UPDATE received structured condition
+        cond_act = next(a for a in structured_actions if a.action_type == ActionType.CONDITIONAL_UPDATE)
+        assert cond_act.parameters["condition"]["column"] == "Department"
+        assert cond_act.parameters["condition"]["operator"] == "EQ"
+        assert cond_act.parameters["condition"]["value"] == "Contractor"
+        assert cond_act.parameters["new_value"] == "External"
+
+        # 3. Compile full pipeline
+        ctx = CompilerContext(
+            session_id="tier2_e2e_session",
+            target_engine=ExecutionEngine.AZURE_SQL,
+            dataset_profiles=profiles,
+            detected_issues=detected_issues,
+            structured_actions=structured_actions,
+            business_rules=b_rules,
+        )
+        ctx.metadata["ingestion_telemetry"] = telemetry
+
+        pipeline = CompilerPipeline()
+        compiled_ctx, _ = pipeline.compile(ctx)
+        sql = compiled_ctx.code_artifact.content
+        comp_telem = compiled_ctx.metadata["compilation_telemetry"]
+
+        assert comp_telem["ok"] is True
+        assert comp_telem["executable"] is True
+        assert comp_telem["rendered_transformation_count"] == 2
+
+        # Verify generated SQL contains both rendered transformations
+        assert "WHEN [Salary] < 0.0 THEN 0.0" in sql
+        assert "WHEN [Department] = N'Contractor' THEN N'External'" in sql
+
