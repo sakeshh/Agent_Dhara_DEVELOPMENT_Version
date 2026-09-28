@@ -58,7 +58,7 @@ class FeatureFlags:
         self.legacy_llm_codegen_enabled: bool = _env_bool("LEGACY_LLM_CODEGEN_ENABLED", False)
         self.allow_llm_direct_execution: bool = _env_bool("ALLOW_LLM_DIRECT_EXECUTION", False)
         self.cleaning_default_mode: str = os.environ.get("CLEANING_DEFAULT_MODE", "cleanse_with_audit").strip().lower()
-        self.llm_ir_planner_enabled: bool = _env_bool("DHARA_LLM_IR_PLANNER", False)
+        self.llm_ir_planner_enabled: bool = _env_bool("DHARA_LLM_IR_PLANNER", True)
 
         self._log_startup()
 

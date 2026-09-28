@@ -10,6 +10,7 @@ class CompilerMetrics(BaseModel):
     validation_latency_ms: float = 0.0
     repair_latency_ms: float = 0.0
     compile_latency_ms: float = 0.0
+    total_compilation_time_ms: float = 0.0
     total_latency_ms: float = 0.0
     target_language: str = "sql"
     route_taken: str = "compiler_direct"  # "compiler_direct" | "llm_ir_planner" | "multi_agent_planner"

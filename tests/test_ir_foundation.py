@@ -223,9 +223,15 @@ def test_schema_cache_operations():
 
 
 def test_feature_flag_llm_ir_planner():
-    flags = FeatureFlags()
-    assert hasattr(flags, "llm_ir_planner_enabled")
-    assert flags.llm_ir_planner_enabled is False  # Safe default
+    import os
+    os.environ["DHARA_LLM_IR_PLANNER"] = "false"
+    flags_off = FeatureFlags()
+    assert hasattr(flags_off, "llm_ir_planner_enabled")
+    assert flags_off.llm_ir_planner_enabled is False
+
+    os.environ["DHARA_LLM_IR_PLANNER"] = "true"
+    flags_on = FeatureFlags()
+    assert flags_on.llm_ir_planner_enabled is True
 
 
 def test_ir_to_compiler_pipeline_roundtrip():

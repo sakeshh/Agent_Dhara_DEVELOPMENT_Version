@@ -213,8 +213,21 @@ def _run_compiler_codegen(
             ds = iss.get("dataset") or (list(profiles.keys())[0] if profiles else "default")
             detected_issues.append(compiler.compile_raw_issue(iss, ds, idx))
 
-    user_prompt = plan.get("user_prompt") or plan.get("description") or (flow.get("user_prompt") if flow else None)
+    # Extract user prompt from all possible request and session locations
+    biz_rules = plan.get("business_rules") or flow.get("business_rules") or {}
+    user_prompt = (
+        plan.get("user_prompt")
+        or plan.get("description")
+        or plan.get("notes")
+        or (flow.get("user_prompt") if flow else None)
+        or (biz_rules.get("user_prompt") if isinstance(biz_rules, dict) else None)
+        or (biz_rules.get("notes") if isinstance(biz_rules, dict) else None)
+        or (flow.get("etl_intent", {}).get("description") if isinstance(flow.get("etl_intent"), dict) else None)
+        or ctx.get("user_prompt")
+    )
+
     if flags.llm_ir_planner_enabled and user_prompt:
+        logger.info("[CompilerPipeline] user_prompt detected: '%s' — initiating LLM IR planner pipeline", user_prompt[:80])
         from agent.ir import IrExtractor, IrNormalizer, IrValidator, IrFixer, IrBuilder
         from agent.ir.semantic_validator import BusinessRuleValidator
         from agent.router import IntentRouter, RouteTarget
@@ -222,16 +235,16 @@ def _run_compiler_codegen(
         # 1. Sub-millisecond Intent Routing
         route_decision = IntentRouter.classify(user_prompt, profiles)
         logger.info(
-            "[Router] Routed prompt '%s...' to %s (complexity=%s, confidence=%.2f, latency=%.2fms)",
-            user_prompt[:50],
+            "[IntentRouter] route=%s complexity=%s confidence=%.2f (latency=%.2fms)",
             route_decision.route.value,
             route_decision.complexity.value,
             route_decision.confidence,
             route_decision.latency_ms,
         )
 
-        # 2. Extract IR (Fast path compiler-direct bypasses LLM completely)
+        # 2. Extract IR
         if route_decision.route == RouteTarget.COMPILER_DIRECT:
+            logger.info("[IrExtractor] Fast-path deterministic compiler direct (no LLM tokens)")
             raw_ir = IrExtractor._heuristic_fallback_extract(user_prompt, profiles, session_id=session_id)
             raw_ir.metadata.tags = ["compiler_direct"]
         else:
@@ -240,12 +253,20 @@ def _run_compiler_codegen(
 
         # 3. Normalize & Self-Healing Loop
         norm_ir = IrNormalizer.normalize(raw_ir, profiles)
+        logger.info("[IrValidator] Validating normalized plan with %d sources, %d steps", len(norm_ir.sources), len(norm_ir.logical_plan))
         healed_ir, val_res, is_valid = IrFixer.heal_plan(norm_ir, profiles, max_attempts=2)
+        logger.info(
+            "[IrFixer] Self-healing pass: is_valid=%s, repairs=%d",
+            is_valid,
+            len(healed_ir.metadata.repair_history) if healed_ir.metadata else 0,
+        )
 
         # 4. Semantic Business Rule Validation
         semantic_val = BusinessRuleValidator.validate_semantics(healed_ir, profiles)
         if not semantic_val.valid:
             logger.warning("[SemanticValidator] Flagged semantic issues: %s", [e.message for e in semantic_val.errors])
+        else:
+            logger.info("[SemanticValidator] Plan passed semantic business rule validation")
 
         # 5. Build Compiler Context
         compiler_ctx = IrBuilder.build(
@@ -261,6 +282,11 @@ def _run_compiler_codegen(
 
         compiler_ctx.detected_issues.extend(detected_issues)
     else:
+        if not flags.llm_ir_planner_enabled:
+            logger.info("[CompilerPipeline] DHARA_LLM_IR_PLANNER disabled by flag; executing deterministic issues compiler")
+        else:
+            logger.info("[CompilerPipeline] No user_prompt found in plan or flow; executing issue-based compiler path")
+
         compiler_ctx = CompilerContext(
             session_id=session_id,
             target_engine=target_eng,
@@ -354,7 +380,7 @@ def _run_compiler_codegen(
             ),
             compiler=CompilerMetrics(
                 target=target_eng.value,
-                compile_time=compiled_ctx.metrics.total_compilation_time_ms / 1000.0 if compiled_ctx.metrics else 0.05,
+                compile_time=(getattr(compiled_ctx.metrics, "compile_latency_ms", None) or getattr(compiled_ctx.metrics, "total_compilation_time_ms", None) or getattr(compiled_ctx.metrics, "total_latency_ms", None) or 50.0) / 1000.0 if compiled_ctx.metrics else 0.05,
                 artifact_size=len(code),
                 success=bool(code),
             ),

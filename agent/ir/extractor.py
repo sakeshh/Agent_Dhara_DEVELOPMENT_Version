@@ -199,6 +199,11 @@ class IrExtractor:
         from agent.rag import RagRetriever
         retriever = RagRetriever()
         rag_context = retriever.retrieve_context(user_prompt, list(relevant_profiles.keys()))
+        logger.info(
+            "[RAG Retriever] retrieved %d business rules, %d data contracts",
+            len(rag_context.business_rules),
+            len(rag_context.contracts),
+        )
 
         # If a highly confident historical IR pattern matches, reuse it
         if rag_context.matched_pattern:
@@ -209,6 +214,9 @@ class IrExtractor:
             return reused_plan
 
         llm = cls._get_llm_client()
+        cfg = load_llm_config(purpose="general")
+        model_name = getattr(cfg, "model", None) or getattr(cfg, "deployment_name", None) or "gpt-4o"
+        logger.info("[IrExtractor] planner_model=%s (provider=%s)", model_name, getattr(cfg, "provider", "unknown"))
 
         if llm is None:
             logger.info("Using deterministic fallback extractor (no active LLM client)")
