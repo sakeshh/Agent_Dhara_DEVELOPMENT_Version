@@ -36,6 +36,31 @@ END;
 
 IF OBJECT_ID('tempdb..#Rejected_{{ step_id | replace("-", "_") }}') IS NOT NULL DROP TABLE #Rejected_{{ step_id | replace("-", "_") }};
 
+{% elif disp == 'FLAG' %}
+-- FLAG: Log rows that violate the condition to ETL_REJECT.Rejection_Log.
+-- The source row is NOT mutated — the key column retains its original value (including NULL).
+-- The caller decides how to handle the flagged rows after review.
+IF EXISTS (SELECT 1 FROM {{ target_table }} WHERE {{ sql_condition }})
+BEGIN
+    INSERT INTO [ETL_REJECT].[Rejection_Log] (
+        [PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData]
+    )
+    SELECT
+        @PipelineId,
+        @RunId,
+        N'{{ dataset_name }}',
+        N'{{ issue_id | default("") }}',
+        N'{{ step_id }}',
+        N'{{ columns | join(", ") }}',
+        N'{{ description | default(sql_condition) }}',
+        N'FLAG',
+        CAST(s.[{{ columns[0] }}] AS NVARCHAR(MAX)),
+        (SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+    FROM {{ target_table }} AS s
+    WHERE {{ sql_condition }};
+END;
+-- Source rows are left UNCHANGED — no SET or UPDATE is emitted for FLAG disposition.
+
 {% else %}
 UPDATE {{ target_table }}
 SET

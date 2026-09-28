@@ -63,9 +63,11 @@ def _db_path() -> str:
 def _connect() -> sqlite3.Connection:
     path = _db_path()
     try:
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
     except sqlite3.OperationalError as e:
         logger.error(f"Failed to connect to SQLite at {path}: {e}. Falling back to /tmp/jobs.sqlite3")
+        os.makedirs("/tmp", exist_ok=True)
         conn = sqlite3.connect("/tmp/jobs.sqlite3", timeout=30, check_same_thread=False)
 
     try:
@@ -77,6 +79,10 @@ def _connect() -> sqlite3.Connection:
             pass
     try:
         conn.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
+    try:
+        conn.execute("PRAGMA busy_timeout=30000")
     except Exception:
         pass
     conn.execute(
@@ -138,6 +144,24 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS etl_generation_idempotency (
+            idempotency_key TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            plan_fingerprint TEXT NOT NULL,
+            target_engine TEXT NOT NULL,
+            compiler_version TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at REAL NOT NULL,
+            completed_at REAL,
+            artifact_id TEXT,
+            response_json TEXT,
+            error TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_gen_idem_session ON etl_generation_idempotency(session_id)")
     return conn
 
 
@@ -476,49 +500,190 @@ def load_checkpoint(job_id: str, stage: str) -> Optional[Dict[str, Any]]:
 def requeue_stale_jobs(*, stale_after_seconds: int = 1800) -> int:
     """Requeue jobs stuck in 'running' for longer than stale_after_seconds."""
     cutoff = time.time() - stale_after_seconds
-    conn = _connect()
-    try:
-        cur = conn.execute(
-            "UPDATE jobs SET status='queued', updated_at=? WHERE status='running' AND updated_at < ?",
-            (time.time(), cutoff),
-        )
-        count = cur.rowcount
-        conn.commit()
-        return count
-    finally:
-        conn.close()
+    for attempt in range(1, 4):
+        try:
+            conn = _connect()
+            try:
+                cur = conn.execute(
+                    "UPDATE jobs SET status='queued', updated_at=? WHERE status='running' AND updated_at < ?",
+                    (time.time(), cutoff),
+                )
+                count = cur.rowcount
+                conn.commit()
+                return count
+            finally:
+                conn.close()
+        except sqlite3.OperationalError as exc:
+            if attempt == 3:
+                logger.error(f"requeue_stale_jobs failed after {attempt} attempts: {exc}")
+                raise
+            time.sleep(attempt * 0.5)
+    return 0
 
 
 def recover_stale_claimed_jobs(*, stale_minutes: int = 5) -> int:
     """Reset jobs stuck in 'running' from a previous crashed container to 'queued'."""
     cutoff = time.time() - (stale_minutes * 60)
+    for attempt in range(1, 4):
+        try:
+            conn = _connect()
+            try:
+                cur = conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status = 'queued',
+                        updated_at = ?,
+                        current_stage = 'recovered',
+                        error = 'Recovered from crashed/restarted container'
+                    WHERE status = 'running'
+                      AND updated_at < ?
+                    """,
+                    (time.time(), cutoff),
+                )
+                count = cur.rowcount
+                conn.commit()
+                if count:
+                    logger.warning(
+                        f"recover_stale_claimed_jobs: recovered {count} orphaned job(s) "
+                        f"(stuck in 'running' for >{stale_minutes} min) — likely from a previous container crash."
+                    )
+                else:
+                    logger.info("recover_stale_claimed_jobs: no orphaned jobs found.")
+                return count
+            finally:
+                conn.close()
+        except Exception as exc:
+            if attempt == 3:
+                logger.error(f"recover_stale_claimed_jobs failed after {attempt} attempts: {exc}")
+                return 0
+            time.sleep(attempt * 0.5)
+    return 0
+
+
+def acquire_generation_idempotency(
+    idempotency_key: str,
+    session_id: str,
+    plan_fingerprint: str,
+    target_engine: str,
+    compiler_version: str = "2.0",
+    lease_seconds: float = 120.0,
+) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """
+    Atomically attempts to acquire a persistent idempotency lease for an ETL generation request.
+    Returns:
+      (True, None) if this process acquired the lease and may proceed with generation.
+      (False, record) if another process is already RUNNING (within lease) or already SUCCEEDED / FAILED_NON_RETRYABLE.
+    """
+    now = time.time()
     conn = _connect()
     try:
-        cur = conn.execute(
-            """
-            UPDATE jobs
-            SET status = 'queued',
-                updated_at = ?,
-                current_stage = 'recovered',
-                error = 'Recovered from crashed/restarted container'
-            WHERE status = 'running'
-              AND updated_at < ?
-            """,
-            (time.time(), cutoff),
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT idempotency_key, session_id, status, started_at, completed_at, artifact_id, response_json, error FROM etl_generation_idempotency WHERE idempotency_key = ?",
+            (idempotency_key,),
         )
-        count = cur.rowcount
+        row = cur.fetchone()
+        if not row:
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO etl_generation_idempotency (
+                        idempotency_key, session_id, plan_fingerprint, target_engine, compiler_version, status, started_at
+                    ) VALUES (?, ?, ?, ?, ?, 'RUNNING', ?)
+                    """,
+                    (idempotency_key, session_id, plan_fingerprint, target_engine, compiler_version, now),
+                )
+                conn.commit()
+                return True, None
+            except sqlite3.IntegrityError:
+                cur.execute(
+                    "SELECT idempotency_key, session_id, status, started_at, completed_at, artifact_id, response_json, error FROM etl_generation_idempotency WHERE idempotency_key = ?",
+                    (idempotency_key,),
+                )
+                row = cur.fetchone()
+
+        if row:
+            rec = {
+                "idempotency_key": row[0],
+                "session_id": row[1],
+                "status": row[2],
+                "started_at": row[3],
+                "completed_at": row[4],
+                "artifact_id": row[5],
+                "response": json.loads(row[6]) if row[6] else None,
+                "error": row[7],
+            }
+            status = rec["status"]
+
+            # SUCCEEDED / FAILED_NON_RETRYABLE: return cached result, do not re-run.
+            if status in ("SUCCEEDED", "FAILED_NON_RETRYABLE"):
+                return False, rec
+
+            # RUNNING within active lease window: block duplicate — return existing record.
+            if status == "RUNNING" and (now - rec["started_at"] < lease_seconds):
+                return False, rec
+
+            # FAILED_RETRYABLE: a transient/infra exception occurred; re-acquire immediately.
+            # The previous run did not produce a valid artifact, so a fresh attempt is safe.
+            if status == "FAILED_RETRYABLE":
+                logger.info(
+                    f"acquire_generation_idempotency: re-acquiring lease after FAILED_RETRYABLE for key={idempotency_key}"
+                )
+                cur.execute(
+                    """
+                    UPDATE etl_generation_idempotency
+                    SET status = 'RUNNING', started_at = ?, completed_at = NULL, error = NULL, response_json = NULL
+                    WHERE idempotency_key = ?
+                    """,
+                    (now, idempotency_key),
+                )
+                conn.commit()
+                return True, None
+
+            # RUNNING but lease expired (stale/orphaned process): re-acquire.
+            if status == "RUNNING" and (now - rec["started_at"] >= lease_seconds):
+                logger.warning(
+                    f"acquire_generation_idempotency: lease expired for key={idempotency_key} "
+                    f"(held {round(now - rec['started_at'], 1)}s > {lease_seconds}s) — re-acquiring."
+                )
+                cur.execute(
+                    """
+                    UPDATE etl_generation_idempotency
+                    SET status = 'RUNNING', started_at = ?, completed_at = NULL, error = NULL
+                    WHERE idempotency_key = ?
+                    """,
+                    (now, idempotency_key),
+                )
+                conn.commit()
+                return True, None
+
+        return True, None
+    finally:
+        conn.close()
+
+
+
+def complete_generation_idempotency(
+    idempotency_key: str,
+    status: str,  # 'SUCCEEDED' | 'FAILED_RETRYABLE' | 'FAILED_NON_RETRYABLE'
+    response: Optional[Dict[str, Any]] = None,
+    artifact_id: Optional[str] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Updates the persistent idempotency record with completion results."""
+    now = time.time()
+    resp_json = json.dumps(response) if response else None
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            UPDATE etl_generation_idempotency
+            SET status = ?, completed_at = ?, artifact_id = ?, response_json = ?, error = ?
+            WHERE idempotency_key = ?
+            """,
+            (status, now, artifact_id, resp_json, error, idempotency_key),
+        )
         conn.commit()
-        if count:
-            logger.warning(
-                f"recover_stale_claimed_jobs: recovered {count} orphaned job(s) "
-                f"(stuck in 'running' for >{stale_minutes} min) — likely from a previous container crash."
-            )
-        else:
-            logger.info("recover_stale_claimed_jobs: no orphaned jobs found.")
-        return count
-    except Exception as exc:
-        logger.error(f"recover_stale_claimed_jobs failed: {exc}")
-        return 0
     finally:
         conn.close()
 

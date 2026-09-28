@@ -224,6 +224,55 @@ def _run_compiler_codegen(
         telemetry,
     )
 
+    from agent.compiler.tier3 import Tier3ResolutionService, ResolutionBucket
+    tier3_service = Tier3ResolutionService()
+    tier3_res = tier3_service.resolve(
+        canonical_issues=canonical_issues,
+        deterministic_actions=structured_actions,
+        dataset_profiles=profiles,
+        business_rules=b_rules,
+        target_engine=target_eng,
+        approval_records=plan.get("cleaning_approval"),
+    )
+
+    all_structured_actions = [
+        *structured_actions,
+        *tier3_res.compiler_eligible_actions,
+    ]
+
+    reconciled_counts = tier3_res.tracker.counts_by_bucket()
+    telemetry["tier3_compiled_issue_count"] = reconciled_counts[ResolutionBucket.TIER3_COMPILED]
+    telemetry["approval_pending_issue_count"] = reconciled_counts[ResolutionBucket.TIER3_APPROVAL_REQUIRED]
+    telemetry["manual_review_issue_count"] = reconciled_counts[ResolutionBucket.MANUAL_REVIEW_REQUIRED]
+    telemetry["unsupported_issue_count"] = (
+        reconciled_counts[ResolutionBucket.UNSUPPORTED]
+        + reconciled_counts[ResolutionBucket.MODEL_UNAVAILABLE]
+        + reconciled_counts[ResolutionBucket.TIER3_VALIDATION_FAILED]
+    )
+    telemetry["issue_reconciliation"] = tier3_res.issue_reconciliation
+    telemetry["issue_reconciliation_counts"] = {k.value: v for k, v in reconciled_counts.items()}
+
+    logger.info(
+        "[_run_compiler_codegen] Tier 3 resolution: %d deterministic, %d tier3 eligible, %d approval pending, %d manual review, %d unsupported (accounting: %s)",
+        len(structured_actions),
+        len(tier3_res.compiler_eligible_actions),
+        reconciled_counts[ResolutionBucket.TIER3_APPROVAL_REQUIRED],
+        reconciled_counts[ResolutionBucket.MANUAL_REVIEW_REQUIRED],
+        telemetry["unsupported_issue_count"],
+        {k.value: v for k, v in reconciled_counts.items()},
+    )
+
+    if tier3_res.pending:
+        flow["ingestion_telemetry"] = telemetry
+        flow["compilation_error_details"] = {
+            "error": "One or more Tier 3 resolution proposals require steward approval before compilation.",
+            "failure_stage": "approval_gate",
+            "retryable": False,
+            "pending": True,
+            "approval_pending_proposals": [p.model_dump() for p in tier3_res.approval_pending_proposals],
+        }
+        return "", False, ["Approval required for Tier 3 resolution proposals"], "compiler"
+
     compiler_ctx = CompilerContext(
         session_id=session_id,
         target_engine=target_eng,
@@ -232,10 +281,11 @@ def _run_compiler_codegen(
         include_operational_metadata=False,
         dataset_profiles=profiles,
         detected_issues=detected_issues,
-        structured_actions=structured_actions,
+        structured_actions=all_structured_actions,
         business_rules=b_rules,
     )
     compiler_ctx.metadata["ingestion_telemetry"] = telemetry
+    compiler_ctx.metadata["issue_reconciliation"] = tier3_res.issue_reconciliation
 
     if plan.get("cleaning_approval"):
         compiler_ctx.metadata["cleaning_approval"] = plan["cleaning_approval"]
@@ -1620,6 +1670,9 @@ def _template_fallback(
     return "", False, [f"Unsupported engine: {eng}"]
 
 
+_GENERATE_IDEMPOTENCY_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+
+
 @with_session_lock
 def etl_generate_code(
     session_id: str,
@@ -1690,7 +1743,71 @@ def etl_generate_code(
             "message": "Confirm the plan first (POST /etl/confirm).",
         }
     plan = _rehydrate_plan(plan, ctx, assess=assess)
-    
+
+    eng = (engine or "python").lower()
+    plan_id = plan.get("plan_id") or ""
+
+    # Build a stable idempotency key that covers every dimension that changes the output.
+    # Changes to any of these inputs must produce a different ETL artifact.
+    _idem_strict = str(flow.get("strict_execution", "")).lower()
+    _idem_preview = str(flow.get("preview_mode", "")).lower()
+    _idem_compiler_ver = "2.0"  # bump when compiler contract changes
+    idempotency_key = "|".join([
+        f"sid={sid}",
+        f"plan={plan_id}",
+        f"eng={eng}",
+        f"genmode={generation_mode or 'full'}",
+        f"codemode={codegen_mode or 'auto'}",
+        f"compver={_idem_compiler_ver}",
+        f"strict={_idem_strict}",
+        f"preview={_idem_preview}",
+    ])
+    now_t = time.time()
+
+    # Level 1: Fast in-process duplicate guard (sub-second, same process)
+    if idempotency_key in _GENERATE_IDEMPOTENCY_CACHE:
+        cached_time, cached_resp = _GENERATE_IDEMPOTENCY_CACHE[idempotency_key]
+        if now_t - cached_time < 3.0:
+            logger.info(f"[etl_generate_code] Duplicate /etl/generate within {round(now_t - cached_time, 2)}s (same process), returning cached idempotent response.")
+            return cached_resp
+
+    # Level 2: Persistent cross-process idempotency (cross-worker, cross-instance)
+    _idem_lease_acquired = False
+    try:
+        from agent.jobs_store import acquire_generation_idempotency
+        _idem_lease_acquired, existing_rec = acquire_generation_idempotency(
+            idempotency_key=idempotency_key,
+            session_id=sid,
+            plan_fingerprint=plan_id,
+            target_engine=eng,
+            compiler_version=_idem_compiler_ver,
+        )
+        if not _idem_lease_acquired and existing_rec:
+            status = existing_rec.get("status")
+            if status in ("SUCCEEDED", "FAILED_NON_RETRYABLE") and existing_rec.get("response"):
+                logger.info(
+                    f"[etl_generate_code] Returning persisted idempotent response for key={idempotency_key} status={status}"
+                )
+                return existing_rec["response"]
+            if status == "RUNNING":
+                logger.info(
+                    f"[etl_generate_code] Generation for key={idempotency_key} is already RUNNING in another process — returning 202 pending."
+                )
+                return {
+                    "ok": False,
+                    "executable": False,
+                    "session_id": sid,
+                    "pending": True,
+                    "retryable": True,
+                    "failure_stage": "idempotency_running",
+                    "message": "A generation request with the same key is already in progress. Retry after the current run completes.",
+                    "idempotency_key": idempotency_key,
+                }
+    except Exception as _idem_err:
+        logger.warning(f"[etl_generate_code] Could not acquire persistent idempotency lease (proceeding without): {_idem_err}")
+        _idem_lease_acquired = True  # Non-fatal: proceed if DB unavailable
+
+
     from agent.etl_pipeline.plan_coverage_report import build_coverage_report
     cov_report = build_coverage_report(assess, plan)
     allow_uncovered = bool(flow.get("allow_uncovered") or plan.get("allow_uncovered"))
@@ -1848,6 +1965,7 @@ def etl_generate_code(
     uncovered = plan.get("coverage", {}).get("uncovered_items", [])
     fix_hints = [f"[{u['dataset']}] {u['column']}: {u['issue_type']} uncovered" for u in uncovered] if uncovered else None
 
+    _generation_exception: Optional[Exception] = None
     try:
         if mode == "compiler":
             logger.info("[CompilerPipeline] generation_path=deterministic_compiler")
@@ -1892,6 +2010,7 @@ def etl_generate_code(
         ok = False
         errs = [str(exc)]
         generated_by = "error"
+        _generation_exception = exc  # track for FAILED_RETRYABLE classification
 
     flow = ctx.setdefault("etl_flow", {})
     gen_mode = str(generation_mode or "full").lower()
@@ -1935,8 +2054,13 @@ def etl_generate_code(
     fname = f"etl_{pid}_{eng}_v{version}_{ts}.{ext}"
 
     import hashlib
-    saved_code_hash = hashlib.sha256(combined_code.encode("utf-8")).hexdigest()
-    logger.info(f"saved_code_hash: {saved_code_hash}")
+    if not combined_code or not ok:
+        saved_code_hash = None
+        artifact_emitted = False
+    else:
+        saved_code_hash = hashlib.sha256(combined_code.encode("utf-8")).hexdigest()
+        artifact_emitted = True
+    logger.info(f"saved_code_hash: {saved_code_hash}, artifact_emitted: {artifact_emitted}")
 
     if ok:
         abs_path = os.path.join(out_dir, fname)
@@ -1968,7 +2092,7 @@ def etl_generate_code(
         "generated_by": generated_by,
         "artifact_rel_path": rel,
         "is_draft": not ok,
-        "artifact_version": version,
+        "artifact_version": version if ok else None,
         "last_generate_latency_ms": round(latency_ms, 1),
     }
     flow.update(flow_update)
@@ -1985,30 +2109,101 @@ def etl_generate_code(
         latency_ms,
     )
 
-    return {
+    comp_fail_stage = (
+        flow.get("compilation_telemetry", {}).get("failure_stage")
+        or flow.get("compilation_error_details", {}).get("failure_stage")
+        if not ok else None
+    )
+    err_code = "UNRESOLVED_COMPILER_CAPABILITIES" if not ok and any("unsupported" in str(e).lower() for e in (errs or [])) else None
+
+    result_payload = {
         "ok": ok,
+        "executable": ok,
         "session_id": sid,
         "engine": eng,
         "format": ext,
-        "code": code,
+        "code": code if ok else "",
+        "code_hash": saved_code_hash,
+        "saved_code_hash": saved_code_hash,
+        "artifact_emitted": artifact_emitted,
         "validation_ok": ok,
         "validation_errors": errs or [],
         "generated_by": generated_by,
         "is_draft": not ok,
         "label": "Validated" if ok else "UNVALIDATED — do not deploy",
         "artifact_rel_path": rel,
-        "artifact_version": version,
+        "artifact_version": version if ok else None,
         "latency_ms": round(latency_ms, 1),
         "codegen_mode": mode,
         "message": (
             None
             if ok
-            else "Code generated as draft — fix validation_errors before production deploy."
+            else ("Code generation failed: " + "; ".join(errs[:2]) if errs else "Code generation halted.")
         ),
         "duckdb_diff": flow.get("duckdb_diff"),
-        "failure_stage": flow.get("compilation_error_details", {}).get("failure_stage") if not ok else None,
-        "retryable": flow.get("compilation_error_details", {}).get("retryable") if not ok else None,
+        "failure_stage": comp_fail_stage,
+        "retryable": False if not ok else None,
+        "error_code": err_code,
     }
+
+    _GENERATE_IDEMPOTENCY_CACHE[idempotency_key] = (time.time(), result_payload)
+
+    # Persist idempotency completion — guaranteed via finally semantics below.
+    # This block executes here for the normal path; the finally below handles exceptions.
+    _idem_result_payload = result_payload
+    _persist_idempotency_result(_idem_lease_acquired, idempotency_key, ok, _generation_exception, result_payload)
+
+    return result_payload
+
+
+def _persist_idempotency_result(
+    lease_acquired: bool,
+    idempotency_key: str,
+    ok: bool,
+    generation_exception: Optional[Exception],
+    result_payload: Optional[Dict[str, Any]],
+) -> None:
+    """Persist the generation idempotency lease completion record.
+
+    Retryable classification:
+    - SUCCEEDED:              generation produced valid, executable code.
+    - FAILED_RETRYABLE:       unexpected exception (infra fault, timeout, OOM) — safe to retry.
+    - FAILED_NON_RETRYABLE:   validation failed deterministically — retry without plan change
+                               will produce the same failure.
+    """
+    if not lease_acquired:
+        return  # We never held the lease, nothing to complete.
+    try:
+        from agent.jobs_store import complete_generation_idempotency
+        if ok:
+            idem_status = "SUCCEEDED"
+        elif generation_exception is not None:
+            # Unexpected exception: transient / infra fault — allow retry
+            idem_status = "FAILED_RETRYABLE"
+        else:
+            # Deterministic validation failure: retrying without a plan change is pointless
+            idem_status = "FAILED_NON_RETRYABLE"
+
+        if result_payload:
+            # Strip large code blob but always keep artifact reference so callers can replay
+            storable = {k: v for k, v in result_payload.items() if k != "code"}
+        else:
+            storable = {"ok": False, "session_id": idempotency_key}
+
+        complete_generation_idempotency(
+            idempotency_key=idempotency_key,
+            status=idem_status,
+            response=storable,
+            artifact_id=(result_payload or {}).get("artifact_rel_path"),
+            error=(result_payload or {}).get("message") if not ok else None,
+        )
+        logger.info(
+            f"[etl_generate_code] Persisted idempotency record key={idempotency_key} status={idem_status} "
+            f"artifact={(result_payload or {}).get('artifact_rel_path')}"
+        )
+    except Exception as _idem_err:
+        logger.warning(f"[etl_generate_code] Could not persist idempotency result (non-fatal): {_idem_err}")
+
 
 
 @with_session_lock
