@@ -81,6 +81,7 @@ def generate_semantic_rules_from_metadata(datasets: Dict[str, pd.DataFrame]) -> 
     user_prompt = json.dumps(prompt_data, indent=2, default=str)
 
     try:
+        from agent.model_config import safe_chat_completion  # type: ignore
         if cfg.provider == "azure_openai":
             from openai import AzureOpenAI  # type: ignore
             client = AzureOpenAI(
@@ -88,7 +89,8 @@ def generate_semantic_rules_from_metadata(datasets: Dict[str, pd.DataFrame]) -> 
                 api_version=cfg.api_version or "2024-02-01",
                 azure_endpoint=cfg.endpoint,
             )
-            resp = client.chat.completions.create(
+            resp = safe_chat_completion(
+                client,
                 model=cfg.model,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
@@ -100,7 +102,8 @@ def generate_semantic_rules_from_metadata(datasets: Dict[str, pd.DataFrame]) -> 
         else:
             from openai import OpenAI  # type: ignore
             client = OpenAI(api_key=cfg.api_key)
-            resp = client.chat.completions.create(
+            resp = safe_chat_completion(
+                client,
                 model=cfg.model,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},

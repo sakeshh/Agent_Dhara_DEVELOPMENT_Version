@@ -119,6 +119,7 @@ def safe_chat_completion(client, **kwargs):
     # Pre-emptively translate max_tokens -> max_completion_tokens for models/APIs known to reject max_tokens
     prefer_max_completion = (
         "2025-" in api_version
+        or "2024-12" in api_version  # 2024-12-01-preview also requires max_completion_tokens
         or any(k in model_name for k in ("gpt-5", "o1", "o3", "gpt-4.1"))
     )
 

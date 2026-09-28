@@ -1442,33 +1442,45 @@ def _process_cluster(
     ) -> Tuple[Dict[str, Any], Optional[Dict[str, int]]]:
         from agent.model_config import safe_chat_completion
 
-        if cfg.provider == "azure_openai":
-            from openai import AzureOpenAI  # type: ignore
-            client = AzureOpenAI(
-                api_key=cfg.api_key,
-                api_version=cfg.api_version or "2024-02-01",
-                azure_endpoint=cfg.endpoint,
-                timeout=PER_CLUSTER_TIMEOUT_SECONDS,
-            )
-            resp = safe_chat_completion(
+        def _do_call(deployment: str):
+            if cfg.provider == "azure_openai":
+                from openai import AzureOpenAI  # type: ignore
+                client = AzureOpenAI(
+                    api_key=cfg.api_key,
+                    api_version=cfg.api_version or "2024-02-01",
+                    azure_endpoint=cfg.endpoint,
+                    timeout=PER_CLUSTER_TIMEOUT_SECONDS,
+                )
+            else:
+                from openai import OpenAI  # type: ignore
+                client = OpenAI(api_key=cfg.api_key, timeout=PER_CLUSTER_TIMEOUT_SECONDS)
+            return safe_chat_completion(
                 client,
-                model=cfg.model,
+                model=deployment,
                 messages=[{"role": "system", "content": _CLUSTER_SYSTEM}, {"role": "user", "content": p_str}],
                 temperature=0.1,
                 max_tokens=CLUSTER_RECOMMENDATION_MAX_OUTPUT_TOKENS,
                 timeout=PER_CLUSTER_TIMEOUT_SECONDS,
             )
-        else:
-            from openai import OpenAI  # type: ignore
-            client = OpenAI(api_key=cfg.api_key, timeout=PER_CLUSTER_TIMEOUT_SECONDS)
-            resp = safe_chat_completion(
-                client,
-                model=cfg.model,
-                messages=[{"role": "system", "content": _CLUSTER_SYSTEM}, {"role": "user", "content": p_str}],
-                temperature=0.1,
-                max_tokens=CLUSTER_RECOMMENDATION_MAX_OUTPUT_TOKENS,
-                timeout=PER_CLUSTER_TIMEOUT_SECONDS,
-            )
+
+        try:
+            resp = _do_call(cfg.model)
+        except Exception as e:
+            if "DeploymentNotFound" in str(e) or "404" in str(e):
+                import os as _os
+                alt = (
+                    _os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
+                    or _os.environ.get("AZURE_OPENAI_DEPLOYMENT")
+                    or ""
+                ).strip()
+                if alt and alt != cfg.model:
+                    logger.warning("Cluster LLM: deployment '%s' not found, retrying with '%s'", cfg.model, alt)
+                    resp = _do_call(alt)
+                else:
+                    raise
+            else:
+                raise
+
         u = usage_dict_from_response(resp)
         if not resp.choices:
             raise LLMResponseInvalidError("LLM returned no choices")

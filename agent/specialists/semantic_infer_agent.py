@@ -116,6 +116,7 @@ class SemanticInferAgent:
         
         prompt = json.dumps(payload, ensure_ascii=False)
         try:
+            from agent.model_config import safe_chat_completion  # type: ignore
             if cfg.provider == "azure_openai":
                 from openai import AzureOpenAI  # type: ignore
                 client = AzureOpenAI(
@@ -127,13 +128,15 @@ class SemanticInferAgent:
                 from openai import OpenAI  # type: ignore
                 client = OpenAI(api_key=cfg.api_key)
                 
-            resp = client.chat.completions.create(
+            resp = safe_chat_completion(
+                client,
                 model=cfg.model,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": f"Infer column categories for table '{table_name}':\n{prompt}"}
                 ],
                 temperature=0.0,
+                max_tokens=1000,
                 response_format={"type": "json_object"},
             )
             raw = (resp.choices[0].message.content or "").strip()

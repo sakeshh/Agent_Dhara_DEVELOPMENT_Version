@@ -37,6 +37,65 @@ def _safe_bracket_quote(name: str) -> str:
         quoted_parts.append(f"[{escaped}]")
     return ".".join(quoted_parts)
 
+
+def _synthesize_prompt_from_assessment(assess: dict) -> Optional[str]:
+    """
+    When the user never supplied a prompt, synthesise a descriptive ETL intent
+    from the assessment data so the LLM IR planner has something to work with.
+
+    Produces text like:
+      "Clean and transform data for datasets: dbo.Orders_Raw, dbo.Customers.
+       Address top data quality issues: duplicate records, null values in
+       required columns, date format violations."
+    """
+    if not isinstance(assess, dict):
+        return None
+
+    datasets = assess.get("datasets") or {}
+    ds_names = list(datasets.keys())
+    if not ds_names:
+        return None
+
+    # Collect distinct issue categories from the assessment
+    issue_types: List[str] = []
+    seen: set = set()
+    for iss in (assess.get("issues") or []):
+        if not isinstance(iss, dict):
+            continue
+        itype = (
+            iss.get("issue_type")
+            or iss.get("type")
+            or iss.get("category")
+            or ""
+        ).lower().replace("_", " ").strip()
+        if itype and itype not in seen:
+            seen.add(itype)
+            issue_types.append(itype)
+        if len(issue_types) >= 5:
+            break
+
+    ds_label = ", ".join(ds_names[:4])
+    if len(ds_names) > 4:
+        ds_label += f" and {len(ds_names) - 4} more"
+
+    if issue_types:
+        issues_label = ", ".join(issue_types[:4])
+        prompt = (
+            f"Clean and transform data for datasets: {ds_label}. "
+            f"Fix data quality issues including: {issues_label}. "
+            f"Remove duplicates, handle nulls, enforce data type constraints, "
+            f"and produce a cleaned output dataset."
+        )
+    else:
+        prompt = (
+            f"Clean and transform data for datasets: {ds_label}. "
+            f"Remove duplicates, handle nulls, enforce data type constraints, "
+            f"and produce a cleaned output dataset."
+        )
+
+    return prompt
+
+
 def _read_best_candidate_table(
     conn,
     ds_name: str,
@@ -249,7 +308,12 @@ def _run_compiler_codegen(
     )
 
     if flags.llm_ir_planner_enabled and not user_prompt and not ir_plan_data:
-        if had_prompt or not detected_issues:
+        # Synthesize from assessment before giving up
+        synth = _synthesize_prompt_from_assessment(assess)
+        if synth:
+            user_prompt = synth
+            logger.info("[LLM-IR] Synthesized prompt from assessment: %s", user_prompt[:80])
+        elif had_prompt or not detected_issues:
             logger.error("[LLM-IR] Missing prompt")
             return "", False, ["Prompt lost between planning and generation"], "error"
 
@@ -791,6 +855,15 @@ def etl_plan_start(
         or flow.get("user_prompt")
         or (flow.get("etl_intent", {}).get("description") if isinstance(flow.get("etl_intent"), dict) else None)
     )
+
+    # ── Synthesize prompt from assessment when user never typed one ───────────
+    # This ensures the LLM IR planner is always triggered (never falls to deterministic).
+    if not user_prompt and assess:
+        user_prompt = _synthesize_prompt_from_assessment(assess)
+        if user_prompt:
+            logger.info(f"[PLAN] user_prompt synthesized from assessment: {repr(user_prompt[:80])}")
+    # ─────────────────────────────────────────────────────────────────────────
+
     logger.info(f"[PLAN] user_prompt={repr(user_prompt)}")
 
     if user_prompt:
@@ -2061,9 +2134,16 @@ ctx.user_prompt={ctx.get('user_prompt')}
         )
     )
 
-    # Step 4: Hard fail instead of silent fallback if prompt is lost
+    # Step 4: Synthesize prompt from assessment if lost, then fail only if truly missing
     if flags.llm_ir_planner_enabled and not user_prompt and not has_stored_ir:
-        if had_prompt or not has_assessment_issues:
+        synth = _synthesize_prompt_from_assessment(assess)
+        if synth:
+            user_prompt = synth
+            sess["user_prompt"] = user_prompt
+            ctx["user_prompt"] = user_prompt
+            flow["user_prompt"] = user_prompt
+            logger.info("[GENERATE] Synthesized prompt from assessment: %s", user_prompt[:80])
+        elif had_prompt or not has_assessment_issues:
             logger.error("[LLM-IR] Missing prompt")
             return {
                 "ok": False,

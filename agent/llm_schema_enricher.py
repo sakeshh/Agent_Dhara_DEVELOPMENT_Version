@@ -153,6 +153,7 @@ def enrich_assessment_with_schema_llm(assessment_result: Dict[str, Any]) -> Dict
         
         if cfg:
             try:
+                from agent.model_config import safe_chat_completion  # type: ignore
                 if cfg.provider == "azure_openai":
                     from openai import AzureOpenAI  # type: ignore
                     client = AzureOpenAI(
@@ -163,19 +164,44 @@ def enrich_assessment_with_schema_llm(assessment_result: Dict[str, Any]) -> Dict
                 else:
                     from openai import OpenAI  # type: ignore
                     client = OpenAI(api_key=cfg.api_key)
-                    
-                resp = client.chat.completions.create(
-                    model=cfg.model,
-                    messages=[
-                        {"role": "system", "content": _SYSTEM_PROMPT},
-                        {"role": "user", "content": f"Analyze this dataset schema:\n{json.dumps(payload, ensure_ascii=False)}"}
-                    ],
-                    temperature=0.0,
-                    response_format={"type": "json_object"},
-                )
-                
-                raw_text = (resp.choices[0].message.content or "").strip()
-                enrichment_result = json.loads(raw_text)
+
+                def _try_enrich(deployment: str) -> dict | None:
+                    resp = safe_chat_completion(
+                        client,
+                        model=deployment,
+                        messages=[
+                            {"role": "system", "content": _SYSTEM_PROMPT},
+                            {"role": "user", "content": f"Analyze this dataset schema:\n{json.dumps(payload, ensure_ascii=False)}"}
+                        ],
+                        temperature=0.0,
+                        max_tokens=1500,
+                        response_format={"type": "json_object"},
+                    )
+                    raw_text = (resp.choices[0].message.content or "").strip()
+                    return json.loads(raw_text) if raw_text else None
+
+                try:
+                    enrichment_result = _try_enrich(cfg.model)
+                except Exception as e:
+                    # If primary deployment 404s, try the alternate deployment env var
+                    if "DeploymentNotFound" in str(e) or "404" in str(e):
+                        import os
+                        alt_deployment = (
+                            os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
+                            or os.environ.get("AZURE_OPENAI_DEPLOYMENT")
+                            or ""
+                        ).strip()
+                        if alt_deployment and alt_deployment != cfg.model:
+                            logger.warning(
+                                "LLM Schema Enrichment: deployment '%s' not found, retrying with '%s'",
+                                cfg.model, alt_deployment,
+                            )
+                            enrichment_result = _try_enrich(alt_deployment)
+                        else:
+                            raise
+                    else:
+                        raise
+
             except Exception as e:
                 logger.error(f"LLM Schema Enrichment failed for {ds_name}: {e}. Using fallback hints.")
         else:

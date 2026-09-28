@@ -278,13 +278,19 @@ def _get_llm_client_langchain():
     try:
         if cfg.provider == "azure_openai":
             from langchain_openai import AzureChatOpenAI
+            # 2024-12 and 2025+ Azure OpenAI APIs require max_completion_tokens, not max_tokens
+            api_ver = cfg.api_version or "2024-02-01"
+            use_completion_tokens = "2025-" in api_ver or "2024-12" in api_ver
+            token_kwargs = (
+                {"max_completion_tokens": 300} if use_completion_tokens else {"max_tokens": 300}
+            )
             return AzureChatOpenAI(
                 azure_endpoint=cfg.endpoint,
                 azure_deployment=cfg.model,
-                api_version=cfg.api_version or "2024-02-01",
+                api_version=api_ver,
                 api_key=cfg.api_key,
                 temperature=0.0,
-                max_tokens=300,
+                **token_kwargs,
             )
         else:
             from langchain_openai import ChatOpenAI
