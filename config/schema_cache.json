@@ -1,24 +1,7 @@
 {
-    "dbo.TrainingCourseMaster": {
-        "CourseID": "object",
-        "CourseName": "object",
-        "Technology": "object",
-        "Category": "object",
-        "InstructorID": "object",
-        "CourseDurationHours": "float64",
-        "CourseCost": "float64",
-        "LaunchDate": "object",
-        "ExpiryDate": "object",
-        "CourseMode": "object",
-        "VendorName": "object",
-        "CertificationEligible": "object",
-        "DifficultyLevel": "object",
-        "Status": "object",
-        "MaxParticipants": "int64",
-        "CourseLanguage": "object",
-        "Region": "object",
-        "CreatedDate": "object",
-        "ModifiedDate": "object",
-        "CourseOwner": "object"
+    "customers": {
+        "CustomerID": "object",
+        "Age": "float64",
+        "Status": "object"
     }
 }

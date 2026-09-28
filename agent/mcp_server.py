@@ -882,6 +882,112 @@ def api_get_session(session_id: str) -> Dict[str, Any]:
     return {"ok": True, "session": load_session(session_id)}
 
 
+@app.get("/sessions/{session_id}/summary")
+def api_get_session_summary(session_id: str) -> Dict[str, Any]:
+    from agent.session_store import load_session
+    from agent.models.session_summary import SessionSummary
+    from datetime import datetime
+
+    sid = (session_id or "default").strip() or "default"
+    sess = load_session(sid)
+    ctx = sess.get("context") or {}
+    flow = ctx.get("etl_flow") or {}
+    plan = flow.get("approved_plan") or flow.get("plan") or {}
+
+    datasets = []
+    if isinstance(plan.get("datasets"), dict):
+        datasets = list(plan["datasets"].keys())
+    elif sess.get("last_assessment_datasets"):
+        datasets = list(sess.get("last_assessment_datasets") or [])
+    elif sess.get("selected_tables"):
+        datasets = list(sess.get("selected_tables") or [])
+
+    summary = SessionSummary(
+        session_id=sid,
+        workflow_status=flow.get("phase") or sess.get("session_state") or sess.get("last_step") or "initialized",
+        active_dataset_ids=datasets,
+        target_engine=flow.get("codegen_engine") or flow.get("target_engine"),
+        cleaning_mode=flow.get("cleaning_mode") or plan.get("cleaning_mode"),
+        plan_id=plan.get("plan_id"),
+        plan_status=flow.get("phase"),
+        plan_hash=flow.get("plan_hash") or (plan.get("validation_certificate") or {}).get("validated_plan_hash"),
+        latest_artifact_id=flow.get("artifact_id"),
+        latest_artifact_version=flow.get("artifact_version"),
+        generation_path=flow.get("generation_path") or ("deterministic_compiler" if flow.get("generated_by") == "compiler" else flow.get("generated_by")),
+        updated_at=datetime.utcnow().isoformat() if sess.get("updated_at") else None,
+    )
+    return {"ok": True, "summary": summary.model_dump()}
+
+
+@app.get("/sessions/{session_id}/plan")
+def api_get_session_plan(session_id: str) -> Dict[str, Any]:
+    from agent.session_store import load_session
+
+    sid = (session_id or "default").strip() or "default"
+    sess = load_session(sid)
+    flow = (sess.get("context") or {}).get("etl_flow") or {}
+    plan = flow.get("approved_plan") or flow.get("plan")
+    if not plan:
+        return {
+            "ok": False,
+            "error": "NO_PLAN",
+            "message": f"No plan found for session '{sid}'.",
+            "session_id": sid,
+        }
+
+    return {
+        "ok": True,
+        "session_id": sid,
+        "approved": bool(flow.get("approved_plan")),
+        "phase": flow.get("phase", "planned"),
+        "plan": plan,
+        "coverage_report": flow.get("coverage_report") or plan.get("coverage_report"),
+        "cleaning_mode": flow.get("cleaning_mode") or plan.get("cleaning_mode"),
+        "preview": flow.get("preview"),
+        "lineage": flow.get("lineage"),
+        "duckdb_diff": flow.get("duckdb_diff"),
+        "plan_hash": flow.get("plan_hash") or (plan.get("validation_certificate") or {}).get("validated_plan_hash"),
+    }
+
+
+@app.get("/sessions/{session_id}/artifacts/latest")
+def api_get_session_latest_artifact(session_id: str) -> Dict[str, Any]:
+    from agent.session_store import load_session
+
+    sid = (session_id or "default").strip() or "default"
+    sess = load_session(sid)
+    flow = (sess.get("context") or {}).get("etl_flow") or {}
+
+    code = flow.get("code")
+    if not code:
+        return {
+            "ok": False,
+            "error": "NO_ARTIFACT",
+            "message": f"No generated code artifact found for session '{sid}'.",
+            "session_id": sid,
+        }
+
+    plan = flow.get("approved_plan") or flow.get("plan") or {}
+    return {
+        "ok": True,
+        "session_id": sid,
+        "code": code,
+        "engine": flow.get("codegen_engine") or flow.get("target_engine"),
+        "validation_ok": flow.get("validation_ok"),
+        "validation_errors": flow.get("validation_errors") or [],
+        "generated_by": flow.get("generated_by"),
+        "generation_path": flow.get("generation_path") or ("deterministic_compiler" if flow.get("generated_by") == "compiler" else flow.get("generated_by")),
+        "compiler_version": flow.get("compiler_version") or "1.0.0",
+        "template_version": flow.get("template_version") or f"{flow.get('target_engine', 'sql')}-v1",
+        "artifact_id": flow.get("artifact_id"),
+        "artifact_version": flow.get("artifact_version"),
+        "artifact_rel_path": flow.get("artifact_rel_path"),
+        "plan_id": flow.get("plan_id") or plan.get("plan_id"),
+        "plan_hash": flow.get("plan_hash") or (plan.get("validation_certificate") or {}).get("validated_plan_hash"),
+        "is_draft": flow.get("is_draft", False),
+    }
+
+
 @app.post("/sessions/context")
 def api_update_session_context(payload: SessionContextPayload) -> Dict[str, Any]:
     """

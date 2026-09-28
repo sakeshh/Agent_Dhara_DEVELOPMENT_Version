@@ -1776,6 +1776,12 @@ def etl_generate_code(
         rel = None
         rollback_on_failure(flow, reason=f"validation_failed: {(errs or ['unknown'])[:3]}", soft=True)
     latency_ms = (time.time() - t_gen) * 1000
+    generation_path = (
+        "deterministic_compiler"
+        if generated_by == "compiler"
+        else ("template" if generated_by == "template" else ("legacy_llm" if generated_by == "llm" else "unknown"))
+    )
+    artifact_id = f"art_{sid}_{pid}_{version}"
     flow_update: Dict[str, Any] = {
         "code": combined_code,
         "target_engine": eng,
@@ -1783,7 +1789,13 @@ def etl_generate_code(
         "validation_ok": ok,
         "validation_errors": errs or [],
         "generated_by": generated_by,
+        "generation_path": generation_path,
+        "compiler_version": "1.0.0",
+        "template_version": f"{eng}-v1",
+        "artifact_id": artifact_id,
         "artifact_rel_path": rel,
+        "plan_id": plan.get("plan_id"),
+        "plan_hash": expected_hash if "expected_hash" in locals() else None,
         "is_draft": not ok,
         "artifact_version": version,
         "last_generate_latency_ms": round(latency_ms, 1),
@@ -1792,11 +1804,12 @@ def etl_generate_code(
     save_session(sess)
 
     logger.info(
-        "etl_generate_code session=%s plan_id=%s engine=%s by=%s ok=%s version=%s latency_ms=%.0f",
+        "etl_generate_code session=%s plan_id=%s engine=%s by=%s path=%s ok=%s version=%s latency_ms=%.0f",
         sid,
         plan.get("plan_id"),
         eng,
         generated_by,
+        generation_path,
         ok,
         version,
         latency_ms,
@@ -1811,10 +1824,16 @@ def etl_generate_code(
         "validation_ok": ok,
         "validation_errors": errs or [],
         "generated_by": generated_by,
+        "generation_path": generation_path,
+        "compiler_version": "1.0.0",
+        "template_version": f"{eng}-v1",
+        "artifact_id": artifact_id,
+        "artifact_version": version,
+        "plan_id": plan.get("plan_id"),
+        "plan_hash": expected_hash if "expected_hash" in locals() else None,
         "is_draft": not ok,
         "label": "Validated" if ok else "UNVALIDATED — do not deploy",
         "artifact_rel_path": rel,
-        "artifact_version": version,
         "latency_ms": round(latency_ms, 1),
         "codegen_mode": mode,
         "message": (
