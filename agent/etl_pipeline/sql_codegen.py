@@ -498,6 +498,7 @@ def _supplement_steps_with_dq_issues(
 ) -> List[Dict[str, Any]]:
     steps = list(existing_steps)
     stepped_cols = {str(st.get("column") or "").lower(): str(st.get("action") or "").lower() for st in steps if st.get("column")}
+    seen_issues: set = set()  # tracks (col, issue_type) and issue_id to avoid duplicate steps
     
     issues_for_ds: List[Dict[str, Any]] = []
     ds_clean = ds_name.replace("dbo.", "").strip()
