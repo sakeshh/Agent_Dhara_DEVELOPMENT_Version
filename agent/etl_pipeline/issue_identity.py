@@ -89,9 +89,16 @@ def issue_identity(dataset: Optional[str], column: Optional[str], issue_type: Op
     return f"{normalize_dataset_name(dataset)}::{normalize_column_name(column)}::{normalize_issue_type(issue_type)}"
 
 
-def make_step_id(dataset: Optional[str], column: Optional[str], action: Optional[str]) -> str:
+def make_step_id(
+    dataset: Optional[str],
+    column: Optional[str],
+    action: Optional[str],
+    index: Optional[Union[int, str]] = None,
+) -> str:
     """Generate a deterministic, short step ID."""
     ident = step_identity(dataset, column, action)
+    if index is not None and str(index) != "":
+        ident = f"{ident}::{index}"
     h = hashlib.sha256(ident.encode("utf-8")).hexdigest()[:8]
     return f"STEP-{h}"
 
@@ -229,8 +236,15 @@ def merge_steps(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str,
         merged["issue_id"] = issue_ids[0]
     merged["source_messages"] = messages
 
-    # Ensure step_id is assigned
-    ds = merged.get("dataset") or "_global"
+    # Ensure dataset and step_id are reliably assigned
+    ds = (
+        merged.get("dataset")
+        or loser.get("dataset")
+        or incoming.get("dataset")
+        or existing.get("dataset")
+        or "_global"
+    )
+    merged["dataset"] = ds
     col = merged.get("column")
     act = merged.get("action")
     merged["step_id"] = make_step_id(ds, col, act)

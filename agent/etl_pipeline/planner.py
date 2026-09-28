@@ -1170,9 +1170,16 @@ class PlanBuilder:
             # Deduplicate steps using merge_steps if any duplicate identities still exist
             step_identity_map = {}
             for st in steps:
+                if not st.get("dataset"):
+                    st["dataset"] = ds_name
+                if not st.get("step_id"):
+                    st["step_id"] = make_step_id(ds_name, st.get("column"), st.get("action"))
                 s_ident = step_identity(ds_name, st.get("column"), st.get("action"))
                 if s_ident in step_identity_map:
-                    step_identity_map[s_ident] = merge_steps(step_identity_map[s_ident], st)
+                    merged_st = merge_steps(step_identity_map[s_ident], st)
+                    merged_st["dataset"] = ds_name
+                    merged_st["step_id"] = make_step_id(ds_name, merged_st.get("column"), merged_st.get("action"))
+                    step_identity_map[s_ident] = merged_st
                 else:
                     step_identity_map[s_ident] = st
             steps = list(step_identity_map.values())
@@ -1417,6 +1424,7 @@ class PlanBuilder:
                     max_order = max((s.get("order", 0) for s in steps_list), default=0)
                     steps_list.append({
                         "step_id": make_step_id(ds_name, col_name, "trim"),
+                        "dataset": ds_name,
                         "column": col_name,
                         "action": "trim",
                         "auto_fixable": True,
@@ -1436,6 +1444,7 @@ class PlanBuilder:
                 max_order = max((s.get("order", 0) for s in steps_list), default=0)
                 steps_list.append({
                     "step_id": make_step_id(ds_name, col_name, "cast_type"),
+                    "dataset": ds_name,
                     "column": col_name,
                     "action": "cast_type",
                     "auto_fixable": True,

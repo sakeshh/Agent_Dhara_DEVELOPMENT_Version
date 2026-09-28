@@ -524,7 +524,8 @@ def _supplement_steps_with_dq_issues(
         if dsk == ds_name or dsk == ds_clean or dsk.replace("dbo.", "") == ds_clean:
             issues_for_ds.append(item)
             
-    seen_issues = set()
+    from agent.etl_pipeline.issue_identity import make_step_id
+
     for iss in issues_for_ds:
         col = iss.get("column")
         col_clean_name = str(col).strip("[]").lower() if col else "*"
@@ -553,6 +554,8 @@ def _supplement_steps_with_dq_issues(
                 steps.append({
                     "action": "range_clip",
                     "column": col,
+                    "dataset": ds_name,
+                    "step_id": make_step_id(ds_name, col, "range_clip"),
                     "params": {"lower_bound": 0.0, "min_value": 0.0},
                     "source_issue_type": "negative_values",
                     "note": "Remediate negative price/measure values with lower bound 0"
@@ -566,6 +569,8 @@ def _supplement_steps_with_dq_issues(
                 steps.append({
                     "action": "range_clip",
                     "column": col,
+                    "dataset": ds_name,
+                    "step_id": make_step_id(ds_name, col, "range_clip"),
                     "params": {"lower_bound": 0, "upper_bound": 120, "min_value": 0, "max_value": 120},
                     "source_issue_type": "implausible_age",
                     "note": "Remediate age bounds [0, 120]"
@@ -580,6 +585,8 @@ def _supplement_steps_with_dq_issues(
                 steps.append({
                     "action": "parse_dates",
                     "column": col,
+                    "dataset": ds_name,
+                    "step_id": make_step_id(ds_name, col, "parse_dates"),
                     "params": {"filter_impossible": True},
                     "source_issue_type": "impossible_date",
                     "note": "Safely parse dates and normalize sentinel/impossible dates to NULL"
@@ -593,6 +600,8 @@ def _supplement_steps_with_dq_issues(
                 steps.append({
                     "action": "sanitize_email",
                     "column": col,
+                    "dataset": ds_name,
+                    "step_id": make_step_id(ds_name, col, "sanitize_email"),
                     "source_issue_type": "invalid_email",
                     "note": "Sanitize and validate email address format"
                 })
@@ -605,6 +614,8 @@ def _supplement_steps_with_dq_issues(
                 steps.append({
                     "action": "normalize_phone",
                     "column": col,
+                    "dataset": ds_name,
+                    "step_id": make_step_id(ds_name, col, "normalize_phone"),
                     "source_issue_type": "invalid_phone",
                     "note": "Normalize phone number to digits"
                 })
@@ -617,6 +628,8 @@ def _supplement_steps_with_dq_issues(
                 steps.append({
                     "action": "replace_sentinel_values",
                     "column": col,
+                    "dataset": ds_name,
+                    "step_id": make_step_id(ds_name, col, "replace_sentinel_values"),
                     "params": {"replace_values": [999, -999, 999999, 9999999]},
                     "source_issue_type": "sentinel_value",
                     "note": "Nullify configured sentinel values (999, -999, 999999, 9999999)"
@@ -630,6 +643,8 @@ def _supplement_steps_with_dq_issues(
                 steps.append({
                     "action": "replace_sentinel_values",
                     "column": col,
+                    "dataset": ds_name,
+                    "step_id": make_step_id(ds_name, col, "replace_sentinel_values"),
                     "source_issue_type": "placeholder_detected",
                     "note": "Normalize text placeholders ('???', 'n/a', 'unknown') to NULL"
                 })
@@ -643,6 +658,8 @@ def _supplement_steps_with_dq_issues(
                 steps.append({
                     "action": "flag_duplicate_candidates",
                     "column": "[Row-level]",
+                    "dataset": ds_name,
+                    "step_id": make_step_id(ds_name, "[Row-level]", "flag_duplicate_candidates"),
                     "source_issue_type": "exact_duplicate_rows",
                     "note": "Flag duplicate records in staging"
                 })

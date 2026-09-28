@@ -526,10 +526,22 @@ def validate_promoted_plan(
                 ))
 
             # 1. Step ID uniqueness
+            from agent.etl_pipeline.issue_identity import make_step_id
             if not step_id:
-                add_issue("MISSING_STEP_ID", f"Step on column '{col}' is missing a step_id.")
-            elif step_id in seen_step_ids:
-                add_issue("DUPLICATE_STEP_ID", f"Duplicate step ID '{step_id}' found in plan.")
+                step_id = make_step_id(ds_name, col, action)
+                st["step_id"] = step_id
+                st["dataset"] = ds_name
+
+            if step_id in seen_step_ids:
+                # Disambiguate with dataset scope if previous generation was unscoped or collided across datasets
+                dataset_scoped_id = make_step_id(ds_name, col, action)
+                if dataset_scoped_id not in seen_step_ids:
+                    st["step_id"] = dataset_scoped_id
+                    st["dataset"] = ds_name
+                    step_id = dataset_scoped_id
+                    seen_step_ids.add(step_id)
+                else:
+                    add_issue("DUPLICATE_STEP_ID", f"Duplicate step ID '{step_id}' found in plan.")
             else:
                 seen_step_ids.add(step_id)
 
