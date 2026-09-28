@@ -53,6 +53,15 @@ class TemplateEngine:
             cls._instance = cls()
         return cls._instance
 
+    def template_exists(self, template_path: str) -> bool:
+        """Checks if a template exists within templates_dir without raising TemplateNotFound."""
+        normalized_path = template_path.replace("\\", "/")
+        try:
+            self.env.get_template(normalized_path)
+            return True
+        except jinja2.TemplateNotFound:
+            return False
+
     def render(self, template_path: str, **kwargs: Any) -> str:
         """Renders a template file located within the templates_dir."""
         # Normalize template path for cross-platform forward slash
