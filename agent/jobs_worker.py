@@ -119,7 +119,7 @@ def _run_job(job: Dict[str, Any]) -> Dict[str, Any]:
                 result=merged_result,
                 report_markdown=report_md,
                 report_html=report_html,
-                job_id=job_id,
+                job_id=None,  # worker handles blob uploads below; passing job_id here causes double-upload
             )
 
             # Upload artifacts to durable store (disk + Azure Blob Storage)

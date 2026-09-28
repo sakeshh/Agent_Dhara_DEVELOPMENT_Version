@@ -478,6 +478,25 @@ def run_engine3_pipeline(
         dedup_diagnostics = []
         logger.debug("[DQ3] Finding deduplicator disabled (legacy mode)")
 
+    # ── Stage 2b: Merge cross-dataset relationship issues ─────────────────────
+    # relationship_issues contain orphan FK / referential integrity findings
+    # discovered by the cross-dataset agent. They must be merged here before
+    # rule result construction so that referential_integrity is EVALUATED
+    # rather than NOT_EVALUATED in the dimension scorer.
+    if relationship_issues:
+        ri_normalised = []
+        for ri in relationship_issues:
+            # Normalise to the same schema as raw_issues so the pipeline handles them cleanly
+            itype = ri.get("type") or ri.get("issue_type") or "orphan_foreign_key_rows"
+            ri_normalised.append({
+                **ri,
+                "type": itype,
+                "issue_type": itype,
+            })
+        logger.info("[DQ3-RI] Merging %d relationship issues into pipeline for dataset=%s",
+                    len(ri_normalised), name)
+        deduped_issues = deduped_issues + ri_normalised
+
     # ── Stage 3: Build canonical rule results ─────────────────────────────────
     rule_results = build_rule_results_from_issues(
         deduped_issues,

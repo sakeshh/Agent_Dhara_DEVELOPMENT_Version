@@ -119,11 +119,14 @@ def calculate_dimension_quality_scores(
         failed = [r for r in eval_rules if r.status == RuleStatus.FAIL]
         total_eval_units = sum(r.evaluated_count for r in eval_rules)
         total_failed_units_raw = sum(r.failed_count for r in eval_rules)
+        # Clamp: multiple GX expectations per row can push raw failures > row count.
+        # We score against distinct-row granularity: failures are capped at evaluated count.
         total_failed_units = min(total_eval_units, total_failed_units_raw)
 
         if total_eval_units > 0:
+            # Use clamped failures so score is always in [0, 100]
             raw_score = 100.0 * (1.0 - (total_failed_units_raw / total_eval_units))
-            dim_score = round(max(0.0, min(100.0, raw_score)), 2)
+            dim_score = round(max(0.0, min(100.0, 100.0 * (1.0 - (total_failed_units / total_eval_units)))), 2)
         else:
             raw_score = 100.0 * (len(passed) / len(eval_rules))
             dim_score = round(max(0.0, min(100.0, raw_score)), 2)
