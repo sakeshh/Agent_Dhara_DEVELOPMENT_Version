@@ -69,8 +69,10 @@ class SQLCodegenAgent(BaseCodegenAgent):
         has_explicit_blocking = "blocking_issue_count" in context.metadata or "blocking_issue_count" in ing_telem
         if has_explicit_blocking:
             blocking_issue_count = int(context.metadata.get("blocking_issue_count", ing_telem.get("blocking_issue_count", 0)))
+            gating_source = "post_reconciliation"
         else:
             blocking_issue_count = unsupported_issue_count
+            gating_source = "legacy_unsupported_count"
 
         structured_action_count = len(context.structured_actions)
         logical_step_count = len(context.logical_plan.steps) if context.logical_plan else 0
@@ -168,6 +170,9 @@ class SQLCodegenAgent(BaseCodegenAgent):
             )
 
         if strict_mode and blocking_issue_count > 0:
+            warnings_list = []
+            if gating_source == "legacy_unsupported_count":
+                warnings_list.append("Post-reconciliation blocking telemetry was unavailable.")
             telemetry = CompilationTelemetry(
                 ok=False,
                 executable=False,
@@ -175,6 +180,8 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 failure_stage="capability_validation",
                 planner_input_source=planner_input_source,
                 certification_status="BLOCKED",
+                gating_source=gating_source,
+                warnings=warnings_list,
                 blocking_manual_review_issue_count=blocking_manual_review_count,
                 non_blocking_manual_review_issue_count=non_blocking_manual_review_count,
                 independently_planned_action_count=independently_planned,
@@ -446,8 +453,10 @@ class SQLCodegenAgent(BaseCodegenAgent):
         has_explicit_blocking = "blocking_issue_count" in context.metadata or "blocking_issue_count" in ing_telem
         if has_explicit_blocking:
             blocking_issue_count = int(context.metadata.get("blocking_issue_count", ing_telem.get("blocking_issue_count", 0)))
+            gating_source = "post_reconciliation"
         else:
             blocking_issue_count = unsupported_issue_count
+            gating_source = "legacy_unsupported_count"
 
         structured_action_count = len(context.structured_actions)
         logical_step_count = len(context.logical_plan.steps) if context.logical_plan else 0
@@ -551,6 +560,10 @@ class SQLCodegenAgent(BaseCodegenAgent):
 
         total_manual_review = manual_review_issue_count + manual_review_step_count
 
+        warns = list(context.metadata.get("warnings") or [])
+        if gating_source == "legacy_unsupported_count":
+            warns.append("Post-reconciliation blocking telemetry was unavailable.")
+
         telemetry = CompilationTelemetry(
             ok=True,
             executable=True,
@@ -583,6 +596,8 @@ class SQLCodegenAgent(BaseCodegenAgent):
             fallback_projection_used=bool(projection_statement_count > 0 and rendered_transformation_count == 0),
             planner_input_source=planner_input_source,
             coverage=coverage_dict,
+            gating_source=gating_source,
+            warnings=warns,
             step_results=compilation_results,
             issue_reconciliation=issue_reconciliation,
         )
@@ -652,7 +667,24 @@ class SQLCodegenAgent(BaseCodegenAgent):
                     telemetry.partial = True
                     telemetry.warnings.append("One or more transformations failed to render.")
 
-            # Gate 5: Physical plan has steps, but 0 executable steps rendered
+            # Gate 5: Policy enforcement (never_drop_rows)
+            if never_drop:
+                for r in compilation_results:
+                    if r.status == "RENDERED" and r.sql:
+                        non_comment = "\n".join([
+                            l for l in r.sql.splitlines() if not l.strip().startswith("--")
+                        ]).upper()
+                        if "DELETE FROM" in non_comment or re.search(r"\bDELETE\s+[a-zA-Z0-9_#]+", non_comment):
+                            telemetry.ok = False
+                            telemetry.executable = False
+                            telemetry.failure_stage = "policy_enforcement"
+                            raise CodeGenerationError(
+                                f"Policy violation: 'never_drop_rows' is active but step '{r.step_id}' contains a row deletion statement.",
+                                telemetry=telemetry.to_dict(),
+                                failure_stage="policy_enforcement",
+                            )
+
+            # Gate 6: Physical plan has steps, but 0 executable steps rendered
             if planned_step_count > 0 and rendered_step_count == 0:
                 if strict_mode:
                     telemetry.ok = False
@@ -690,6 +722,21 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 telemetry=telemetry.to_dict(),
                 failure_stage="rendering_validation",
             )
+
+        # Invariant Gate: Never generate row deletion if never_drop_rows is active
+        if never_drop:
+            sql_non_comment = "\n".join([
+                l for l in sql_code.splitlines() if not l.strip().startswith("--")
+            ]).upper()
+            if "DELETE FROM" in sql_non_comment or re.search(r"\bDELETE\s+[a-zA-Z0-9_#]+", sql_non_comment):
+                telemetry.ok = False
+                telemetry.executable = False
+                telemetry.failure_stage = "policy_enforcement"
+                raise CodeGenerationError(
+                    "Policy violation: 'never_drop_rows' is active but generated SQL artifact contains row deletion statements.",
+                    telemetry=telemetry.to_dict(),
+                    failure_stage="policy_enforcement",
+                )
 
         artifact = CodeArtifact(
             artifact_id=f"art_{physical_plan.plan_id}_sql",

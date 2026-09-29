@@ -90,6 +90,7 @@ class CompilationTelemetry:
     actions_dropped_count: int = 0
     consolidation_groups: List[Dict[str, Any]] = field(default_factory=list)
     coverage: Dict[str, Any] = field(default_factory=dict)
+    gating_source: str = "post_reconciliation"  # "post_reconciliation" | "legacy_unsupported_count"
     warnings: List[str] = field(default_factory=list)
     step_results: List[StepCompilationResult] = field(default_factory=list)
     issue_reconciliation: List[Dict[str, Any]] = field(default_factory=list)
@@ -158,6 +159,7 @@ class CompilationTelemetry:
             "actions_dropped_count": self.actions_dropped_count,
             "consolidation_groups": self.consolidation_groups,
             "coverage": self.coverage,
+            "gating_source": self.gating_source,
             "warnings": self.warnings,
             "issue_reconciliation": self.issue_reconciliation,
         }

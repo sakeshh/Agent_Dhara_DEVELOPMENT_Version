@@ -36,9 +36,9 @@ END;
 
 IF OBJECT_ID('tempdb..#Rejected_{{ step_id | replace("-", "_") }}') IS NOT NULL DROP TABLE #Rejected_{{ step_id | replace("-", "_") }};
 
-{% elif disp == 'FLAG' %}
--- FLAG: Log rows that violate the condition to ETL_REJECT.Rejection_Log.
--- The source row is NOT mutated — the key column retains its original value (including NULL).
+{% elif disp == 'FLAG' or (disp == 'REJECT' and never_drop_rows) %}
+-- FLAG / REJECT with never_drop_rows: Log rows that violate the condition to ETL_REJECT.Rejection_Log.
+-- The source row is NOT mutated and NOT deleted — the original value is retained.
 -- The caller decides how to handle the flagged rows after review.
 IF EXISTS (SELECT 1 FROM {{ target_table }} WHERE {{ sql_condition }})
 BEGIN

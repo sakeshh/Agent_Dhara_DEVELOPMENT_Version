@@ -1783,7 +1783,8 @@ def etl_generate_code(
     # Changes to any of these inputs must produce a different ETL artifact.
     _idem_strict = str(flow.get("strict_execution", "")).lower()
     _idem_preview = str(flow.get("preview_mode", "")).lower()
-    _idem_compiler_ver = "2.0"  # bump when compiler contract changes
+    _idem_compiler_ver = "2.0.1"  # bump when compiler contract changes
+    _idem_compiler_build = "5eaccf9"
     idempotency_key = "|".join([
         f"sid={sid}",
         f"plan={plan_id}",
@@ -1791,6 +1792,7 @@ def etl_generate_code(
         f"genmode={generation_mode or 'full'}",
         f"codemode={codegen_mode or 'auto'}",
         f"compver={_idem_compiler_ver}",
+        f"build={_idem_compiler_build}",
         f"strict={_idem_strict}",
         f"preview={_idem_preview}",
     ])

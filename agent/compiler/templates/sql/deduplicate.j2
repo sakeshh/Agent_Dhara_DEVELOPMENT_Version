@@ -9,12 +9,15 @@ WITH [DedupCTE] AS (
     FROM {{ target_table }}
 )
 {% if never_drop_rows %}
--- Quarantine duplicate rows to Rejection_Log
+-- Flag duplicate rows to Rejection_Log (retained due to never_drop_rows policy)
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData])
+SELECT @PipelineId, @RunId, '{{ dataset_name }}', '{{ issue_id | default("") }}', '{{ step_id }}', '{{ columns | join(", ") }}', 'Duplicate record (retained due to never_drop_rows policy)', 'FLAG', NULL, (SELECT * FROM [DedupCTE] c WHERE c.[__duplicate_rank] > 1 FOR JSON PATH);
+{% else %}
+-- Quarantine duplicate rows to Rejection_Log and delete
 INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData])
 SELECT @PipelineId, @RunId, '{{ dataset_name }}', '{{ issue_id | default("") }}', '{{ step_id }}', '{{ columns | join(", ") }}', 'Duplicate record', 'QUARANTINE', NULL, (SELECT * FROM [DedupCTE] c WHERE c.[__duplicate_rank] > 1 FOR JSON PATH);
 
 DELETE FROM [DedupCTE] WHERE [__duplicate_rank] > 1;
-{% else %}
-DELETE FROM [DedupCTE] WHERE [__duplicate_rank] > 1;
 {% endif %}
+
 

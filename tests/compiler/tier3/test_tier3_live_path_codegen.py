@@ -845,3 +845,122 @@ def test_trim_on_date_columns_rejected():
     for iss in canonical:
         assert iss.resolved_action is None, f"{iss.column} must not be mapped to TRIM"
         assert "manual_review_incompatible_trim_on_date_column" in (iss.resolution_path or "")
+
+
+def test_never_drop_rows_actively_enforced_no_delete():
+    """
+    Regression & Policy Guarantee: When options['never_drop_rows'] is True,
+    neither individual step templates (deduplicate, conditional_update, sanitize_email, etc.)
+    nor the final emitted SQL script may contain any row deletion statements (DELETE FROM / DELETE).
+    """
+    pipeline = CompilerPipeline()
+    ctx = CompilerContext(
+        session_id="test_never_drop_enforced",
+        target_engine=ExecutionEngine.AZURE_SQL,
+        options={"strict_execution": True, "never_drop_rows": True},
+        dataset_profiles={
+            "dbo.Dhara_Employee": DatasetProfile(
+                dataset_id="dbo.Dhara_Employee",
+                columns={
+                    "EmployeeID": ColumnProfile(name="EmployeeID", dtype="int"),
+                    "Email": ColumnProfile(name="Email", dtype="string"),
+                    "Phone": ColumnProfile(name="Phone", dtype="string"),
+                    "IsActive": ColumnProfile(name="IsActive", dtype="string"),
+                },
+            )
+        },
+        structured_actions=[
+            StructuredAction(
+                action_type=ActionType.DEDUPLICATE,
+                dataset_name="dbo.Dhara_Employee",
+                target_columns=["EmployeeID"],
+                parameters={"disposition": "REJECT"},
+            ),
+            StructuredAction(
+                action_type=ActionType.SANITIZE_EMAIL,
+                dataset_name="dbo.Dhara_Employee",
+                target_columns=["Email"],
+                parameters={"disposition": "REJECT"},
+            ),
+            StructuredAction(
+                action_type=ActionType.NORMALIZE_PHONE,
+                dataset_name="dbo.Dhara_Employee",
+                target_columns=["Phone"],
+                parameters={"disposition": "REJECT"},
+            ),
+            StructuredAction(
+                action_type=ActionType.STANDARDIZE_BOOLEAN,
+                dataset_name="dbo.Dhara_Employee",
+                target_columns=["IsActive"],
+                parameters={"disposition": "REJECT"},
+            ),
+        ],
+    )
+    ctx.metadata["blocking_issue_count"] = 0
+    ctx.metadata["unsupported_issue_count"] = 0
+
+    compiled_ctx, snapshot = pipeline.compile(ctx)
+    assert snapshot is not None, "Snapshot must be emitted"
+    sql = snapshot.generated_code
+    assert sql is not None, "Generated SQL code must not be None"
+
+    # Invariant: No non-comment lines may contain row deletion
+    non_comment_lines = [
+        line.strip() for line in sql.splitlines()
+        if not line.strip().startswith("--") and line.strip()
+    ]
+    non_comment_sql = "\n".join(non_comment_lines).upper()
+
+    assert "DELETE FROM" not in non_comment_sql, "Generated SQL must NOT contain DELETE FROM when never_drop_rows=True"
+    assert "DELETE S" not in non_comment_sql, "Generated SQL must NOT contain alias row deletion when never_drop_rows=True"
+    assert "DELETE C" not in non_comment_sql, "Generated SQL must NOT contain child row deletion when never_drop_rows=True"
+
+
+def test_gating_source_telemetry_and_warnings():
+    """
+    Verify that gating_source reflects 'post_reconciliation' when blocking_issue_count is explicitly provided,
+    and 'legacy_unsupported_count' with appropriate warning when falling back.
+    """
+    pipeline = CompilerPipeline()
+
+    # 1. Post reconciliation source
+    ctx1 = CompilerContext(
+        session_id="test_gating_post_recon",
+        target_engine=ExecutionEngine.AZURE_SQL,
+        options={"strict_execution": False, "preview_mode": True},
+        dataset_profiles={"dbo.Employee": DatasetProfile(dataset_id="dbo.Employee", columns={"name": ColumnProfile(name="name", dtype="string")})},
+        structured_actions=[StructuredAction(action_type=ActionType.TRIM, dataset_name="dbo.Employee", target_columns=["name"])],
+    )
+    ctx1.metadata["blocking_issue_count"] = 0
+    ctx1, _ = pipeline.compile(ctx1)
+    telem1 = ctx1.metadata.get("compilation_telemetry", {})
+    assert telem1.get("gating_source") == "post_reconciliation"
+    assert "Post-reconciliation blocking telemetry was unavailable." not in telem1.get("warnings", [])
+
+    # 2. Legacy fallback source
+    ctx2 = CompilerContext(
+        session_id="test_gating_legacy",
+        target_engine=ExecutionEngine.AZURE_SQL,
+        options={"strict_execution": False, "preview_mode": True},
+        dataset_profiles={"dbo.Employee": DatasetProfile(dataset_id="dbo.Employee", columns={"name": ColumnProfile(name="name", dtype="string")})},
+        structured_actions=[StructuredAction(action_type=ActionType.TRIM, dataset_name="dbo.Employee", target_columns=["name"])],
+    )
+    # omit blocking_issue_count entirely
+    ctx2.metadata["ingestion_telemetry"] = {"unsupported_issue_count": 0}
+    ctx2, _ = pipeline.compile(ctx2)
+    telem2 = ctx2.metadata.get("compilation_telemetry", {})
+    assert telem2.get("gating_source") == "legacy_unsupported_count"
+    assert any("Post-reconciliation blocking telemetry was unavailable." in w for w in telem2.get("warnings", []))
+
+
+def test_idempotency_fingerprint_compiler_version_2_0_1():
+    """
+    Verify that etl_handlers generates idempotency keys with compiler version 2.0.1
+    and compiler build tag, ensuring invalidated persistent cache for prior failed runs.
+    """
+    import inspect
+    from agent import etl_handlers
+    src = inspect.getsource(etl_handlers.etl_generate_code)
+    assert 'compver=2.0.1' in src or '_idem_compiler_ver = "2.0.1"' in src
+    assert 'build=' in src or '_idem_compiler_build' in src
+
