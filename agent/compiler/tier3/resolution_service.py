@@ -126,6 +126,7 @@ class Tier3ResolutionService:
         business_rules: Optional[List[BusinessRule]] = None,
         target_engine: ExecutionEngine = ExecutionEngine.AZURE_SQL,
         approval_records: Optional[Any] = None,
+        resolved_manual_review: Optional[List[Dict[str, Any]]] = None,
     ) -> Tier3ResolutionResult:
         tracker = IssueReconciliationTracker()
         compiler_eligible_actions: List[StructuredAction] = []
@@ -146,6 +147,26 @@ class Tier3ResolutionService:
                 )
                 tracker.record_issue(iss_id, bucket)
                 handled_issue_ids.add(iss_id)
+
+        # Reconcile manual review resolutions already completed
+        resolved_mr_ids: Set[str] = set()
+        resolved_mr_keys: Set[Tuple[str, Optional[str], str]] = set()
+        resolved_mr_cols: Set[Tuple[str, Optional[str]]] = set()
+        for mr in (resolved_manual_review or []):
+            if isinstance(mr, dict):
+                for id_k in ("id", "item_id", "issue_id"):
+                    val = mr.get(id_k)
+                    if val:
+                        resolved_mr_ids.add(str(val))
+                for sid in mr.get("source_issue_ids") or []:
+                    if sid:
+                        resolved_mr_ids.add(str(sid))
+                mr_ds = str(mr.get("dataset") or "").strip().lower()
+                mr_col = str(mr.get("column")).strip("[]").lower() if mr.get("column") and not IngestionBridge.is_pseudo_column(mr.get("column")) else None
+                mr_it = str(mr.get("issue_type") or "").strip().lower()
+                if mr_ds:
+                    resolved_mr_keys.add((mr_ds, mr_col, mr_it))
+                    resolved_mr_cols.add((mr_ds, mr_col))
 
         # 2. Extract any pre-approved records
         approvals_by_proposal: Dict[str, ApprovalRecord] = {}
@@ -180,6 +201,19 @@ class Tier3ResolutionService:
         # 3. Process each canonical issue
         for c_iss in canonical_issues:
             if c_iss.issue_id in handled_issue_ids:
+                continue
+
+            # Check if covered by resolved manual review
+            is_mr_resolved = (
+                c_iss.issue_id in resolved_mr_ids
+                or any(mid in resolved_mr_ids for mid in getattr(c_iss, "merged_issue_ids", []))
+                or (c_iss.dataset.lower(), (c_iss.column or "").lower() if c_iss.column else None, c_iss.issue_type.lower()) in resolved_mr_keys
+                or (c_iss.dataset.lower(), (c_iss.column or "").lower() if c_iss.column else None) in resolved_mr_cols
+                or c_iss.resolution_path == "resolved_by_manual_review"
+            )
+            if is_mr_resolved:
+                tracker.record_issue(c_iss.issue_id, ResolutionBucket.TIER1_COMPILED)
+                handled_issue_ids.add(c_iss.issue_id)
                 continue
 
             # Classify manual-review / statistical observation items or invalid plan steps

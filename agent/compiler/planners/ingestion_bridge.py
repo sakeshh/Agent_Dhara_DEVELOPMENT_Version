@@ -918,7 +918,7 @@ class IngestionBridge:
                     _add_raw(
                         ds_name=step.get("dataset") or ds_k,
                         col=step.get("column"),
-                        itype=step.get("issue_type") or f"planned_{act}",
+                        itype=step.get("source_issue_type") or step.get("issue_type") or f"planned_{act}",
                         sug=act,
                         sev="medium",
                         params=step.get("params") or step.get("parameters") or {},
@@ -1031,7 +1031,38 @@ class IngestionBridge:
         manual_review_issues: List[Dict[str, Any]] = []
         unsupported_issues: List[Dict[str, Any]] = []
 
+        # Extract resolved manual review items from plan
+        resolved_mr_items = plan.get("resolved_manual_review") or []
+        resolved_mr_ids: Set[str] = set()
+        resolved_mr_keys: Set[Tuple[str, Optional[str], str]] = set()
+        resolved_mr_cols: Set[Tuple[str, Optional[str]]] = set()
+        for r in resolved_mr_items:
+            if isinstance(r, dict):
+                for k in ("id", "item_id", "issue_id"):
+                    if r.get(k):
+                        resolved_mr_ids.add(str(r[k]))
+                for sid in r.get("source_issue_ids") or []:
+                    if sid:
+                        resolved_mr_ids.add(str(sid))
+                r_ds = self.normalize_dataset_name(r.get("dataset") or "", known_datasets=known_datasets).lower()
+                r_col = str(r.get("column")).strip("[]").lower() if r.get("column") and not self.is_pseudo_column(r.get("column")) else None
+                r_it = str(r.get("issue_type") or "").strip().lower()
+                if r_ds:
+                    resolved_mr_keys.add((r_ds, r_col, r_it))
+                    resolved_mr_cols.add((r_ds, r_col))
+
         for iss in deduped:
+            is_resolved_mr = (
+                iss.issue_id in resolved_mr_ids
+                or any(mid in resolved_mr_ids for mid in getattr(iss, "merged_issue_ids", []))
+                or (iss.dataset.lower(), (iss.column or "").lower() if iss.column else None, iss.issue_type.lower()) in resolved_mr_keys
+                or (iss.dataset.lower(), (iss.column or "").lower() if iss.column else None) in resolved_mr_cols
+            )
+            if is_resolved_mr:
+                mapped_count += 1
+                iss.resolution_path = "resolved_by_manual_review"
+                continue
+
             if self.is_manual_review_issue(iss) or (iss.resolution_path and "manual_review" in iss.resolution_path):
                 manual_info = {
                     "issue_id": iss.issue_id,

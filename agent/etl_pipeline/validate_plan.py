@@ -400,14 +400,32 @@ def validate_etl_plan_for_confirm(
     from agent.compiler.planners.ingestion_bridge import CanonicalIssue
     from agent.compiler.tier3.resolution_service import Tier3ResolutionService
 
+    approved_waivers = set()
+    for w in (plan.get("approved_waivers") or []):
+        if isinstance(w, str):
+            approved_waivers.add(w)
+        elif isinstance(w, dict) and w.get("issue_id"):
+            approved_waivers.add(str(w["issue_id"]))
+    for wid in (plan.get("waived_issue_ids") or []):
+        if isinstance(wid, str):
+            approved_waivers.add(wid)
+
     manual_pending_blocking = []
     for m in (plan.get("manual_review") or []):
         if not isinstance(m, dict) or str(m.get("status") or "pending").lower() != "pending":
             continue
+        m_id = str(m.get("id") or m.get("item_id") or m.get("issue_id") or "")
+        if m_id in approved_waivers or str(m.get("source_issue_id") or "") in approved_waivers:
+            continue
         if m.get("is_blocking") is False or str(m.get("severity") or "").upper() == "LOW":
             continue
+
+        itype = str(m.get("issue_type") or "").lower()
+        if itype in ("string_length_outlier", "all_caps_values", "all_caps", "binary_like_column", "binary_like", "unusual_distribution"):
+            continue
+
         c_iss = CanonicalIssue(
-            issue_id=str(m.get("id") or m.get("issue_id") or "iss_mr"),
+            issue_id=m_id or "iss_mr",
             dataset=m.get("dataset") or "",
             raw_dataset=m.get("dataset") or "",
             column=m.get("column"),
@@ -417,7 +435,11 @@ def validate_etl_plan_for_confirm(
             message=m.get("message") or "",
             resolution_path=m.get("resolution_path") or "",
         )
-        if Tier3ResolutionService.is_blocking_manual_review(c_iss):
+        if (
+            m.get("is_blocking") is True
+            or itype in ("very_high_cardinality", "missing_required_column", "null_heavy", "untrimmed_whitespace", "pii_exposure")
+            or Tier3ResolutionService.is_blocking_manual_review(c_iss)
+        ):
             manual_pending_blocking.append(m)
 
     if manual_pending_blocking:

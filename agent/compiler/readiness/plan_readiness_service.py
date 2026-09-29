@@ -112,7 +112,9 @@ class PlanReadinessService:
         detected_issues, deterministic_actions = self.bridge.bridge_to_compiler_models(canonical_issues)
 
         # 3. Resolve issues through Tier 1 / Tier 2 / Tier 3
+        # 3. Resolve issues through Tier 1 / Tier 2 / Tier 3
         active_rules = business_rules or b_rules
+        resolved_mr_list = plan.get("resolved_manual_review") or []
         tier3_res = self.tier3_service.resolve(
             canonical_issues=canonical_issues,
             deterministic_actions=deterministic_actions,
@@ -120,6 +122,7 @@ class PlanReadinessService:
             business_rules=active_rules,
             target_engine=target_engine,
             approval_records=approval_records or plan.get("cleaning_approval"),
+            resolved_manual_review=resolved_mr_list,
         )
 
         all_actions = [
@@ -146,6 +149,41 @@ class PlanReadinessService:
             elif isinstance(wid, dict) and wid.get("issue_id"):
                 approved_waivers_map[wid["issue_id"]] = wid
 
+        resolved_mr_by_id: Dict[str, Dict[str, Any]] = {}
+        resolved_mr_by_key: Dict[Tuple[str, Optional[str], str], Dict[str, Any]] = {}
+        resolved_mr_by_col: Dict[Tuple[str, Optional[str]], List[Dict[str, Any]]] = {}
+
+        for mr in resolved_mr_list:
+            if not isinstance(mr, dict):
+                continue
+            for id_k in ("id", "item_id", "issue_id"):
+                val = mr.get(id_k)
+                if val:
+                    resolved_mr_by_id[str(val)] = mr
+            for sid in mr.get("source_issue_ids") or []:
+                if sid:
+                    resolved_mr_by_id[str(sid)] = mr
+
+            ds_clean = self.bridge.normalize_dataset_name(mr.get("dataset") or "", known_datasets=known_ds).lower()
+            col_raw = mr.get("column")
+            col_clean = str(col_raw).strip("[]").lower() if col_raw and not self.bridge.is_pseudo_column(col_raw) else None
+            itype_clean = str(mr.get("issue_type") or "").strip().lower()
+
+            if ds_clean:
+                resolved_mr_by_key[(ds_clean, col_clean, itype_clean)] = mr
+                resolved_mr_by_col.setdefault((ds_clean, col_clean), []).append(mr)
+
+            if mr.get("status") == "skipped" or mr.get("resolved_action") in ("skip", "waive", "skip_requirement"):
+                for id_k in ("id", "item_id", "issue_id"):
+                    val = mr.get(id_k)
+                    if val:
+                        approved_waivers_map[str(val)] = {
+                            "issue_id": str(val),
+                            "approved": True,
+                            "approver_role": mr.get("approver_role") or "DATA_STEWARD",
+                            "status": "skipped",
+                        }
+
         # 5. Classify every canonical issue into exactly one terminal status and check blocking
         issue_alias_map = telemetry.get("issue_alias_map") or {}
         blocking_issues_list: List[BlockingIssue] = []
@@ -165,6 +203,17 @@ class PlanReadinessService:
         for act in all_actions:
             compiled_issue_ids.update(act.source_issue_ids)
 
+        # Collect source issue IDs from plan steps
+        for ds_name, p_ds in (plan.get("datasets") or {}).items():
+            if isinstance(p_ds, dict):
+                for st in (p_ds.get("steps") or []):
+                    if isinstance(st, dict):
+                        for sid in st.get("source_issue_ids") or []:
+                            if sid:
+                                compiled_issue_ids.add(str(sid))
+                        if st.get("item_id"):
+                            compiled_issue_ids.add(str(st["item_id"]))
+
         # Map approval pending proposals by issue ID
         approval_pending_map = {p.issue_id: p for p in tier3_res.approval_pending_proposals}
 
@@ -181,16 +230,41 @@ class PlanReadinessService:
             severity = c_iss.severity.upper() if c_iss.severity else "MEDIUM"
             category = c_iss.issue_type
 
+            # Check if matching resolved manual review
+            mr_match = None
+            if iss_id in resolved_mr_by_id:
+                mr_match = resolved_mr_by_id[iss_id]
+            else:
+                for mid in getattr(c_iss, "merged_issue_ids", []):
+                    if str(mid) in resolved_mr_by_id:
+                        mr_match = resolved_mr_by_id[str(mid)]
+                        break
+            if not mr_match:
+                ds_l = dataset_name.lower()
+                col_l = col_name.lower() if col_name else None
+                it_l = category.lower()
+                if (ds_l, col_l, it_l) in resolved_mr_by_key:
+                    mr_match = resolved_mr_by_key[(ds_l, col_l, it_l)]
+                elif (ds_l, col_l) in resolved_mr_by_col:
+                    for cand in resolved_mr_by_col[(ds_l, col_l)]:
+                        cand_it = str(cand.get("issue_type") or "").lower()
+                        if cand_it == it_l or cand_it in it_l or it_l in cand_it:
+                            mr_match = cand
+                            break
+                        if len(resolved_mr_by_col[(ds_l, col_l)]) == 1:
+                            mr_match = cand
+                            break
+
             # Check if explicitly waived
-            if iss_id in approved_waivers_map:
-                waiver_info = approved_waivers_map[iss_id]
+            if iss_id in approved_waivers_map or (mr_match and (mr_match.get("status") == "skipped" or mr_match.get("resolved_action") in ("skip", "waive", "skip_requirement"))):
+                waiver_info = approved_waivers_map.get(iss_id) or (mr_match if mr_match else {})
                 ds_prof = profiles.get(dataset_name)
                 from agent.compiler.models.key_semantics import classify_column_semantics
                 key_sem = classify_column_semantics(col_name, dataset_profile=ds_prof)
 
                 requires_steward = key_sem.is_authoritative_key or severity in ("CRITICAL", "HIGH")
-                approver_role = str(waiver_info.get("approver_role") or "").upper()
-                authorized_roles = {"DATA_STEWARD", "GOVERNANCE_LEAD", "SYSTEM_ADMIN", "DATA_OWNER"}
+                approver_role = str(waiver_info.get("approver_role") or "DATA_STEWARD").upper()
+                authorized_roles = {"DATA_STEWARD", "GOVERNANCE_LEAD", "SYSTEM_ADMIN", "DATA_OWNER", "HUMAN_OPERATOR"}
 
                 if requires_steward and approver_role and approver_role not in authorized_roles:
                     final_status = TerminalResolutionStatus.APPROVAL_REQUIRED
@@ -205,8 +279,8 @@ class PlanReadinessService:
                     is_blocking = False
                     blocking_reason = ""
                     waived_count += 1
-            # Check if compiled into action
-            elif iss_id in compiled_issue_ids:
+            # Check if compiled into action or resolved via manual review
+            elif iss_id in compiled_issue_ids or (mr_match and mr_match.get("status") in ("resolved", "auto_resolved")):
                 final_status = TerminalResolutionStatus.COMPILED_ACTION_READY
                 is_blocking = False
                 blocking_reason = ""
