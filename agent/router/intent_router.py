@@ -24,6 +24,10 @@ _MODERATE_PATTERNS = [
     (r"\b(group\s+by|aggregate|summarize|rollup|cube)\b", "aggregation"),
     (r"\b(window\s+function|row_number|rank\(\)|dense_rank|partition\s+by)\b", "window_function"),
     (r"\b(pivot|unpivot)\b", "pivot"),
+    (r"\b(business\s+rule|rule[s]?|br-\d+|requirement|policy|governance)\b", "business_rules"),
+    (r"\b(if\s+|when\s+|case\s+when|then\s+|unless|conditional)\b", "conditional_logic"),
+    (r"\b(validation|constraint|range|between|threshold|criteria|allowed\s+values|eligib\w+)\b", "validation_rules"),
+    (r"\b(calculate|compute|derive|formula)\b", "derived_column"),
 ]
 
 _SIMPLE_PATTERNS = [
@@ -88,6 +92,10 @@ class IntentRouter:
             if re.search(pattern, prompt_lower):
                 matched_ops.append(op_name)
                 matched_patterns.append(pattern)
+
+        # Also classify detailed / multi-rule custom prompts as Moderate
+        if not matched_ops and len(prompt_lower.split()) > 35:
+            matched_ops.append("custom_business_rules")
 
         if matched_ops:
             elapsed_ms = (time.perf_counter() - t0) * 1000
