@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -97,6 +99,9 @@ class IngestionBridge:
         "validate_referential_integrity": ActionType.VALIDATE_REFERENTIAL_INTEGRITY,
         "ri_check": ActionType.VALIDATE_REFERENTIAL_INTEGRITY,
         "conditional_update": ActionType.CONDITIONAL_UPDATE,
+        "flag_only": ActionType.CONDITIONAL_UPDATE,
+        "preserve_null_and_flag": ActionType.CONDITIONAL_UPDATE,
+        "flag": ActionType.CONDITIONAL_UPDATE,
         "prefix_add": ActionType.PREFIX_ADD,
         "suffix_add": ActionType.SUFFIX_ADD,
         "pattern_replace": ActionType.PATTERN_REPLACE,
@@ -282,6 +287,34 @@ class IngestionBridge:
             return True
         return False
 
+    @staticmethod
+    def generate_canonical_issue_id(
+        dataset: str,
+        column: Optional[str],
+        issue_type: str,
+        rule_id: Optional[str] = None,
+        parameters: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Generates a stable, deterministic canonical issue ID from semantic content."""
+        norm_ds = dataset.lower().strip()
+        norm_col = column.lower().strip() if column else ""
+        norm_type = issue_type.lower().strip()
+        norm_rule = str(rule_id or "").strip()
+        rel_sig = ""
+        if parameters:
+            if parameters.get("child_key") or parameters.get("parent_key"):
+                rel_sig = f"{parameters.get('parent_dataset', '')}:{parameters.get('child_key', '')}->{parameters.get('parent_key', '')}"
+        key_obj = {
+            "dataset": norm_ds,
+            "column": norm_col,
+            "issue_type": norm_type,
+            "rule_id": norm_rule,
+            "relationship": rel_sig,
+        }
+        sig = hashlib.sha256(json.dumps(key_obj, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+        col_tag = f"_{norm_col}" if norm_col else "_global"
+        return f"ci_{norm_ds}{col_tag}_{sig}"
+
     def __init__(self, default_schema: str = "dbo"):
         self.default_schema = default_schema
 
@@ -429,7 +462,13 @@ class IngestionBridge:
                     col_clean = col_str.strip("[]")
             else:
                 col_clean = None
-            iss_id = issue_id or f"iss_{norm_ds}_{col_clean or 'global'}_{len(raw_issues) + 1}"
+            iss_id = issue_id or self.generate_canonical_issue_id(
+                dataset=norm_ds,
+                column=col_clean,
+                issue_type=itype,
+                rule_id=rule_id,
+                parameters=params,
+            )
             
             action, res_path = self.resolve_action(
                 planned_action=explicit_act,
@@ -841,6 +880,24 @@ class IngestionBridge:
                 msg=rri.get("message") or "",
             )
 
+        # ── 3b. assess["issues"] (flat list) ──────────────────────────────────
+        for item in (assess.get("issues") or []):
+            if isinstance(item, dict):
+                total_assessment_discovered += 1
+                _add_raw(
+                    ds_name=item.get("dataset") or "",
+                    col=item.get("column") or item.get("column_name"),
+                    itype=item.get("issue_type") or item.get("category") or "unknown_issue",
+                    sug=item.get("suggested_action") or item.get("recommendation"),
+                    sev=item.get("severity") or "medium",
+                    params=item.get("parameters") or {},
+                    source="assessment_flat_issues",
+                    msg=item.get("message") or item.get("description") or "",
+                    aff_rows=int(item.get("row_count_affected") or item.get("affected_rows") or 0),
+                    rule_id=item.get("rule_id"),
+                    issue_id=item.get("issue_id"),
+                )
+
         # ── 4. plan["datasets"][dataset]["steps"] ─────────────────────────────
         for ds_k, p_ds in (plan.get("datasets") or {}).items():
             if isinstance(p_ds, dict):
@@ -908,6 +965,12 @@ class IngestionBridge:
         seen_keys: Set[Tuple[str, Optional[str], Optional[ActionType], str]] = set()
         duplicates_removed = 0
 
+        issue_alias_map: Dict[str, str] = {}
+        for iss in raw_issues:
+            issue_alias_map[iss.issue_id] = iss.issue_id
+            for mid in getattr(iss, "merged_issue_ids", []):
+                issue_alias_map[mid] = iss.issue_id
+
         for iss in raw_issues:
             # Key combines dataset, column, resolved action (if any), and normalized issue type
             key = (
@@ -928,6 +991,9 @@ class IngestionBridge:
                     )
                     if existing_key == key:
                         existing.merged_issue_ids.append(iss.issue_id)
+                        issue_alias_map[iss.issue_id] = existing.issue_id
+                        for mid in getattr(iss, "merged_issue_ids", []):
+                            issue_alias_map[mid] = existing.issue_id
                         for pk, pv in iss.parameters.items():
                             if pk not in existing.parameters:
                                 existing.parameters[pk] = pv
@@ -1013,6 +1079,7 @@ class IngestionBridge:
             "plan_discovered_count": total_plan_discovered,
             "canonical_issue_count": canonical_issue_count,
             "canonical_issue_ids": list(canonical_issue_ids),
+            "issue_alias_map": issue_alias_map,
             "normalized_issue_count": canonical_issue_count,
             "duplicates_removed_count": duplicates_removed,
             "duplicate_records_removed": duplicates_removed,
@@ -1182,7 +1249,14 @@ class IngestionBridge:
                         )
                         c_iss.resolved_action = None
                         c_iss.resolution_path = "manual_review_incompatible_trim_on_date_column"
-                        continue
+                # DEFENSE IN DEPTH GUARD 5: Missing condition for CONDITIONAL_UPDATE
+                if action == ActionType.CONDITIONAL_UPDATE:
+                    if not c_iss.parameters.get("condition") and not c_iss.parameters.get("condition_ast"):
+                        col_ref = f"[{cols[0]}]" if cols else "value"
+                        c_iss.parameters["condition"] = f"{col_ref} IS NULL"
+                        c_iss.parameters.setdefault("disposition", "FLAG")
+                        c_iss.parameters.setdefault("new_value", "1")
+                        c_iss.parameters.setdefault("else_value", "0")
 
                 source_enum = ActionSource.ASSESSMENT
                 if c_iss.source.startswith("plan_"):
@@ -1196,11 +1270,16 @@ class IngestionBridge:
                     parameters=dict(c_iss.parameters),
                     source=source_enum,
                     source_reference=c_iss.rule_id or c_iss.issue_id,
-                    source_issue_ids=sorted(set([c_iss.issue_id] + getattr(c_iss, "merged_issue_ids", []))),
+                    source_issue_ids=[c_iss.issue_id],
                     extraction_method=c_iss.resolution_path or "deterministic",
                     confidence=1.0,
                     requires_approval=bool(c_iss.parameters.get("requires_approval", False)),
-                    metadata={"canonical_source": c_iss.source, "issue_type": c_iss.issue_type},
+                    metadata={
+                        "canonical_source": c_iss.source,
+                        "issue_type": c_iss.issue_type,
+                        "source_issue_ids": sorted(set([c_iss.issue_id] + getattr(c_iss, "merged_issue_ids", []))),
+                        "merged_issue_ids": list(getattr(c_iss, "merged_issue_ids", [])),
+                    },
                 )
 
                 # UNIVERSAL DEFENSE IN DEPTH GUARD: Validate typed parameter contract before emission

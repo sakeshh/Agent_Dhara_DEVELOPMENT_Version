@@ -30,6 +30,19 @@ from agent.compiler.models.execution import (
     FailureBehavior,
     TransformationPolicy,
 )
+from agent.compiler.models.plan_readiness import (
+    ReadinessState,
+    TerminalResolutionStatus,
+    BLOCKING_TERMINAL_STATUSES,
+    BlockingIssue,
+    PlanReadinessResult,
+)
+from agent.compiler.models.canonical_manifest import CanonicalResolutionManifest
+from agent.compiler.models.key_semantics import (
+    EvidenceAuthority,
+    KeySemantics,
+    classify_column_semantics,
+)
 
 __all__ = [
     "ColumnProfile",
@@ -72,4 +85,13 @@ __all__ = [
     "ExecutionMode",
     "FailureBehavior",
     "TransformationPolicy",
+    "ReadinessState",
+    "TerminalResolutionStatus",
+    "BLOCKING_TERMINAL_STATUSES",
+    "BlockingIssue",
+    "PlanReadinessResult",
+    "CanonicalResolutionManifest",
+    "EvidenceAuthority",
+    "KeySemantics",
+    "classify_column_semantics",
 ]

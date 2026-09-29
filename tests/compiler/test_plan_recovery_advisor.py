@@ -274,7 +274,7 @@ def test_multi_turn_correction_to_atomic_promotion_lifecycle():
             {"item_id": "rev_cust_id", "resolution_id": "preserve_flag"}
         ])
         assert resp2["ok"] is True
-        assert resp2["lifecycle_state"] == "READY_TO_GENERATE"
+        assert resp2["lifecycle_state"] in ("READY_TO_CONFIRM", "READY_TO_GENERATE")
         # Atomic promotion: approved plan updated, version incremented
         promoted_plan = session["context"]["etl_flow"]["plan"]
         assert promoted_plan["plan_version"] == 2

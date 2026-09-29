@@ -769,6 +769,8 @@ def api_etl_confirm(payload: EtlConfirmPayload, _auth: None = Depends(require_ba
     )
     if result.get("http_status") == 409 or result.get("status") in ("STALE_PLAN_VERSION", "SCHEMA_DRIFT"):
         raise HTTPException(status_code=409, detail=result)
+    if result.get("http_status") == 422 or result.get("status") == "PLAN_NOT_READY_FOR_CONFIRMATION" or result.get("error") == "PLAN_NOT_READY_FOR_CONFIRMATION":
+        raise HTTPException(status_code=422, detail=result)
     return result
 
 

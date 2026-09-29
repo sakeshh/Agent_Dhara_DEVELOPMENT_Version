@@ -64,7 +64,11 @@ class Tier3ResolutionService:
         self.action_adapter = action_adapter or Tier3ActionAdapter()
 
     @staticmethod
-    def is_blocking_manual_review(c_iss: CanonicalIssue) -> bool:
+    def is_blocking_manual_review(
+        c_iss: CanonicalIssue,
+        dataset_profiles: Optional[Dict[str, DatasetProfile]] = None,
+        business_rules: Optional[List[Any]] = None,
+    ) -> bool:
         col = (c_iss.column or "").lower()
         itype = (c_iss.issue_type or "").lower()
         msg = (c_iss.message or "").lower()
@@ -82,17 +86,26 @@ class Tier3ResolutionService:
         if "missing_declared_key" in res_p or "planned_flag_missing_declared_key" in itype:
             return False
 
-        # 1. Primary keys or foreign keys missing / corrupt
-        is_key = any(k in col for k in ("id", "key", "pk", "fk", "code"))
-        # Exclude self-referencing / manager hierarchies or informational observation fields
+        # Check self-referencing / manager hierarchies or informational observation fields
         if "manager" in col or "parent" in col or "changedby" in col or "statushistory" in col:
-            is_key = False
-        if is_key and any(m in itype or m in msg for m in ("null", "missing", "orphan", "integrity", "duplicate", "invalid")):
-            return True
+            return False
+
+        # 1. Metadata-driven Key Semantics
+        ds_prof = dataset_profiles.get(c_iss.dataset) if dataset_profiles else None
+        from agent.compiler.models.key_semantics import classify_column_semantics, EvidenceAuthority
+        key_sem = classify_column_semantics(c_iss.column, dataset_profile=ds_prof, business_rules=business_rules)
+
+        if key_sem.is_authoritative_key:
+            if any(m in itype or m in msg for m in ("null", "missing", "orphan", "integrity", "duplicate", "invalid")):
+                return True
 
         # 2. Referential integrity or schema violations that invalidate downstream relational algebra
         if "referential_integrity" in itype or "orphan_fk" in itype:
-            return True
+            # Only block if foreign key relationship is authoritative or declared
+            if key_sem.is_authoritative_key or not c_iss.column:
+                return True
+            return False
+
         if "schema" in itype and "policy" not in itype and "custom_observation" not in itype and "constraint" not in itype:
             return True
 
@@ -102,7 +115,7 @@ class Tier3ResolutionService:
 
         # Non-blocking statistical / informational observations:
         # e.g., multivariate_outliers, all_caps_values, string_length_outlier, binary_like_column,
-        # unusual_distribution, non-key missing-key observations
+        # unusual_distribution, non-key missing-key observations, potential identifiers (ReasonCode, PostalCode)
         return False
 
     def resolve(
@@ -176,7 +189,11 @@ class Tier3ResolutionService:
                 or c_iss.resolution_path in ("unsupported_missing_target_columns", "unsupported_missing_range_bounds")
             ):
                 tracker.record_issue(c_iss.issue_id, ResolutionBucket.MANUAL_REVIEW_REQUIRED)
-                is_blocking = self.is_blocking_manual_review(c_iss)
+                is_blocking = self.is_blocking_manual_review(
+                    c_iss,
+                    dataset_profiles=dataset_profiles,
+                    business_rules=business_rules,
+                )
                 item_info = {
                     "issue_id": c_iss.issue_id,
                     "dataset": c_iss.dataset,
@@ -330,7 +347,15 @@ class Tier3ResolutionService:
             iss_item = c_map.get(iss_id)
             is_blocking = False
             if bucket == ResolutionBucket.MANUAL_REVIEW_REQUIRED:
-                is_blocking = self.is_blocking_manual_review(iss_item) if iss_item else False
+                is_blocking = (
+                    self.is_blocking_manual_review(
+                        iss_item,
+                        dataset_profiles=dataset_profiles,
+                        business_rules=business_rules,
+                    )
+                    if iss_item
+                    else False
+                )
             elif bucket in (
                 ResolutionBucket.UNSUPPORTED,
                 ResolutionBucket.TIER3_VALIDATION_FAILED,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import hashlib
@@ -207,7 +208,88 @@ def _run_compiler_codegen(
             cols = {}
             for c in p_ds.get("columns") or []:
                 cols[c] = ColumnProfile(name=c, dtype="string")
-            profiles[ds_name] = DatasetProfile(dataset_id=ds_name, columns=cols)
+    manifest_data = flow.get("canonical_manifest")
+    if manifest_data:
+        from agent.compiler.models.canonical_manifest import CanonicalResolutionManifest
+        manifest = CanonicalResolutionManifest.model_validate(manifest_data)
+
+        # 1. Verify manifest hash
+        expected_hash = flow.get("canonical_manifest_hash")
+        if expected_hash and not manifest.verify_hash(expected_hash):
+            return "", False, ["MANIFEST_HASH_MISMATCH: Computed hash does not match confirmation binding."], "compiler"
+
+        # 2. Verify schema drift
+        curr_schema_sig = _assessment_schema_signature(assess)
+        conf_schema_sig = flow.get("confirmation", {}).get("schema_fingerprint")
+        if conf_schema_sig and curr_schema_sig and curr_schema_sig != conf_schema_sig:
+            return "", False, ["SCHEMA_DRIFT_DETECTED: Schema has changed since plan confirmation."], "compiler"
+
+        # 3. Verify no blocking issues in manifest
+        if manifest.reconciliation.get("blocking_issue_count", 0) > 0:
+            return "", False, ["BLOCKING_ISSUES_IN_MANIFEST: Manifest contains unresolved blocking issues."], "compiler"
+
+        # 4. Use frozen structured actions directly without re-discovery or re-inference
+        from agent.compiler.models.actions import StructuredAction
+        all_structured_actions = [
+            StructuredAction.model_validate(a) if isinstance(a, dict) else a
+            for a in manifest.structured_actions
+        ]
+
+        from agent.compiler.models.issues import Issue, IssueCategory, IssueSeverity
+        detected_issues = [
+            Issue(
+                issue_id=i.get("canonical_issue_id", ""),
+                dataset_name=i.get("dataset", ""),
+                column_name=i.get("column"),
+                category=IssueCategory.OTHER,
+                severity=IssueSeverity(str(i.get("severity", "medium")).lower()) if str(i.get("severity", "medium")).lower() in ("high", "medium", "low", "info") else IssueSeverity.MEDIUM,
+                message=i.get("blocking_reason") or "",
+            )
+            for i in manifest.canonical_issues
+        ]
+
+        telemetry = {
+            "canonical_issue_count": manifest.reconciliation.get("canonical_issue_count", len(manifest.canonical_issues)),
+            "canonical_issue_ids": [i.get("canonical_issue_id") for i in manifest.canonical_issues],
+            "issue_alias_map": manifest.issue_alias_map,
+            "blocking_issue_count": 0,
+            "blocking_manual_review_issue_count": 0,
+            "non_blocking_manual_review_issue_count": manifest.reconciliation.get("informational_count", 0),
+            "unsupported_issue_count": 0,
+            "certification_status": "COMPLETE",
+        }
+
+        compiler_ctx = CompilerContext(
+            session_id=session_id,
+            target_engine=target_eng,
+            cleaning_mode=clean_mode,
+            preserve_source_schema=True,
+            include_operational_metadata=False,
+            dataset_profiles=profiles,
+            detected_issues=detected_issues,
+            structured_actions=all_structured_actions,
+            business_rules=[],
+        )
+        compiler_ctx.metadata["ingestion_telemetry"] = telemetry
+        compiler_ctx.metadata["canonical_manifest_hash"] = manifest.manifest_hash
+        compiler_ctx.metadata["blocking_issue_count"] = 0
+        compiler_ctx.metadata["certification_status"] = "COMPLETE"
+
+        for c_iss in manifest.canonical_issues:
+            if "never_drop_rows" in str(c_iss).lower():
+                compiler_ctx.options["never_drop_rows"] = True
+                break
+
+        pipeline = CompilerPipeline()
+        try:
+            compiled_ctx, snapshot = pipeline.compile(compiler_ctx)
+            code = compiled_ctx.code_artifact.content if compiled_ctx.code_artifact else ""
+            flow["compiled_snapshot"] = snapshot.to_dict() if hasattr(snapshot, "to_dict") else None
+            flow["compilation_success"] = True
+            return code, True, [], "compiler"
+        except Exception as comp_err:
+            logger.exception("CompilerPipeline failed to compile frozen manifest actions: %s", comp_err)
+            return "", False, [f"COMPILER_PIPELINE_ERROR: {comp_err}"], "compiler"
 
     from agent.compiler.planners.ingestion_bridge import IngestionBridge
     bridge = IngestionBridge(default_schema="dbo")
@@ -1370,15 +1452,46 @@ def etl_apply_manual_resolutions(
     ce = flow.get("codegen_engine")
     sd = flow.get("sql_dialect")
 
+    from agent.compiler.readiness.plan_readiness_service import PlanReadinessService
+    from agent.compiler.models.physical import ExecutionEngine
+    readiness_service = PlanReadinessService()
+    target_eng = ExecutionEngine.AZURE_SQL
+    if ce in ("pyspark", "spark"):
+        target_eng = ExecutionEngine.PYSPARK
+    elif ce in ("python", "pandas"):
+        target_eng = ExecutionEngine.PYTHON
+
+    readiness = readiness_service.evaluate(
+        session_id=sid,
+        plan=updated,
+        assessment=assess,
+        business_rules=rules if isinstance(rules, list) else None,
+        target_engine=target_eng,
+        approval_records=flow.get("cleaning_approval") or updated.get("cleaning_approval"),
+    )
+
+    can_confirm_plan = readiness.ready_for_confirmation and plan_ok and not updated.get("blocked")
+    lifecycle_state = "READY_TO_CONFIRM" if can_confirm_plan else "MANUAL_REVIEW_REQUIRED"
+    updated["lifecycle_state"] = lifecycle_state
+    flow["lifecycle_state"] = lifecycle_state
+
     result_resp = {
-        "ok": plan_ok and not updated.get("blocked"),
-        "status": "VALID" if (plan_ok and not updated.get("blocked")) else "WARNING",
-        "lifecycle_state": "READY_TO_GENERATE" if (plan_ok and not updated.get("blocked")) else "REVIEW_REQUIRED",
+        "ok": True,
+        "status": "VALID" if can_confirm_plan else "REVIEW_REQUIRED",
+        "lifecycle_state": lifecycle_state,
+        "can_confirm_plan": can_confirm_plan,
+        "ready_for_confirmation": readiness.ready_for_confirmation,
+        "can_generate": False,
         "plan_version": flow.get("plan_version", 1),
         "session_id": sid,
         "plan": updated,
-        "blocked": updated.get("blocked") or [],
-        "pending_manual_review": pending_manual,
+        "blocked": [b.to_dict() for b in readiness.blocking_issues],
+        "blocking_issue_count": readiness.blocking_issue_count,
+        "blocking_issues": [b.to_dict() for b in readiness.blocking_issues],
+        "pending_manual_review": readiness.blocking_manual_review_count + pending_manual,
+        "pending_approval_count": readiness.approval_pending_blocking_count,
+        "unsupported_blocking_count": readiness.unsupported_blocking_count,
+        "unresolved_blocking_count": readiness.unresolved_blocking_count,
         "plan_validation_ok": plan_ok,
         "plan_validation_errors": plan_errs,
         "engine_recommendation": updated.get("engine_recommendation"),
@@ -1387,9 +1500,9 @@ def etl_apply_manual_resolutions(
         "recommended_sql_dialect": sd,
         "coverage_report": cov_report,
         "message": (
-            None
-            if (plan_ok and not updated.get("blocked"))
-            else "Plan resolved with validation warnings — review plan_validation_errors."
+            "Plan is ready for confirmation."
+            if can_confirm_plan
+            else f"{readiness.blocking_issue_count} blocking issue(s) require review or approval before confirmation."
         ),
     }
 
@@ -1476,33 +1589,74 @@ def etl_confirm_plan(
                 if res_errs:
                     logger.warning(f"Errors during auto-resolving safe defaults: {res_errs}")
 
-    pending_manual = count_pending_manual_review(plan)
-    if pending_manual > 0:
-        return {
-            "ok": False,
-            "error": "MANUAL_REVIEW_PENDING",
-            "message": f"Resolve {pending_manual} manual review item(s) in the UI before confirming.",
-            "pending_manual_review": pending_manual,
-            "manual_review": plan.get("manual_review") or [],
-        }
+    from agent.compiler.readiness.plan_readiness_service import PlanReadinessService
+    from agent.compiler.models.physical import ExecutionEngine
+    readiness_service = PlanReadinessService()
+    target_eng = ExecutionEngine.AZURE_SQL
+    ce = flow.get("codegen_engine")
+    if ce in ("pyspark", "spark"):
+        target_eng = ExecutionEngine.PYSPARK
+    elif ce in ("python", "pandas"):
+        target_eng = ExecutionEngine.PYTHON
 
-    blocked = plan.get("blocked") or []
-    if blocked:
+    clean_app = flow.get("cleaning_approval") or plan.get("cleaning_approval")
+    if isinstance(plan_override, dict) and plan_override.get("cleaning_approval"):
+        clean_app = plan_override["cleaning_approval"]
+
+    readiness = readiness_service.evaluate(
+        session_id=sid,
+        plan=plan,
+        assessment=assess,
+        business_rules=rules if isinstance(rules, list) else None,
+        target_engine=target_eng,
+        approval_records=clean_app,
+    )
+
+    if not readiness.ready_for_confirmation:
         return {
             "ok": False,
-            "error": "PLAN_BLOCKED",
-            "message": "Plan has blocking issues; resolve required columns or rules first.",
-            "blocked": blocked,
+            "http_status": 422,
+            "status": "PLAN_NOT_READY_FOR_CONFIRMATION",
+            "error": "PLAN_NOT_READY_FOR_CONFIRMATION",
+            "lifecycle_state": "MANUAL_REVIEW_REQUIRED",
+            "ready_for_confirmation": False,
+            "can_confirm_plan": False,
+            "can_generate": False,
+            "blocking_issue_count": readiness.blocking_issue_count,
+            "blocking_issues": [b.to_dict() for b in readiness.blocking_issues],
+            "unresolved_blocking_count": readiness.unresolved_blocking_count,
+            "blocking_manual_review_count": readiness.blocking_manual_review_count,
+            "approval_pending_blocking_count": readiness.approval_pending_blocking_count,
+            "unsupported_blocking_count": readiness.unsupported_blocking_count,
+            "pending_manual_review": readiness.blocking_manual_review_count,
+            "manual_review": plan.get("manual_review") or [],
+            "message": f"Plan cannot be confirmed: {readiness.blocking_issue_count} blocking issue(s) remain unresolved.",
         }
 
     plan_ok, plan_errs = validate_etl_plan_for_confirm(plan, assess or {}, rules)
     if not plan_ok:
         return {
             "ok": False,
+            "http_status": 422,
             "error": "PLAN_VALIDATION_FAILED",
             "message": "Plan failed validation. Fix issues before confirming.",
             "plan_validation_errors": plan_errs,
         }
+
+    manifest = readiness.canonical_manifest
+    manifest_hash = readiness.manifest_hash
+    flow["canonical_manifest"] = manifest
+    flow["canonical_manifest_hash"] = manifest_hash
+    flow["confirmation"] = {
+        "status": "CONFIRMED",
+        "confirmed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "confirmed_by": "user",
+        "canonical_manifest_hash": manifest_hash,
+        "schema_fingerprint": readiness.schema_fingerprint,
+        "plan_fingerprint": manifest.get("plan_fingerprint") if isinstance(manifest, dict) else getattr(manifest, "plan_fingerprint", None),
+    }
+    flow["lifecycle_state"] = "CONFIRMED"
+    flow["can_generate"] = True
 
     _migrate_phase(flow)
     phase = flow.get("phase", "planned")
@@ -1555,13 +1709,19 @@ def etl_confirm_plan(
 
     save_session(sess)
     logger.info(
-        "etl_confirm_plan session=%s plan_id=%s lineage_cols=%s",
+        "etl_confirm_plan session=%s plan_id=%s lineage_cols=%s manifest_hash=%s",
         sid,
         plan.get("plan_id"),
         sum(len(v) for v in lineage.values()),
+        manifest_hash,
     )
     return {
         "ok": True,
+        "status": "CONFIRMED",
+        "lifecycle_state": "CONFIRMED",
+        "ready_for_confirmation": True,
+        "can_generate": True,
+        "canonical_manifest_hash": manifest_hash,
         "session_id": sid,
         "preview": preview,
         "approved_plan": plan,
@@ -1796,6 +1956,40 @@ def etl_generate_code(
         }
     plan = _rehydrate_plan(plan, ctx, assess=assess)
 
+    manifest_data = flow.get("canonical_manifest")
+    if manifest_data:
+        from agent.compiler.models.canonical_manifest import CanonicalResolutionManifest
+        try:
+            manifest = CanonicalResolutionManifest.model_validate(manifest_data)
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": "MANIFEST_INVALID",
+                "message": f"Canonical resolution manifest is malformed: {e}",
+                "plan_validation_errors": [str(e)],
+            }
+
+        # 1. Verify manifest hash
+        expected_hash = flow.get("canonical_manifest_hash")
+        if expected_hash and not manifest.verify_hash(expected_hash):
+            return {
+                "ok": False,
+                "error": "MANIFEST_HASH_MISMATCH",
+                "message": "Canonical manifest hash mismatch: frozen manifest has been tampered with or corrupted.",
+                "plan_validation_errors": ["MANIFEST_HASH_MISMATCH: Computed hash does not match confirmation binding."],
+            }
+
+        # 2. Verify schema drift
+        curr_schema_sig = _assessment_schema_signature(assess)
+        conf_schema_sig = flow.get("confirmation", {}).get("schema_fingerprint")
+        if conf_schema_sig and curr_schema_sig and curr_schema_sig != conf_schema_sig:
+            return {
+                "ok": False,
+                "error": "SCHEMA_DRIFT_DETECTED",
+                "message": "Schema drift detected: underlying dataset schema has changed since confirmation.",
+                "plan_validation_errors": ["SCHEMA_DRIFT_DETECTED: Schema has changed since plan confirmation."],
+            }
+
     eng = (engine or "python").lower()
     plan_id = plan.get("plan_id") or ""
 
@@ -1842,7 +2036,19 @@ def etl_generate_code(
                 logger.info(
                     f"[etl_generate_code] Returning persisted idempotent response for key={idempotency_key} status={status}"
                 )
-                return existing_rec["response"]
+                cached = dict(existing_rec["response"])
+                if not cached.get("code"):
+                    cached["code"] = flow.get("code", "")
+                    if not cached["code"] and cached.get("artifact_rel_path"):
+                        try:
+                            _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                            _abs_p = os.path.join(_root, cached["artifact_rel_path"])
+                            if os.path.exists(_abs_p):
+                                with open(_abs_p, "r", encoding="utf-8") as _f:
+                                    cached["code"] = _f.read()
+                        except Exception:
+                            pass
+                return cached
             if status == "RUNNING":
                 logger.info(
                     f"[etl_generate_code] Generation for key={idempotency_key} is already RUNNING in another process — returning 202 pending."
