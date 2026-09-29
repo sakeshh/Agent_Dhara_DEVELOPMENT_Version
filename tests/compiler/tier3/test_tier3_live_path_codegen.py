@@ -5,6 +5,7 @@ from typing import Any, Dict
 
 from agent.compiler.compiler_pipeline import CompilerPipeline
 from agent.compiler.models.actions import FillNullsParameters, StructuredAction
+from agent.compiler.models.compilation_result import CodeGenerationError
 from agent.compiler.models.context import CompilerContext
 from agent.compiler.models.logical import ActionType
 from agent.compiler.models.physical import ExecutionEngine
@@ -575,3 +576,272 @@ def test_concurrent_acquisition_only_one_winner(tmp_path, monkeypatch):
     assert blocked_rec is not None and blocked_rec.get("status") == "RUNNING", (
         f"Blocked thread must see RUNNING status, got: {blocked_rec}"
     )
+
+
+def test_post_reconciliation_blocking_count_drives_gate():
+    """
+    Regression: capability gate in SQLCodegenAgent must be driven by
+    blocking_issue_count (post-reconciliation), NOT raw unsupported_issue_count.
+    When blocking_issue_count == 0, compilation succeeds even if unsupported count > 0.
+    When blocking_issue_count > 0, compilation is blocked with the specific message.
+    """
+    pipeline = CompilerPipeline()
+
+    # 1. blocking_issue_count == 0 -> should compile successfully
+    ctx_allowed = CompilerContext(
+        session_id="test_post_recon_pass",
+        target_engine=ExecutionEngine.AZURE_SQL,
+        options={"strict_execution": True},
+        dataset_profiles={"dbo.Employee": DatasetProfile(dataset_id="dbo.Employee", columns={"name": ColumnProfile(name="name", dtype="string")})},
+        structured_actions=[
+            StructuredAction(action_type=ActionType.TRIM, dataset_name="dbo.Employee", target_columns=["name"]),
+        ],
+    )
+    ctx_allowed.metadata["ingestion_telemetry"] = {
+        "assessment_discovered_count": 10,
+        "mapped_issue_count": 4,
+        "unsupported_issue_count": 6,
+    }
+    ctx_allowed.metadata["blocking_issue_count"] = 0
+    ctx_allowed.metadata["unsupported_issue_count"] = 0
+
+    compiled_ctx, _ = pipeline.compile(ctx_allowed)
+    telem = compiled_ctx.metadata.get("compilation_telemetry", {})
+    assert telem["ok"] is True
+    assert telem["executable"] is True
+    assert telem["rendered_transformation_count"] > 0
+
+    # 2. blocking_issue_count > 0 -> should block with exact message
+    ctx_blocked = CompilerContext(
+        session_id="test_post_recon_block",
+        target_engine=ExecutionEngine.AZURE_SQL,
+        options={"strict_execution": True},
+        dataset_profiles={"dbo.Employee": DatasetProfile(dataset_id="dbo.Employee", columns={"name": ColumnProfile(name="name", dtype="string")})},
+        structured_actions=[
+            StructuredAction(action_type=ActionType.TRIM, dataset_name="dbo.Employee", target_columns=["name"]),
+        ],
+    )
+    ctx_blocked.metadata["ingestion_telemetry"] = {
+        "assessment_discovered_count": 10,
+        "mapped_issue_count": 4,
+        "unsupported_issue_count": 6,
+    }
+    ctx_blocked.metadata["blocking_issue_count"] = 6
+
+    with pytest.raises(CodeGenerationError) as exc_info:
+        pipeline.compile(ctx_blocked)
+
+    assert "6 blocking issue(s) remain unresolved" in str(exc_info.value)
+    assert exc_info.value.failure_stage == "capability_validation"
+
+
+def test_six_unresolved_findings_reclassified_as_non_blocking_manual_review():
+    """
+    Regression: The 6 Tier 3 issues from the assessment/plan:
+    1. canonical_schema_constraint (policy_never_drop_rows)
+    2. string_with_only_digits_in_text_column
+    3. custom_rule_violation (binary-like hr.system / hr.admin)
+    4. dataset-level outlier plan with no target
+    5. string-column outlier plan without range bounds (OfficeLocation)
+    6. declared-key flag without complete semantics (ManagerID self-ref)
+    must all be classified as non-blocking manual review observations (blocks_execution=False)
+    and produce certification_status="REVIEW_REQUIRED", blocking_issue_count=0.
+    """
+    bridge = IngestionBridge(default_schema="dbo")
+    assess = {
+        "data_quality_issues": {
+            "datasets": {
+                "dbo.Dhara_OrgReference": {
+                    "issues": [
+                        {
+                            "column": None,
+                            "issue_type": "canonical_schema_constraint",
+                            "message": "policy_never_drop_rows failed: 15 violation rows",
+                            "severity": "high",
+                        }
+                    ]
+                },
+                "dbo.Dhara_EmployeeStatusHistory": {
+                    "issues": [
+                        {
+                            "column": "StatusHistoryRowID",
+                            "issue_type": "string_with_only_digits_in_text_column",
+                            "message": "StatusHistoryRowID contains digit-only strings in text column",
+                            "severity": "medium",
+                        },
+                        {
+                            "column": "ChangedBy",
+                            "issue_type": "custom_rule_violation",
+                            "message": "binary-like column with values hr.system and hr.admin",
+                            "severity": "low",
+                        },
+                    ]
+                },
+                "dbo.Dhara_Employee": {
+                    "issues": [
+                        {
+                            "column": "OfficeLocation",
+                            "issue_type": "outlier",
+                            "suggested_action": "range_clip",
+                            "message": "OfficeLocation categorical outlier",
+                            "severity": "medium",
+                        }
+                    ]
+                },
+            }
+        }
+    }
+    plan = {
+        "datasets": {
+            "dbo.Dhara_OrgReference": {
+                "steps": [
+                    {
+                        "column": "*",
+                        "action": "range_clip",
+                        "issue_type": "planned_flag_outliers",
+                        "description": "Drop dataset-level outlier plan",
+                    }
+                ]
+            },
+            "dbo.Dhara_Employee": {
+                "steps": [
+                    {
+                        "column": "ManagerID",
+                        "action": "flag_missing_declared_key",
+                        "issue_type": "planned_flag_missing_declared_key",
+                        "description": "Flag missing ManagerID self-reference",
+                    }
+                ]
+            },
+        }
+    }
+
+    profiles = _make_sample_profiles()
+    canonical, rules, telem = bridge.extract_and_normalize(assess, plan, set(profiles.keys()))
+
+    service = Tier3ResolutionService()
+    res = service.resolve(
+        canonical_issues=canonical,
+        deterministic_actions=[],
+        dataset_profiles=profiles,
+        business_rules=rules,
+    )
+
+    assert res.ok is True, f"Expected res.ok to be True, got {res.ok} (failure_stage={res.failure_stage})"
+    assert res.executable is True
+    assert res.certification_status == "REVIEW_REQUIRED"
+    assert len(res.blocking_items) == 0
+    assert len(res.blocking_manual_review_issues) == 0
+
+    # Verify blocks_execution is False on all reconciled entries
+    for entry in res.issue_reconciliation:
+        assert entry.get("blocks_execution") is False, f"Entry {entry} must not block execution"
+
+
+def test_semantic_guards_isactive_boolean_not_date():
+    """
+    Regression: IsActive must NOT be mapped to PARSE_DATES even if keyword 'date'
+    is present in the issue message or description.
+    """
+    bridge = IngestionBridge(default_schema="dbo")
+    assess = {
+        "data_quality_issues": {
+            "datasets": {
+                "dbo.Dhara_Employee": {
+                    "issues": [
+                        {
+                            "column": "IsActive",
+                            "issue_type": "boolean_inconsistency",
+                            "message": "Effective date validation for active flag",
+                            "severity": "medium",
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    canonical, _, _ = bridge.extract_and_normalize(assess, {}, {"dbo.Dhara_Employee"})
+    iss = canonical[0]
+    assert iss.resolved_action == ActionType.STANDARDIZE_BOOLEAN
+    assert iss.resolved_action != ActionType.PARSE_DATES
+
+
+def test_comma_separated_columns_split():
+    """
+    Regression: 'ContractStartDate,ContractEndDate' must be split into two
+    independent target columns rather than a single combined pseudo-column.
+    """
+    bridge = IngestionBridge(default_schema="dbo")
+    assess = {
+        "data_quality_issues": {
+            "datasets": {
+                "dbo.Dhara_Employee": {
+                    "issues": [
+                        {
+                            "column": "ContractStartDate,ContractEndDate",
+                            "issue_type": "invalid_date",
+                            "suggested_action": "parse_dates",
+                            "severity": "medium",
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    canonical, _, _ = bridge.extract_and_normalize(assess, {}, {"dbo.Dhara_Employee"})
+    cols = [c.column for c in canonical]
+    assert "ContractStartDate" in cols
+    assert "ContractEndDate" in cols
+    assert "ContractStartDate,ContractEndDate" not in cols
+
+
+def test_unrestricted_fill_nulls_guarded_on_keys_and_temporals():
+    """
+    Regression: Non-authoritative NULL findings on keys, temporals, and financial fields
+    (EmployeeID, ManagerID, LastPromotionDate, EffectiveTo, Salary, etc.)
+    must NOT map to FILL_NULLS; they must route to manual review.
+    """
+    bridge = IngestionBridge(default_schema="dbo")
+    columns_to_test = [
+        "EmployeeID", "ManagerID", "LastPromotionDate",
+        "EffectiveTo", "ContractEndDate", "DateOfBirth", "HireDate", "Salary", "ReferenceID"
+    ]
+    issues = [
+        {"column": col, "issue_type": "null_values", "suggested_action": "fill_nulls", "severity": "medium"}
+        for col in columns_to_test
+    ]
+    assess = {
+        "data_quality_issues": {
+            "datasets": {
+                "dbo.Dhara_Employee": {
+                    "issues": issues
+                }
+            }
+        }
+    }
+    canonical, _, _ = bridge.extract_and_normalize(assess, {}, {"dbo.Dhara_Employee"})
+    for iss in canonical:
+        assert iss.resolved_action is None, f"{iss.column} must not be mapped to FILL_NULLS"
+        assert "manual_review" in (iss.resolution_path or "")
+
+
+def test_trim_on_date_columns_rejected():
+    """
+    Regression: Explicit planned TRIM on date-typed columns (EffectiveFrom, ChangedAt)
+    must be rejected and routed to manual review.
+    """
+    bridge = IngestionBridge(default_schema="dbo")
+    plan = {
+        "datasets": {
+            "dbo.Dhara_OrgReference": {
+                "steps": [
+                    {"column": "EffectiveFrom", "action": "trim", "params": {"side": "both"}},
+                    {"column": "ChangedAt", "action": "trim", "params": {"side": "both"}},
+                ]
+            }
+        }
+    }
+    canonical, _, _ = bridge.extract_and_normalize({}, plan, {"dbo.Dhara_OrgReference"})
+    for iss in canonical:
+        assert iss.resolved_action is None, f"{iss.column} must not be mapped to TRIM"
+        assert "manual_review_incompatible_trim_on_date_column" in (iss.resolution_path or "")

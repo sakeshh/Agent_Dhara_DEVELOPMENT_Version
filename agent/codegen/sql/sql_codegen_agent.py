@@ -66,6 +66,11 @@ class SQLCodegenAgent(BaseCodegenAgent):
         mapped_issue_count = ing_telem.get("deterministically_resolved_issue_count", ing_telem.get("mapped_issue_count", ing_telem.get("mapped_action_count", default_mapped)))
         unsupported_issue_count = ing_telem.get("unsupported_issue_count", 0)
         manual_review_issue_count = ing_telem.get("manual_review_issue_count", 0)
+        has_explicit_blocking = "blocking_issue_count" in context.metadata or "blocking_issue_count" in ing_telem
+        if has_explicit_blocking:
+            blocking_issue_count = int(context.metadata.get("blocking_issue_count", ing_telem.get("blocking_issue_count", 0)))
+        else:
+            blocking_issue_count = unsupported_issue_count
 
         structured_action_count = len(context.structured_actions)
         logical_step_count = len(context.logical_plan.steps) if context.logical_plan else 0
@@ -162,7 +167,7 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 failure_stage="capability_validation",
             )
 
-        if strict_mode and unsupported_issue_count > 0:
+        if strict_mode and blocking_issue_count > 0:
             telemetry = CompilationTelemetry(
                 ok=False,
                 executable=False,
@@ -178,6 +183,7 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 mapped_issue_count=mapped_issue_count,
                 unsupported_issue_count=unsupported_issue_count,
                 manual_review_issue_count=manual_review_issue_count,
+                blocking_issue_count=blocking_issue_count,
                 structured_action_count=structured_action_count,
                 logical_step_count=logical_step_count,
                 physical_step_count=physical_step_count,
@@ -188,8 +194,13 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 issue_reconciliation=context.metadata.get("issue_reconciliation") or [],
             )
             context.metadata["compilation_telemetry"] = telemetry.to_dict()
+            msg = (
+                f"Compilation stopped because {blocking_issue_count} blocking issue(s) remain unresolved."
+                if has_explicit_blocking
+                else f"Compilation stopped because {unsupported_issue_count} assessment issue(s) have no supported remediation."
+            )
             raise CodeGenerationError(
-                f"Compilation stopped because {unsupported_issue_count} assessment issue(s) have no supported remediation.",
+                msg,
                 telemetry=telemetry.to_dict(),
                 failure_stage="capability_validation",
             )
@@ -432,6 +443,11 @@ class SQLCodegenAgent(BaseCodegenAgent):
         mapped_issue_count = ing_telem.get("mapped_issue_count", ing_telem.get("mapped_action_count", default_mapped))
         unsupported_issue_count = ing_telem.get("unsupported_issue_count", 0)
         manual_review_issue_count = ing_telem.get("manual_review_issue_count", 0)
+        has_explicit_blocking = "blocking_issue_count" in context.metadata or "blocking_issue_count" in ing_telem
+        if has_explicit_blocking:
+            blocking_issue_count = int(context.metadata.get("blocking_issue_count", ing_telem.get("blocking_issue_count", 0)))
+        else:
+            blocking_issue_count = unsupported_issue_count
 
         structured_action_count = len(context.structured_actions)
         logical_step_count = len(context.logical_plan.steps) if context.logical_plan else 0
@@ -547,6 +563,7 @@ class SQLCodegenAgent(BaseCodegenAgent):
             mapped_issue_count=mapped_issue_count,
             unsupported_issue_count=unsupported_issue_count,
             manual_review_issue_count=total_manual_review,
+            blocking_issue_count=blocking_issue_count,
             structured_action_count=structured_action_count,
             logical_step_count=logical_step_count,
             physical_step_count=physical_step_count,
@@ -587,14 +604,19 @@ class SQLCodegenAgent(BaseCodegenAgent):
                     failure_stage="capability_validation",
                 )
 
-            # Gate 2: Unsupported issues (enforced in strict mode)
-            if unsupported_issue_count > 0:
+            # Gate 2: Blocking issues (enforced in strict mode)
+            if blocking_issue_count > 0:
                 if strict_mode:
                     telemetry.ok = False
                     telemetry.executable = False
                     telemetry.failure_stage = "capability_validation"
+                    msg = (
+                        f"Compilation stopped because {blocking_issue_count} blocking issue(s) remain unresolved."
+                        if has_explicit_blocking
+                        else f"Compilation stopped because {unsupported_issue_count} assessment issue(s) have no supported remediation."
+                    )
                     raise CodeGenerationError(
-                        f"Compilation stopped because {unsupported_issue_count} assessment issue(s) have no supported remediation.",
+                        msg,
                         telemetry=telemetry.to_dict(),
                         failure_stage="capability_validation",
                     )

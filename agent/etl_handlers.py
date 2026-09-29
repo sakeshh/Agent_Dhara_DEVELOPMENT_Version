@@ -241,24 +241,40 @@ def _run_compiler_codegen(
     ]
 
     reconciled_counts = tier3_res.tracker.counts_by_bucket()
+    blocking_statuses = {
+        "UNSUPPORTED",
+        "TIER3_VALIDATION_FAILED",
+        "TIER3_APPROVAL_REJECTED",
+        "MODEL_UNAVAILABLE",
+    }
+    blocking_records = [
+        record
+        for record in tier3_res.issue_reconciliation
+        if record.get("resolution_bucket") in blocking_statuses
+        and record.get("blocks_execution", True)
+    ]
+    blocking_issue_count = len(blocking_records)
+    reconciled_unsupported_count = sum(
+        1 for r in tier3_res.issue_reconciliation
+        if r.get("resolution_bucket") == "UNSUPPORTED"
+    )
+
     telemetry["tier3_compiled_issue_count"] = reconciled_counts[ResolutionBucket.TIER3_COMPILED]
     telemetry["approval_pending_issue_count"] = reconciled_counts[ResolutionBucket.TIER3_APPROVAL_REQUIRED]
     telemetry["manual_review_issue_count"] = reconciled_counts[ResolutionBucket.MANUAL_REVIEW_REQUIRED]
-    telemetry["unsupported_issue_count"] = (
-        reconciled_counts[ResolutionBucket.UNSUPPORTED]
-        + reconciled_counts[ResolutionBucket.MODEL_UNAVAILABLE]
-        + reconciled_counts[ResolutionBucket.TIER3_VALIDATION_FAILED]
-    )
+    telemetry["unsupported_issue_count"] = reconciled_unsupported_count
+    telemetry["blocking_issue_count"] = blocking_issue_count
     telemetry["issue_reconciliation"] = tier3_res.issue_reconciliation
     telemetry["issue_reconciliation_counts"] = {k.value: v for k, v in reconciled_counts.items()}
 
     logger.info(
-        "[_run_compiler_codegen] Tier 3 resolution: %d deterministic, %d tier3 eligible, %d approval pending, %d manual review, %d unsupported (accounting: %s)",
+        "[_run_compiler_codegen] Tier 3 resolution: %d deterministic, %d tier3 eligible, %d approval pending, %d manual review, %d unsupported, %d blocking (accounting: %s)",
         len(structured_actions),
         len(tier3_res.compiler_eligible_actions),
         reconciled_counts[ResolutionBucket.TIER3_APPROVAL_REQUIRED],
         reconciled_counts[ResolutionBucket.MANUAL_REVIEW_REQUIRED],
         telemetry["unsupported_issue_count"],
+        blocking_issue_count,
         {k.value: v for k, v in reconciled_counts.items()},
     )
 
@@ -286,6 +302,22 @@ def _run_compiler_codegen(
     )
     compiler_ctx.metadata["ingestion_telemetry"] = telemetry
     compiler_ctx.metadata["issue_reconciliation"] = tier3_res.issue_reconciliation
+    compiler_ctx.metadata["blocking_issue_count"] = blocking_issue_count
+    compiler_ctx.metadata["unsupported_issue_count"] = reconciled_unsupported_count
+    compiler_ctx.metadata["certification_status"] = tier3_res.certification_status
+    compiler_ctx.metadata["manual_review_issue_count"] = reconciled_counts[ResolutionBucket.MANUAL_REVIEW_REQUIRED]
+    compiler_ctx.metadata["blocking_manual_review_issue_count"] = len(tier3_res.blocking_manual_review_issues)
+    compiler_ctx.metadata["non_blocking_manual_review_issue_count"] = len(tier3_res.non_blocking_manual_review_issues)
+
+    # Propagate never_drop_rows policy
+    for c_iss in canonical_issues:
+        if (
+            "never_drop_rows" in (c_iss.message or "").lower()
+            or "policy_never_drop_rows" in (c_iss.message or "").lower()
+            or (c_iss.issue_type and "never_drop_rows" in c_iss.issue_type.lower())
+        ):
+            compiler_ctx.options["never_drop_rows"] = True
+            break
 
     if plan.get("cleaning_approval"):
         compiler_ctx.metadata["cleaning_approval"] = plan["cleaning_approval"]

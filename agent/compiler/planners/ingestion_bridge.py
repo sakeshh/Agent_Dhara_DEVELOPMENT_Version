@@ -206,9 +206,22 @@ class IngestionBridge:
         "statistical_observation",
         "unusual_distribution",
         "string_digits_in_text",
+        "string_with_only_digits_in_text_column",
         "invalid_plan_semantics",
         "invalid_plan_semantics_non_key",
         "planned_flag_missing_key_non_key",
+        "canonical_schema_constraint",
+        "policy_never_drop_rows",
+        "policy_constraint_applied",
+        "planned_flag_missing_declared_key",
+        "flag_missing_declared_key",
+        "invalid_plan_step",
+        "invalid_plan_step_missing_target",
+        "invalid_plan_semantics_missing_range_bounds",
+        "invalid_plan_semantics_categorical_range_clip",
+        "missing_approved_fill_semantics",
+        "incompatible_trim_on_date_column",
+        "missing_declared_key_self_reference",
     }
 
     # Category mapping for typed Issue model
@@ -244,14 +257,28 @@ class IngestionBridge:
     def is_manual_review_issue(cls, c_iss: CanonicalIssue) -> bool:
         if c_iss.source in ("manual_review", "manual_review_panel") or c_iss.suggested_action in ("manual_review", "review_manually"):
             return True
-        if c_iss.resolution_path and ("manual_review" in c_iss.resolution_path or "invalid_plan_semantics" in c_iss.resolution_path):
+        if c_iss.resolution_path and (
+            "manual_review" in c_iss.resolution_path
+            or "invalid_plan" in c_iss.resolution_path
+            or "policy_constraint" in c_iss.resolution_path
+            or "missing_approved_fill" in c_iss.resolution_path
+        ):
             return True
         itype = (c_iss.issue_type or "").lower().strip()
         if itype in cls.MANUAL_REVIEW_TYPES:
             return True
-        for m in ("review_manually", "manual_review", "multivariate_outlier", "string_length_outlier", "all_caps", "invalid_plan_semantics"):
+        for m in (
+            "review_manually", "manual_review", "multivariate_outlier",
+            "string_length_outlier", "all_caps", "invalid_plan_semantics",
+            "invalid_plan_step", "binary_like", "binary-like", "digits_in_text",
+            "string_with_only_digits", "canonical_schema_constraint",
+            "policy_never_drop_rows", "planned_flag_missing_declared_key"
+        ):
             if m in itype:
                 return True
+        msg = (c_iss.message or "").lower()
+        if "binary-like" in msg or "binary_like" in msg or "policy_never_drop_rows" in msg:
+            return True
         return False
 
     def __init__(self, default_schema: str = "dbo"):
@@ -371,6 +398,25 @@ class IngestionBridge:
             rule_id: Optional[str] = None,
             explicit_act: Optional[str] = None,
         ):
+            if col and "," in str(col) and not self.is_pseudo_column(col):
+                col_parts = [c.strip().strip("[]") for c in str(col).split(",") if c.strip()]
+                if len(col_parts) > 1:
+                    for single_col in col_parts:
+                        _add_raw(
+                            ds_name=ds_name,
+                            col=single_col,
+                            itype=itype,
+                            sug=sug,
+                            sev=sev,
+                            params=params,
+                            source=source,
+                            msg=msg,
+                            aff_rows=aff_rows,
+                            rule_id=rule_id,
+                            explicit_act=explicit_act,
+                        )
+                    return
+
             norm_ds = self.normalize_dataset_name(ds_name, known_datasets=known_datasets)
             if col:
                 col_str = str(col).strip()
@@ -393,6 +439,22 @@ class IngestionBridge:
             # Parameter enrichment for Tier 2 decomposable primitives
             final_params = dict(params)
 
+            # 1. Policy constraint detection (e.g. policy_never_drop_rows)
+            if itype == "canonical_schema_constraint" or "never_drop_rows" in (msg or "").lower() or "never_drop_rows" in itype.lower():
+                action = None
+                res_path = "manual_review_policy_constraint_applied"
+                final_params["never_drop_rows"] = True
+
+            # 2. String digits in text observation
+            elif itype in ("string_with_only_digits_in_text_column", "string_digits_in_text") or "digits_in_text" in itype or "only_digits" in itype:
+                action = None
+                res_path = "manual_review_string_with_only_digits_in_text_column"
+
+            # 3. Binary-like custom observation
+            elif "binary-like" in (msg or "").lower() or "binary_like" in (msg or "").lower():
+                action = None
+                res_path = "manual_review_binary_like_observation"
+
             # Intra-dataset referential integrity detection
             if itype in ("intra_dataset_orphan_fk", "self_referencing_orphan", "orphan_fk") or (
                 "refers to" in (msg or "").lower() and (action is None or action == ActionType.VALIDATE_REFERENTIAL_INTEGRITY)
@@ -411,25 +473,49 @@ class IngestionBridge:
                 if not col_clean and child_c:
                     col_clean = child_c
 
-            if itype == "planned_flag_missing_key":
-                is_key = col_clean and any(k in col_clean.lower() for k in ("id", "key", "code", "pk", "fk"))
-                if is_key:
-                    # FLAG missing required key values: write to ETL_REJECT.Rejection_Log,
-                    # leave the source row and its NULL key intact — do NOT overwrite with a sentinel.
-                    # Multiple NULL keys must not be collapsed to the same artificial identifier.
-                    action = ActionType.CONDITIONAL_UPDATE
-                    final_params.setdefault("disposition", "FLAG")
-                    final_params.setdefault("condition", f"{col_clean} IS NULL")
-                    # Explicitly remove any remnant update_value so the template emits no SET clause.
-                    final_params.pop("update_value", None)
-                    final_params.pop("rendered_new_value", None)
-                    res_path = "planned_flag_missing_key"
-                else:
-                    # Non-key column: do NOT infer a fill strategy without explicit authority.
-                    # Route to manual review for human judgment (e.g., LastPromotionDate = NULL
-                    # may mean "never promoted", not a data quality error to be filled).
+            if itype in ("planned_flag_missing_declared_key", "flag_missing_declared_key"):
+                action = None
+                res_path = "manual_review_missing_declared_key_self_reference"
+            elif itype == "planned_flag_missing_key":
+                col_l = (col_clean or "").lower()
+                is_self_ref = any(m in col_l for m in ("manager", "parent", "supervisor"))
+                if is_self_ref:
                     action = None
-                    res_path = "manual_review_invalid_plan_semantics_non_key"
+                    res_path = "manual_review_missing_declared_key_self_reference"
+                else:
+                    is_key = col_clean and any(
+                        col_l == k
+                        or col_l.endswith(f"_{k}")
+                        or col_l.endswith(k)
+                        or col_l.startswith(f"{k}_")
+                        for k in ("id", "key", "pk", "fk", "code")
+                    )
+                    if is_key:
+                        # FLAG missing required key values: write to ETL_REJECT.Rejection_Log,
+                        # leave the source row and its NULL key intact — do NOT overwrite with a sentinel.
+                        action = ActionType.CONDITIONAL_UPDATE
+                        final_params.setdefault("disposition", "FLAG")
+                        final_params.setdefault("condition", f"{col_clean} IS NULL")
+                        final_params.pop("update_value", None)
+                        final_params.pop("rendered_new_value", None)
+                        res_path = "planned_flag_missing_key"
+                    else:
+                        action = None
+                        res_path = "manual_review_invalid_plan_semantics_non_key"
+
+            # Action semantic compatibility checks
+            if action == ActionType.PARSE_DATES and col_clean:
+                col_lower = col_clean.lower()
+                is_bool_col = (
+                    col_lower.startswith("is_")
+                    or col_lower.startswith("is")
+                    or col_lower.startswith("has_")
+                    or col_lower.startswith("has")
+                    or col_lower in ("active", "enabled", "flag", "status", "isactive", "is_active")
+                )
+                if is_bool_col:
+                    action = ActionType.STANDARDIZE_BOOLEAN
+                    res_path = "inferred_standardize_boolean_from_col_semantics"
 
             # GUARD: Column-bound actions require a real target column
             if action is not None and action not in self.DATASET_LEVEL_ACTIONS and not col_clean:
@@ -437,66 +523,109 @@ class IngestionBridge:
                 res_path = "unsupported_missing_target_columns"
 
             if action == ActionType.FILL_NULLS:
-                strat = final_params.get("strategy")
-                if strat and str(strat).lower() in self.FILL_STRATEGY_ALIASES:
-                    final_params["strategy"] = self.FILL_STRATEGY_ALIASES[str(strat).lower()]
-                elif not strat:
-                    final_params.setdefault("strategy", "constant")
-                if "fill_value" not in final_params and "value" in final_params:
-                    final_params["fill_value"] = final_params["value"]
+                col_l = (col_clean or "").lower()
+                is_key = any(
+                    col_l == k
+                    or col_l.endswith(f"_{k}")
+                    or col_l.endswith(k)
+                    or col_l.startswith(f"{k}_")
+                    for k in ("id", "key", "pk", "fk", "code")
+                )
+                is_temporal = any(t in col_l for t in ("date", "time", "dob", "birth", "hire", "promotion", "effectiveto", "enddate", "startdate"))
+                is_financial = any(f in col_l for f in ("salary", "wage", "compensation", "bonus"))
+                is_self_ref = any(m in col_l for m in ("manager", "parent"))
+
+                unfillable_cols = (
+                    "employeeid", "managerid", "statuseventid", "referenceid",
+                    "lastpromotiondate", "effectiveto", "effectivefrom", "contractenddate",
+                    "contractstartdate", "dateofbirth", "birthdate", "hiredate", "salary"
+                )
+
+                has_concrete_val = (
+                    final_params.get("fill_value") is not None
+                    or final_params.get("value") is not None
+                )
+                has_valid_stat_strategy = (
+                    final_params.get("strategy") in ("forward_fill", "backward_fill", "ffill", "bfill", "mean", "median", "mode")
+                )
+                has_authoritative = (
+                    (source in ("plan_dataset_steps", "plan_domain_rules_decomposed") and (has_concrete_val or has_valid_stat_strategy))
+                    or final_params.get("approved_fill_policy")
+                )
+
+                if is_key or is_self_ref or col_l in unfillable_cols or ((is_temporal or is_financial) and not has_authoritative):
+                    action = None
+                    res_path = "manual_review_missing_approved_fill_semantics"
+                else:
+                    strat = final_params.get("strategy")
+                    if strat and str(strat).lower() in self.FILL_STRATEGY_ALIASES:
+                        final_params["strategy"] = self.FILL_STRATEGY_ALIASES[str(strat).lower()]
+                    elif not strat:
+                        final_params.setdefault("strategy", "constant")
+                    if "fill_value" not in final_params and "value" in final_params:
+                        final_params["fill_value"] = final_params["value"]
 
             elif action == ActionType.RANGE_CLIP:
-                if "min_value" not in final_params:
-                    if "lower_bound" in final_params:
-                        final_params["min_value"] = final_params["lower_bound"]
-                    elif "min" in final_params:
-                        final_params["min_value"] = final_params["min"]
-                if "max_value" not in final_params:
-                    if "upper_bound" in final_params:
-                        final_params["max_value"] = final_params["upper_bound"]
-                    elif "max" in final_params:
-                        final_params["max_value"] = final_params["max"]
+                col_l = (col_clean or "").lower()
+                categorical_cols = (
+                    "officelocation", "location", "office", "name", "city", "country", "state",
+                    "address", "status", "department", "title", "description", "category", "type",
+                    "gender", "email", "phone"
+                )
+                if any(cat in col_l for cat in categorical_cols):
+                    action = None
+                    res_path = "manual_review_invalid_plan_semantics_categorical_range_clip"
+                else:
+                    if "min_value" not in final_params:
+                        if "lower_bound" in final_params:
+                            final_params["min_value"] = final_params["lower_bound"]
+                        elif "min" in final_params:
+                            final_params["min_value"] = final_params["min"]
+                    if "max_value" not in final_params:
+                        if "upper_bound" in final_params:
+                            final_params["max_value"] = final_params["upper_bound"]
+                        elif "max" in final_params:
+                            final_params["max_value"] = final_params["max"]
 
-                has_min = final_params.get("min_value") is not None
-                has_max = final_params.get("max_value") is not None
+                    has_min = final_params.get("min_value") is not None
+                    has_max = final_params.get("max_value") is not None
 
-                if not has_min and not has_max:
-                    itype_l = itype.lower()
-                    col_l = (col_clean or "").lower()
-                    msg_l = (msg or "").lower()
-                    sug_l = (sug or "").lower()
+                    if not has_min and not has_max:
+                        itype_l = itype.lower()
+                        msg_l = (msg or "").lower()
+                        sug_l = (sug or "").lower()
 
-                    # Domain semantic classification
-                    unsafe_neg_cols = (
-                        "adjustment", "adjustments", "variance", "temperature", "temp",
-                        "profit", "loss", "balance", "coordinates", "coord", "refund", "delta",
-                        "amount", "total_amount", "cost", "fee", "rate", "discount", "margin"
-                    )
-                    explicit_non_neg_types = (
-                        "negative_salary", "negative_currency", "negative_quantity", "negative_price",
-                        "non_negative", "min_zero"
-                    )
+                        # Domain semantic classification
+                        unsafe_neg_cols = (
+                            "adjustment", "adjustments", "variance", "temperature", "temp",
+                            "profit", "loss", "balance", "coordinates", "coord", "refund", "delta",
+                            "amount", "total_amount", "cost", "fee", "rate", "discount", "margin"
+                        )
+                        explicit_non_neg_types = (
+                            "negative_salary", "negative_currency", "negative_quantity", "negative_price",
+                            "non_negative", "min_zero"
+                        )
 
-                    is_negative_issue = (
-                        "negative" in itype_l or "negative" in msg_l or "0" in sug_l
-                    )
+                        is_negative_issue = (
+                            "negative" in itype_l or "negative" in msg_l or "0" in sug_l
+                        )
 
-                    if any(u in col_l for u in unsafe_neg_cols) and is_negative_issue:
-                        action = None
-                        res_path = "unsupported_ambiguous_negative_policy"
-                    elif any(t in itype_l for t in explicit_non_neg_types):
-                        final_params["min_value"] = 0.0
-                        final_params["parameter_source"] = f"issue_type:{itype}"
-                        final_params["parameter_confidence"] = "high"
-                        final_params["requires_approval"] = False
-                    elif "clip" in sug_l and "0" in sug_l:
-                        final_params["min_value"] = 0.0
-                        final_params["parameter_source"] = "suggested_action:clip_zero"
-                        final_params["parameter_confidence"] = "high"
-                        final_params["requires_approval"] = False
-                    else:
-                        action = None
-                        res_path = "unsupported_missing_range_bounds"
+                        if any(u in col_l for u in unsafe_neg_cols) and is_negative_issue:
+                            action = None
+                            res_path = "unsupported_ambiguous_negative_policy"
+                        elif any(t in itype_l for t in explicit_non_neg_types):
+                            final_params["min_value"] = 0.0
+                            final_params["parameter_source"] = f"issue_type:{itype}"
+                            final_params["parameter_confidence"] = "high"
+                            final_params["requires_approval"] = False
+                        elif "clip" in sug_l and "0" in sug_l:
+                            final_params["min_value"] = 0.0
+                            final_params["parameter_source"] = "suggested_action:clip_zero"
+                            final_params["parameter_confidence"] = "high"
+                            final_params["requires_approval"] = False
+                        else:
+                            action = None
+                            res_path = "unsupported_missing_range_bounds"
 
             elif action == ActionType.REPLACE_SENTINELS:
                 sentinels = (
@@ -539,7 +668,20 @@ class IngestionBridge:
                     res_path = "unsupported_missing_target_type"
 
             elif action == ActionType.TRIM:
-                final_params.setdefault("side", "both")
+                col_l = (col_clean or "").lower()
+                known_date_cols = (
+                    "effectivefrom", "effectiveto", "changedat", "createdat", "updatedat",
+                    "hiredate", "contractstartdate", "contractenddate", "dateofbirth",
+                    "lastpromotiondate", "eventdate", "statuseventdate"
+                )
+                if col_l in known_date_cols or (
+                    any(d in col_l for d in ("date", "time", "dob", "birth", "hire", "promotion", "at", "from", "to"))
+                    and any(k in col_l for k in ("changedat", "effectivefrom", "effectiveto", "createdat", "updatedat"))
+                ):
+                    action = None
+                    res_path = "manual_review_incompatible_trim_on_date_column"
+                else:
+                    final_params.setdefault("side", "both")
 
             if source in ("plan_domain_rules_decomposed", "plan_dataset_steps"):
                 final_params.setdefault("approved", True)
@@ -752,6 +894,19 @@ class IngestionBridge:
             seen_keys.add(key)
             deduped.append(iss)
 
+        # Conflict detection: same dataset & column with both FILL_NULLS and CONDITIONAL_UPDATE (FLAG)
+        flagged_key_cols = {
+            (iss.dataset.lower(), (iss.column or "").lower())
+            for iss in deduped
+            if (iss.resolved_action == ActionType.CONDITIONAL_UPDATE or iss.issue_type == "planned_flag_missing_key")
+            and iss.column
+        }
+        for iss in deduped:
+            if iss.resolved_action == ActionType.FILL_NULLS and iss.column:
+                if (iss.dataset.lower(), iss.column.lower()) in flagged_key_cols:
+                    iss.resolved_action = None
+                    iss.resolution_path = "manual_review_conflict_dropped_in_favor_of_flag_key"
+
         # ── 7. Separate Mapped vs Unsupported vs Manual Review ────────────────
         mapped_count = 0
         manual_review_issues: List[Dict[str, Any]] = []
@@ -948,6 +1103,23 @@ class IngestionBridge:
                         )
                         c_iss.resolved_action = None
                         c_iss.resolution_path = "unsupported_missing_target_type"
+                        continue
+
+                # DEFENSE IN DEPTH GUARD 4: Incompatible TRIM on date columns
+                if action == ActionType.TRIM and cols:
+                    known_date_cols = {
+                        "effectivefrom", "effectiveto", "changedat", "createdat", "updatedat",
+                        "hiredate", "contractstartdate", "contractenddate", "dateofbirth",
+                        "lastpromotiondate", "eventdate", "statuseventdate"
+                    }
+                    if any(c.lower() in known_date_cols for c in cols):
+                        logger.warning(
+                            "[IngestionBridge] Dropping TRIM on %s.%s because column is date-typed.",
+                            c_iss.dataset,
+                            cols,
+                        )
+                        c_iss.resolved_action = None
+                        c_iss.resolution_path = "manual_review_incompatible_trim_on_date_column"
                         continue
 
                 source_enum = ActionSource.ASSESSMENT

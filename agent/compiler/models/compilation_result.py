@@ -58,6 +58,7 @@ class CompilationTelemetry:
     mapped_issue_count: int = 0
     unsupported_issue_count: int = 0
     manual_review_issue_count: int = 0
+    blocking_issue_count: int = 0
 
     # Planner metrics
     structured_action_count: int = 0
@@ -130,6 +131,7 @@ class CompilationTelemetry:
             "mapped_action_count": self.mapped_action_count,
             "unsupported_issue_count": self.unsupported_issue_count,
             "manual_review_issue_count": self.manual_review_issue_count,
+            "blocking_issue_count": self.blocking_issue_count,
             "structured_action_count": self.structured_action_count,
             "logical_step_count": self.logical_step_count,
             "physical_step_count": self.physical_step_count,

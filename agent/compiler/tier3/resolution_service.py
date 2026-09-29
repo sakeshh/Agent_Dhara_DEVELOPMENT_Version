@@ -70,15 +70,30 @@ class Tier3ResolutionService:
         msg = (c_iss.message or "").lower()
         res_p = str(c_iss.resolution_path or "").lower()
 
+        # Non-blocking policy constraints
+        if "policy" in res_p or "policy_never_drop_rows" in msg or "canonical_schema_constraint" in itype:
+            return False
+
+        # Non-blocking observational, binary-like, digits-in-text, or invalid plan steps
+        if "binary_like" in res_p or "binary-like" in msg or "only_digits" in itype or "digits_in_text" in itype:
+            return False
+        if "invalid_plan_step" in res_p or "missing_range_bounds" in res_p or "categorical_range_clip" in res_p or "missing_target" in res_p:
+            return False
+        if "missing_declared_key" in res_p or "planned_flag_missing_declared_key" in itype:
+            return False
+
         # 1. Primary keys or foreign keys missing / corrupt
         is_key = any(k in col for k in ("id", "key", "pk", "fk", "code"))
+        # Exclude self-referencing / manager hierarchies or informational observation fields
+        if "manager" in col or "parent" in col or "changedby" in col or "statushistory" in col:
+            is_key = False
         if is_key and any(m in itype or m in msg for m in ("null", "missing", "orphan", "integrity", "duplicate", "invalid")):
             return True
 
         # 2. Referential integrity or schema violations that invalidate downstream relational algebra
         if "referential_integrity" in itype or "orphan_fk" in itype:
             return True
-        if "schema" in itype and "policy" not in itype and "custom_observation" not in itype:
+        if "schema" in itype and "policy" not in itype and "custom_observation" not in itype and "constraint" not in itype:
             return True
 
         # 3. Explicit invalid plan semantics on required entities
@@ -154,9 +169,11 @@ class Tier3ResolutionService:
             if c_iss.issue_id in handled_issue_ids:
                 continue
 
-            # Classify manual-review / statistical observation items
-            if IngestionBridge.is_manual_review_issue(c_iss) or (
-                c_iss.resolution_path and "manual_review" in c_iss.resolution_path
+            # Classify manual-review / statistical observation items or invalid plan steps
+            if (
+                IngestionBridge.is_manual_review_issue(c_iss)
+                or (c_iss.resolution_path and "manual_review" in c_iss.resolution_path)
+                or c_iss.resolution_path in ("unsupported_missing_target_columns", "unsupported_missing_range_bounds")
             ):
                 tracker.record_issue(c_iss.issue_id, ResolutionBucket.MANUAL_REVIEW_REQUIRED)
                 is_blocking = self.is_blocking_manual_review(c_iss)
@@ -240,12 +257,23 @@ class Tier3ResolutionService:
             val_res = self.validator.validate_proposal(proposal, dataset_profiles)
             if not val_res.is_valid:
                 tracker.record_issue(c_iss.issue_id, ResolutionBucket.TIER3_VALIDATION_FAILED)
+                findings_details = [
+                    {
+                        "validator": f.validator,
+                        "code": f.code.value if hasattr(f.code, "value") else str(f.code),
+                        "severity": f.severity.value if hasattr(f.severity, "value") else str(f.severity),
+                        "message": f.message,
+                        "path": f.ast_path or getattr(f, "path", None) or "target_columns",
+                    }
+                    for f in val_res.findings
+                ]
                 blocking_items.append({
                     "issue_id": c_iss.issue_id,
                     "dataset": c_iss.dataset,
                     "column": c_iss.column,
-                    "reason": f"Tier 3 validation failed: {val_res.errors}",
+                    "reason": f"Tier 3 validation failed: {[f.message for f in val_res.errors]}",
                     "status": "TIER3_VALIDATION_FAILED",
+                    "validation_findings": findings_details,
                 })
                 handled_issue_ids.add(c_iss.issue_id)
                 continue
@@ -300,7 +328,27 @@ class Tier3ResolutionService:
         c_map = {i.issue_id: i for i in canonical_issues}
         for iss_id, bucket in tracker._issue_states.items():
             iss_item = c_map.get(iss_id)
-            issue_reconciliation.append({
+            is_blocking = False
+            if bucket == ResolutionBucket.MANUAL_REVIEW_REQUIRED:
+                is_blocking = self.is_blocking_manual_review(iss_item) if iss_item else False
+            elif bucket in (
+                ResolutionBucket.UNSUPPORTED,
+                ResolutionBucket.TIER3_VALIDATION_FAILED,
+                ResolutionBucket.TIER3_APPROVAL_REQUIRED,
+                ResolutionBucket.MODEL_UNAVAILABLE,
+            ):
+                if iss_item and (
+                    IngestionBridge.is_manual_review_issue(iss_item)
+                    or (iss_item.resolution_path and "manual_review" in iss_item.resolution_path)
+                    or (iss_item.resolution_path and "invalid_plan" in iss_item.resolution_path)
+                    or "policy" in (iss_item.message or "").lower()
+                    or (iss_item.column and ("manager" in iss_item.column.lower() or "parent" in iss_item.column.lower()))
+                ):
+                    is_blocking = False
+                else:
+                    is_blocking = True
+
+            rec_entry = {
                 "issue_id": iss_id,
                 "dataset": iss_item.dataset if iss_item else None,
                 "column": iss_item.column if iss_item else None,
@@ -308,7 +356,13 @@ class Tier3ResolutionService:
                 "resolution_bucket": bucket.value,
                 "action_type": iss_item.resolved_action.value if iss_item and iss_item.resolved_action else None,
                 "reason": iss_item.resolution_path if iss_item else None,
-            })
+                "blocks_execution": is_blocking,
+            }
+            matching_block = next((b for b in blocking_items if b.get("issue_id") == iss_id and "validation_findings" in b), None)
+            if matching_block:
+                rec_entry["validation_findings"] = matching_block["validation_findings"]
+
+            issue_reconciliation.append(rec_entry)
 
         pending = len(approval_pending_proposals) > 0
         has_blocking = len(blocking_items) > 0
