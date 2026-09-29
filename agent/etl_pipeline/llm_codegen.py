@@ -1195,8 +1195,12 @@ def _postprocess_tsql_code(code: str) -> str:
     from_aliases = set(re.findall(r"(?:FROM|JOIN)\s+[#\w\.\[\]]+\s+(?:AS\s+)?([a-zA-Z0-9_]+)\b", code, re.IGNORECASE))
     from_aliases_lower = {a.lower() for a in from_aliases}
 
+    # Check whether the script actually uses # temporary staging tables or persistent staging tables
+    has_hash_staging = bool(re.search(r"\b(?:INTO|TABLE)\s+#[a-zA-Z0-9_]+_Staging\b", code, re.IGNORECASE))
+
     def _redirect_source_updates(match):
         prefix = match.group(1) or ""
+        schema_part = match.group(2) or ""
         tbl_raw = match.group(3)
         suffix = match.group(4)
         clean_tbl = tbl_raw.strip("[]")
@@ -1205,8 +1209,14 @@ def _postprocess_tsql_code(code: str) -> str:
             or low in declared_ctes_lower or "cte" in low or low in from_aliases_lower or len(clean_tbl) <= 3):
             return match.group(0)
         if low.endswith("_staging"):
-            clean_tbl = clean_tbl[:-8]
-        return f"{prefix}#{clean_tbl}_Staging{suffix}"
+            if has_hash_staging:
+                clean_tbl = clean_tbl[:-8]
+                return f"{prefix}#{clean_tbl}_Staging{suffix}"
+            return match.group(0)
+        if has_hash_staging:
+            return f"{prefix}#{clean_tbl}_Staging{suffix}"
+        schema_prefix = schema_part or "[dbo]."
+        return f"{prefix}{schema_prefix}[{clean_tbl}_Staging]{suffix}"
 
     code = re.sub(
         r"(\bUPDATE\s+)(?:(\[?dbo\]?\.)?\[?([a-zA-Z0-9_]+)\]?)(\s+SET\b)",
@@ -1216,6 +1226,8 @@ def _postprocess_tsql_code(code: str) -> str:
     )
     # Sanitize any double staging temporary table references or corrupted single-letter staging tables
     code = re.sub(r"#([a-zA-Z0-9_]+?)_Staging_Staging\b", r"#\1_Staging", code, flags=re.IGNORECASE)
+    code = re.sub(r"\[?dbo\]?\.\[?([a-zA-Z0-9_]+?)_Staging_Staging\]?\b", r"[dbo].[\1_Staging]", code, flags=re.IGNORECASE)
+    code = re.sub(r"\b([a-zA-Z0-9_]+?)_Staging_Staging\b", r"\1_Staging", code, flags=re.IGNORECASE)
     code = re.sub(r"\bUPDATE\s+#([a-zA-Z])_Staging\s+SET\b", r"UPDATE \1 SET", code, flags=re.IGNORECASE)
     code = re.sub(r"\bUPDATE\s+#s_Staging\s+SET\b", r"UPDATE s SET", code, flags=re.IGNORECASE)
 

@@ -221,9 +221,11 @@ def ensure_idempotent_sql(sql: str) -> str:
         flags=re.IGNORECASE
     )
 
-    # 5. Sanitize accidental double staging temporary table references (#..._Staging_Staging)
+    # 5. Sanitize accidental double staging table references
     sql = re.sub(r"#([a-zA-Z0-9_]+?)_Staging_Staging\b", r"#\1_Staging", sql, flags=re.IGNORECASE)
     sql = re.sub(r"#([a-zA-Z0-9_]+?)_staging_staging\b", r"#\1_Staging", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\[?dbo\]?\.\[?([a-zA-Z0-9_]+?)_Staging_Staging\]?\b", r"[dbo].[\1_Staging]", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\b([a-zA-Z0-9_]+?)_Staging_Staging\b", r"\1_Staging", sql, flags=re.IGNORECASE)
 
     # 6. Balance stored procedures with outer END; and ensure auto-execution
     has_sp = re.search(r"\bCREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC)\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?", sql, re.IGNORECASE)
