@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List
 from agent.compiler.base.agent import BaseAgent
 from agent.compiler.events.event_bus import CompilerEventType, EventBus
 from agent.compiler.models.context import CompilerContext
 from agent.compiler.models.logical import ActionType, LogicalStep
 from agent.compiler.models.physical import ExecutionEngine, PhysicalPlan, PhysicalStep
+
+logger = logging.getLogger("agent.compiler.physical_planner")
 
 
 class PhysicalPlanner(BaseAgent):
@@ -184,6 +187,15 @@ class PhysicalPlanner(BaseAgent):
                 else_val = step.parameters.get("else_value")
                 template_params["rendered_else_value"] = render_literal(else_val) if else_val is not None else ""
 
+            elif step.action == ActionType.VALIDATE_REFERENTIAL_INTEGRITY:
+                if "parent_key" not in template_params and "parent_columns" in template_params:
+                    p_c = template_params["parent_columns"]
+                    template_params["parent_key"] = p_c[0] if isinstance(p_c, (list, tuple)) else p_c
+                if "child_key" not in template_params and step.target_columns:
+                    template_params["child_key"] = step.target_columns[0]
+                if "parent_dataset" not in template_params:
+                    template_params["parent_dataset"] = step.dataset_name
+
         elif engine == ExecutionEngine.PYSPARK:
             strat, tmpl = self.SPARK_STRATEGIES.get(step.action, ("spark_" + step.action.value, f"{step.action.value}.j2"))
         elif engine == ExecutionEngine.FABRIC:
@@ -215,7 +227,81 @@ class PhysicalPlanner(BaseAgent):
 
         physical_steps: List[PhysicalStep] = []
         for order, step in enumerate(context.logical_plan.steps):
-            phys = self._map_step(step, context.target_engine, order)
+            requires_approval = (
+                step.parameters.get("requires_approval", False)
+                or getattr(step, "requires_approval", False)
+            )
+            is_approved = (
+                step.parameters.get("approved", False)
+                or context.options.get("auto_approve_heuristics", False)
+            )
+            if requires_approval and not is_approved:
+                logger.warning(
+                    "[PhysicalPlanner] Step '%s' (%s) requires approval and is unapproved; withholding from physical plan.",
+                    step.step_id,
+                    step.action.value,
+                )
+                manual_review_steps = context.metadata.setdefault("manual_review_steps", [])
+                reason = "approval_required_for_sentinel_replacement" if step.action == ActionType.REPLACE_SENTINELS else "approval_required"
+                manual_review_steps.append({
+                    "step_id": step.step_id,
+                    "dataset": step.dataset_name,
+                    "action_type": step.action.value,
+                    "source_issue_ids": step.source_issue_ids,
+                    "reason": reason,
+                })
+                prior_rec = context.metadata.setdefault("issue_reconciliation", [])
+                for iss_id in step.source_issue_ids:
+                    prior_rec.append({
+                        "issue_id": iss_id,
+                        "dataset": step.dataset_name,
+                        "column": step.target_columns[0] if step.target_columns else None,
+                        "final_status": "manual_review",
+                        "action_type": step.action.value,
+                        "step_id": step.step_id,
+                        "reason": reason,
+                    })
+                continue
+
+            if step.action == ActionType.VALIDATE_REFERENTIAL_INTEGRITY:
+                step_params = dict(step.parameters)
+                if "parent_key" not in step_params and "parent_columns" in step_params:
+                    p_c = step_params["parent_columns"]
+                    step_params["parent_key"] = p_c[0] if isinstance(p_c, (list, tuple)) else p_c
+                if "child_key" not in step_params and step.target_columns:
+                    step_params["child_key"] = step.target_columns[0]
+                if "parent_dataset" not in step_params:
+                    step_params["parent_dataset"] = step.dataset_name
+
+                required_ri = {"child_key", "parent_dataset", "parent_key"}
+                if not required_ri.issubset(step_params) or not all(step_params.get(k) for k in required_ri):
+                    logger.warning(
+                        "[PhysicalPlanner] Step '%s' missing required RI parameters %s; withholding from physical plan.",
+                        step.step_id,
+                        sorted(required_ri - set(k for k in required_ri if step_params.get(k))),
+                    )
+                    manual_review_steps = context.metadata.setdefault("manual_review_steps", [])
+                    manual_review_steps.append({
+                        "step_id": step.step_id,
+                        "dataset": step.dataset_name,
+                        "action_type": step.action.value,
+                        "source_issue_ids": step.source_issue_ids,
+                        "reason": "manual_review_incomplete_relationship_metadata",
+                    })
+                    prior_rec = context.metadata.setdefault("issue_reconciliation", [])
+                    for iss_id in step.source_issue_ids:
+                        prior_rec.append({
+                            "issue_id": iss_id,
+                            "dataset": step.dataset_name,
+                            "column": step.target_columns[0] if step.target_columns else None,
+                            "final_status": "manual_review",
+                            "action_type": step.action.value,
+                            "step_id": step.step_id,
+                            "reason": "manual_review_incomplete_relationship_metadata",
+                        })
+                    continue
+
+            phys = self._map_step(step, context.target_engine, len(physical_steps))
             physical_steps.append(phys)
 
         physical_plan = PhysicalPlan(

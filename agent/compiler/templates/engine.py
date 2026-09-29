@@ -42,10 +42,15 @@ class TemplateEngine:
             lstrip_blocks=True,
             undefined=jinja2.Undefined,
         )
+        def _raise_helper(msg: str) -> None:
+            raise ValueError(msg)
+
         self.env.filters["quote_identifier"] = quote_identifier
         self.env.filters["render_literal"] = render_literal
+        self.env.filters["raise"] = _raise_helper
         self.env.globals["quote_identifier"] = quote_identifier
         self.env.globals["render_literal"] = render_literal
+        self.env.globals["raise"] = _raise_helper
 
     @classmethod
     def get_instance(cls) -> TemplateEngine:

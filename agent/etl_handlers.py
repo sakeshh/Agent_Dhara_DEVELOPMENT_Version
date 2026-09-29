@@ -20,6 +20,10 @@ def with_session_lock(func):
     return wrapper
 
 
+COMPILER_VERSION = "2.0.2"
+COMPILER_BUILD = os.getenv("APP_COMMIT_SHA", "ec67830")
+
+
 def _safe_bracket_quote(name: str) -> str:
     """
     Safely bracket-quote a table or schema name, escaping any ']' by doubling it.
@@ -247,23 +251,39 @@ def _run_compiler_codegen(
         "TIER3_APPROVAL_REJECTED",
         "MODEL_UNAVAILABLE",
     }
-    blocking_records = [
-        record
-        for record in tier3_res.issue_reconciliation
-        if record.get("resolution_bucket") in blocking_statuses
-        and record.get("blocks_execution", True)
-    ]
-    blocking_issue_count = len(blocking_records)
+    unresolved_blocking_count = sum(
+        1 for r in tier3_res.issue_reconciliation
+        if r.get("resolution_bucket") in blocking_statuses
+        and r.get("blocks_execution", True)
+    )
+    blocking_manual_review_count = len(tier3_res.blocking_manual_review_issues)
+    approval_pending_blocking_count = len(tier3_res.approval_pending_proposals)
+    blocking_issue_count = (
+        unresolved_blocking_count
+        + blocking_manual_review_count
+        + approval_pending_blocking_count
+    )
     reconciled_unsupported_count = sum(
         1 for r in tier3_res.issue_reconciliation
         if r.get("resolution_bucket") == "UNSUPPORTED"
     )
+
+    certification_status = tier3_res.certification_status
+    if blocking_issue_count > 0:
+        certification_status = "BLOCKED"
+    elif tier3_res.non_blocking_manual_review_issues or reconciled_counts[ResolutionBucket.MANUAL_REVIEW_REQUIRED] > 0:
+        certification_status = "REVIEW_REQUIRED"
+    else:
+        certification_status = "COMPLETE"
 
     telemetry["tier3_compiled_issue_count"] = reconciled_counts[ResolutionBucket.TIER3_COMPILED]
     telemetry["approval_pending_issue_count"] = reconciled_counts[ResolutionBucket.TIER3_APPROVAL_REQUIRED]
     telemetry["manual_review_issue_count"] = reconciled_counts[ResolutionBucket.MANUAL_REVIEW_REQUIRED]
     telemetry["unsupported_issue_count"] = reconciled_unsupported_count
     telemetry["blocking_issue_count"] = blocking_issue_count
+    telemetry["blocking_manual_review_issue_count"] = blocking_manual_review_count
+    telemetry["non_blocking_manual_review_issue_count"] = len(tier3_res.non_blocking_manual_review_issues)
+    telemetry["certification_status"] = certification_status
     telemetry["issue_reconciliation"] = tier3_res.issue_reconciliation
     telemetry["issue_reconciliation_counts"] = {k.value: v for k, v in reconciled_counts.items()}
 
@@ -304,9 +324,9 @@ def _run_compiler_codegen(
     compiler_ctx.metadata["issue_reconciliation"] = tier3_res.issue_reconciliation
     compiler_ctx.metadata["blocking_issue_count"] = blocking_issue_count
     compiler_ctx.metadata["unsupported_issue_count"] = reconciled_unsupported_count
-    compiler_ctx.metadata["certification_status"] = tier3_res.certification_status
+    compiler_ctx.metadata["certification_status"] = certification_status
     compiler_ctx.metadata["manual_review_issue_count"] = reconciled_counts[ResolutionBucket.MANUAL_REVIEW_REQUIRED]
-    compiler_ctx.metadata["blocking_manual_review_issue_count"] = len(tier3_res.blocking_manual_review_issues)
+    compiler_ctx.metadata["blocking_manual_review_issue_count"] = blocking_manual_review_count
     compiler_ctx.metadata["non_blocking_manual_review_issue_count"] = len(tier3_res.non_blocking_manual_review_issues)
 
     # Propagate never_drop_rows policy
@@ -1783,8 +1803,8 @@ def etl_generate_code(
     # Changes to any of these inputs must produce a different ETL artifact.
     _idem_strict = str(flow.get("strict_execution", "")).lower()
     _idem_preview = str(flow.get("preview_mode", "")).lower()
-    _idem_compiler_ver = "2.0.1"  # bump when compiler contract changes
-    _idem_compiler_build = "5eaccf9"
+    _idem_compiler_ver = "2.0.2"  # bump when compiler contract changes
+    _idem_compiler_build = os.getenv("APP_COMMIT_SHA", "ec67830")
     idempotency_key = "|".join([
         f"sid={sid}",
         f"plan={plan_id}",

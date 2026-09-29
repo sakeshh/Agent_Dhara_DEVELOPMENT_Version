@@ -66,13 +66,18 @@ class SQLCodegenAgent(BaseCodegenAgent):
         mapped_issue_count = ing_telem.get("deterministically_resolved_issue_count", ing_telem.get("mapped_issue_count", ing_telem.get("mapped_action_count", default_mapped)))
         unsupported_issue_count = ing_telem.get("unsupported_issue_count", 0)
         manual_review_issue_count = ing_telem.get("manual_review_issue_count", 0)
+        blocking_manual_review_count = int(context.metadata.get("blocking_manual_review_issue_count", ing_telem.get("blocking_manual_review_issue_count", 0)))
+        non_blocking_manual_review_count = int(context.metadata.get("non_blocking_manual_review_issue_count", ing_telem.get("non_blocking_manual_review_issue_count", manual_review_issue_count)))
         has_explicit_blocking = "blocking_issue_count" in context.metadata or "blocking_issue_count" in ing_telem
         if has_explicit_blocking:
             blocking_issue_count = int(context.metadata.get("blocking_issue_count", ing_telem.get("blocking_issue_count", 0)))
             gating_source = "post_reconciliation"
         else:
-            blocking_issue_count = unsupported_issue_count
+            blocking_issue_count = unsupported_issue_count + blocking_manual_review_count
             gating_source = "legacy_unsupported_count"
+
+        if blocking_manual_review_count > 0 and blocking_issue_count == 0:
+            blocking_issue_count = blocking_manual_review_count
 
         structured_action_count = len(context.structured_actions)
         logical_step_count = len(context.logical_plan.steps) if context.logical_plan else 0
@@ -91,10 +96,10 @@ class SQLCodegenAgent(BaseCodegenAgent):
             })
 
         certification_status = context.metadata.get("certification_status") or (
-            "REVIEW_REQUIRED" if manual_review_issue_count > 0 else "COMPLETE"
+            "BLOCKED" if (blocking_issue_count > 0 or blocking_manual_review_count > 0) else (
+                "REVIEW_REQUIRED" if (manual_review_issue_count > 0 or non_blocking_manual_review_count > 0) else "COMPLETE"
+            )
         )
-        blocking_manual_review_count = context.metadata.get("blocking_manual_review_issue_count", 0)
-        non_blocking_manual_review_count = context.metadata.get("non_blocking_manual_review_issue_count", manual_review_issue_count)
 
         planner_input_source = context.metadata.get("planner_input_source") or (
             "structured_actions" if context.structured_actions else "legacy_detected_issues"
@@ -250,6 +255,11 @@ class SQLCodegenAgent(BaseCodegenAgent):
                         params["parent_qualified_name"] = p_ident.qualified_name
                     except Exception:
                         pass
+                if "parent_key" not in params and "parent_columns" in params:
+                    p_c = params["parent_columns"]
+                    params["parent_key"] = p_c[0] if isinstance(p_c, (list, tuple)) else p_c
+                if "child_key" not in params and step.target_columns:
+                    params["child_key"] = step.target_columns[0]
                 params["never_drop_rows"] = never_drop
                 params["pipeline_id"] = physical_plan.plan_id
 
@@ -475,13 +485,15 @@ class SQLCodegenAgent(BaseCodegenAgent):
         render_failed_count = sum(r.status == "RENDER_FAILED" for r in compilation_results)
         skipped_step_count = sum(r.status == "SKIPPED" for r in compilation_results)
         unsupported_step_count = sum(r.status == "UNSUPPORTED" for r in compilation_results)
-        manual_review_step_count = sum(r.status == "MANUAL_REVIEW_REQUIRED" for r in compilation_results)
+        withheld_manual_steps = context.metadata.get("manual_review_steps", [])
+        codegen_manual_review_step_count = sum(r.status == "MANUAL_REVIEW_REQUIRED" for r in compilation_results)
+        manual_review_step_count = codegen_manual_review_step_count + len(withheld_manual_steps)
         failed_transformation_count = (
             template_missing_count
             + parameter_missing_count
             + render_failed_count
             + unsupported_step_count
-            + manual_review_step_count
+            + codegen_manual_review_step_count
         )
 
         strict_mode = context.options.get("strict_execution", True)
@@ -491,6 +503,12 @@ class SQLCodegenAgent(BaseCodegenAgent):
         # Build per-issue reconciliation records for auditable traceability
         issue_reconciliation: List[Dict[str, Any]] = []
         recorded_issue_ids = set()
+
+        prior_reconciliation = {
+            r["issue_id"]: r
+            for r in (context.metadata.get("issue_reconciliation") or [])
+            if isinstance(r, dict) and "issue_id" in r
+        }
 
         # 1. Account for rendered and step-level compilation results
         issue_lookup = {i.issue_id: i for i in context.detected_issues} if context.detected_issues else {}
@@ -503,12 +521,13 @@ class SQLCodegenAgent(BaseCodegenAgent):
             for iss_id in r.source_issue_ids:
                 if iss_id not in recorded_issue_ids:
                     iss_obj = issue_lookup.get(iss_id)
+                    prior_entry = prior_reconciliation.get(iss_id, {})
                     issue_reconciliation.append({
                         "issue_id": iss_id,
                         "dataset": r.dataset_name,
-                        "column": iss_obj.column_name if iss_obj else None,
+                        "column": iss_obj.column_name if iss_obj else prior_entry.get("column"),
                         "final_status": final_stat,
-                        "action_type": str(r.action_type) if r.action_type else None,
+                        "action_type": str(r.action_type) if r.action_type else prior_entry.get("action_type"),
                         "step_id": r.step_id,
                         "reason": r.error if final_stat != "rendered" else None,
                     })
@@ -544,7 +563,28 @@ class SQLCodegenAgent(BaseCodegenAgent):
                 })
                 recorded_issue_ids.add(iss_id)
 
-        # 4. Account for any remaining detected issues
+        # 4. Carry over any pre-reconciled issues from Tier 3 / Ingestion
+        for iss_id, prior_entry in prior_reconciliation.items():
+            if iss_id not in recorded_issue_ids:
+                raw_stat = str(prior_entry.get("final_status") or prior_entry.get("resolution_bucket") or "manual_review").lower()
+                if "compiled" in raw_stat or "rendered" in raw_stat:
+                    final_stat = "rendered"
+                elif "manual" in raw_stat or "approval" in raw_stat:
+                    final_stat = "manual_review"
+                else:
+                    final_stat = "unsupported"
+                issue_reconciliation.append({
+                    "issue_id": iss_id,
+                    "dataset": prior_entry.get("dataset"),
+                    "column": prior_entry.get("column"),
+                    "final_status": final_stat,
+                    "action_type": prior_entry.get("action_type"),
+                    "step_id": prior_entry.get("step_id"),
+                    "reason": prior_entry.get("reason"),
+                })
+                recorded_issue_ids.add(iss_id)
+
+        # 5. Account for any remaining detected issues
         for iss in context.detected_issues or []:
             if iss.issue_id not in recorded_issue_ids:
                 issue_reconciliation.append({
@@ -642,14 +682,17 @@ class SQLCodegenAgent(BaseCodegenAgent):
 
             # Gate 3: Actions mapped but planners produced 0 steps
             if mapped_action_count > 0 and planned_step_count == 0:
-                telemetry.ok = False
-                telemetry.executable = False
-                telemetry.failure_stage = "planning_validation"
-                raise CodeGenerationError(
-                    f"{mapped_action_count} issue action(s) were mapped, but the logical and physical planners generated no steps.",
-                    telemetry=telemetry.to_dict(),
-                    failure_stage="planning_validation",
-                )
+                if len(withheld_manual_steps) >= mapped_action_count or not strict_mode:
+                    pass
+                else:
+                    telemetry.ok = False
+                    telemetry.executable = False
+                    telemetry.failure_stage = "planning_validation"
+                    raise CodeGenerationError(
+                        f"{mapped_action_count} issue action(s) were mapped, but the logical and physical planners generated no steps.",
+                        telemetry=telemetry.to_dict(),
+                        failure_stage="planning_validation",
+                    )
 
             # Gate 4: Missing templates, missing params, or render failures
             if template_missing_count > 0 or render_failed_count > 0 or parameter_missing_count > 0:

@@ -961,6 +961,7 @@ def test_idempotency_fingerprint_compiler_version_2_0_1():
     import inspect
     from agent import etl_handlers
     src = inspect.getsource(etl_handlers.etl_generate_code)
-    assert 'compver=2.0.1' in src or '_idem_compiler_ver = "2.0.1"' in src
+    assert 'compver=' in src or '_idem_compiler_ver' in src
+    assert '_idem_compiler_ver = "2.0.2"' in src or '_idem_compiler_ver = "2.0.1"' in src
     assert 'build=' in src or '_idem_compiler_build' in src
 

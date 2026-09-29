@@ -36,7 +36,7 @@ class OptimizationAgent(BaseAgent):
                         fused = nxt.model_copy()
                         fused.fused_operations = [ActionType.TRIM, nxt.action]
                         fused.description = f"Fused {current.action.value} and {nxt.action.value} on {current.target_columns[0]}"
-                        fused.source_issue_ids = list(set(current.source_issue_ids + nxt.source_issue_ids))
+                        fused.source_issue_ids = sorted(set(current.source_issue_ids + nxt.source_issue_ids))
                         fused_steps.append(fused)
                         i += 2
                         continue
@@ -46,7 +46,7 @@ class OptimizationAgent(BaseAgent):
                         fused = nxt.model_copy()
                         fused.fused_operations = [ActionType.ZERO_TO_NULL, ActionType.FILL_NULLS]
                         fused.description = f"Fused zero-to-null and fill-nulls on {current.target_columns[0]}"
-                        fused.source_issue_ids = list(set(current.source_issue_ids + nxt.source_issue_ids))
+                        fused.source_issue_ids = sorted(set(current.source_issue_ids + nxt.source_issue_ids))
                         fused_steps.append(fused)
                         i += 2
                         continue
@@ -57,17 +57,20 @@ class OptimizationAgent(BaseAgent):
         return fused_steps
 
     def _eliminate_redundant_steps(self, steps: List[LogicalStep]) -> List[LogicalStep]:
-        """Removes exact duplicate steps on the same dataset/column."""
-        seen: Set[Tuple[str, str, Tuple[str, ...]]] = set()
+        """Removes exact duplicate steps on the same dataset/column, preserving source_issue_ids."""
+        seen: Dict[Tuple[str, str, Tuple[str, ...]], LogicalStep] = {}
         deduped: List[LogicalStep] = []
 
         for step in steps:
             # Key: (dataset_name, action, sorted target_columns)
             key = (step.dataset_name, step.action.value, tuple(sorted(step.target_columns)))
             if key in seen:
-                # Skip duplicate action
+                existing = seen[key]
+                existing.source_issue_ids = sorted(
+                    set(existing.source_issue_ids + step.source_issue_ids)
+                )
                 continue
-            seen.add(key)
+            seen[key] = step
             deduped.append(step)
 
         return deduped

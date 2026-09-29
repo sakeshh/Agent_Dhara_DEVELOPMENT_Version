@@ -1,8 +1,10 @@
 -- Step: {{ step_id }} ({{ description }})
 -- Referential Integrity check: [{{ dataset_name }}].[{{ child_key }}] -> [{{ parent_dataset }}].[{{ parent_key }}]
+{% if not child_key or not parent_key or not parent_dataset %}
+{{ raise("Incomplete referential-integrity parameters") }}
+{% endif %}
 {% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
 {% set parent_tbl = parent_qualified_name | default('[dbo].[' ~ parent_dataset ~ ']') %}
-{% if parent_dataset and parent_key and child_key %}
 INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData])
 SELECT @PipelineId, @RunId, '{{ dataset_name }}', '{{ issue_id | default("") }}', '{{ step_id }}', '{{ child_key }}', 'Orphan foreign key in {{ child_key }}', 'QUARANTINE', NULL, (
     SELECT c.*
@@ -17,6 +19,5 @@ DELETE c
 FROM {{ target_table }} c
 LEFT JOIN {{ parent_tbl }} p ON c.[{{ child_key }}] = p.[{{ parent_key }}]
 WHERE p.[{{ parent_key }}] IS NULL AND c.[{{ child_key }}] IS NOT NULL;
-{% endif %}
 {% endif %}
 

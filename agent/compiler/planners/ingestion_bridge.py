@@ -31,6 +31,7 @@ class CanonicalIssue:
     affected_rows: int = 0
     resolved_action: Optional[ActionType] = None
     resolution_path: Optional[str] = None
+    merged_issue_ids: List[str] = field(default_factory=list)
 
 
 class IngestionBridge:
@@ -397,6 +398,7 @@ class IngestionBridge:
             aff_rows: int = 0,
             rule_id: Optional[str] = None,
             explicit_act: Optional[str] = None,
+            issue_id: Optional[str] = None,
         ):
             if col and "," in str(col) and not self.is_pseudo_column(col):
                 col_parts = [c.strip().strip("[]") for c in str(col).split(",") if c.strip()]
@@ -414,6 +416,7 @@ class IngestionBridge:
                             aff_rows=aff_rows,
                             rule_id=rule_id,
                             explicit_act=explicit_act,
+                            issue_id=issue_id,
                         )
                     return
 
@@ -426,7 +429,7 @@ class IngestionBridge:
                     col_clean = col_str.strip("[]")
             else:
                 col_clean = None
-            iss_id = f"iss_{norm_ds}_{col_clean or 'global'}_{len(raw_issues) + 1}"
+            iss_id = issue_id or f"iss_{norm_ds}_{col_clean or 'global'}_{len(raw_issues) + 1}"
             
             action, res_path = self.resolve_action(
                 planned_action=explicit_act,
@@ -456,22 +459,47 @@ class IngestionBridge:
                 res_path = "manual_review_binary_like_observation"
 
             # Intra-dataset referential integrity detection
-            if itype in ("intra_dataset_orphan_fk", "self_referencing_orphan", "orphan_fk") or (
+            if action == ActionType.VALIDATE_REFERENTIAL_INTEGRITY or itype in (
+                "referential_integrity", "orphan_foreign_keys", "intra_dataset_orphan_fk", "self_referencing_orphan", "orphan_fk"
+            ) or (
                 "refers to" in (msg or "").lower() and (action is None or action == ActionType.VALIDATE_REFERENTIAL_INTEGRITY)
             ):
                 import re as _re
                 match = _re.search(r"(\w+)\s+refers\s+to\s+(\w+)", msg or "", _re.IGNORECASE)
-                child_c = match.group(1) if match else (col_clean or final_params.get("child_key"))
-                parent_c = match.group(2) if match else (final_params.get("parent_key") or final_params.get("parent_columns") or child_c)
-                final_params.setdefault("parent_dataset", norm_ds)
-                final_params.setdefault("parent_columns", [parent_c] if isinstance(parent_c, str) else list(parent_c))
-                final_params.setdefault("child_key", child_c)
+                if match:
+                    final_params.setdefault("child_key", match.group(1))
+                    final_params.setdefault("parent_key", match.group(2))
+
+                # Handle target_column and target_dataset aliases
+                if "parent_key" not in final_params and "target_column" in final_params:
+                    final_params["parent_key"] = final_params["target_column"]
+                if "parent_dataset" not in final_params and "target_dataset" in final_params:
+                    final_params["parent_dataset"] = final_params["target_dataset"]
+                if "parent_key" not in final_params and "parent_columns" in final_params:
+                    p_c = final_params["parent_columns"]
+                    final_params["parent_key"] = p_c[0] if isinstance(p_c, (list, tuple)) else p_c
+                if "child_key" not in final_params and col_clean:
+                    final_params["child_key"] = col_clean
+                if "parent_dataset" not in final_params:
+                    final_params["parent_dataset"] = norm_ds
+
+                # Check for ManagerID -> EmployeeID self-reference
+                col_l = (col_clean or "").lower()
+                child_k = str(final_params.get("child_key") or "").lower()
+                if (col_l == "managerid" or child_k == "managerid") and not final_params.get("parent_key"):
+                    final_params["parent_key"] = "EmployeeID"
+                    final_params["parent_dataset"] = norm_ds
+                    final_params["child_key"] = col_clean or "ManagerID"
+
                 final_params.setdefault("allow_null", True)
                 final_params.setdefault("disposition", "FLAG")
                 action = ActionType.VALIDATE_REFERENTIAL_INTEGRITY
                 res_path = "deterministic_intra_dataset_orphan_fk"
-                if not col_clean and child_c:
-                    col_clean = child_c
+
+                required_ri = {"child_key", "parent_dataset", "parent_key"}
+                if not required_ri.issubset(final_params) or not all(final_params.get(k) for k in required_ri):
+                    action = None
+                    res_path = "manual_review_incomplete_relationship_metadata"
 
             if itype in ("planned_flag_missing_declared_key", "flag_missing_declared_key"):
                 action = None
@@ -650,6 +678,12 @@ class IngestionBridge:
                     if not final_params.get("approved"):
                         final_params["requires_approval"] = True
 
+                col_l = (col_clean or "").lower()
+                is_financial = any(f in col_l for f in ("salary", "wage", "compensation", "bonus"))
+                if is_financial and final_params.get("requires_approval") and not final_params.get("approved"):
+                    action = None
+                    res_path = "manual_review_approval_required_for_sentinel_replacement"
+
             elif action == ActionType.CAST_TYPE:
                 target_type = (
                     final_params.get("target_type")
@@ -712,17 +746,22 @@ class IngestionBridge:
             if isinstance(block, dict):
                 for item in (block.get("issues") or []):
                     total_assessment_discovered += 1
+                    item_params = dict(item.get("parameters") or {})
+                    for ri_k in ("target_column", "target_dataset", "parent_key", "child_key", "parent_dataset", "parent_columns"):
+                        if ri_k in item and ri_k not in item_params:
+                            item_params[ri_k] = item[ri_k]
                     _add_raw(
                         ds_name=item.get("dataset") or ds_k,
                         col=item.get("column") or item.get("column_name"),
                         itype=item.get("issue_type") or item.get("category") or "unknown_issue",
                         sug=item.get("suggested_action") or item.get("recommendation"),
                         sev=item.get("severity") or "medium",
-                        params=item.get("parameters") or {},
+                        params=item_params,
                         source="assessment_dq_datasets",
                         msg=item.get("message") or item.get("description") or "",
                         aff_rows=int(item.get("row_count_affected") or item.get("affected_rows") or 0),
                         rule_id=item.get("rule_id"),
+                        issue_id=item.get("issue_id"),
                     )
 
         # ── 2. assess["datasets"][dataset]["quality"]["issues"] & columns ─────
@@ -743,6 +782,7 @@ class IngestionBridge:
                         msg=item.get("message") or item.get("description") or "",
                         aff_rows=int(item.get("row_count_affected") or item.get("affected_rows") or 0),
                         rule_id=item.get("rule_id"),
+                        issue_id=item.get("issue_id"),
                     )
                 # 2b. Columns block
                 for col_k, col_meta in (ds_info.get("columns") or {}).items():
@@ -760,6 +800,7 @@ class IngestionBridge:
                                 msg=item.get("message") or item.get("description") or "",
                                 aff_rows=int(item.get("row_count_affected") or item.get("affected_rows") or 0),
                                 rule_id=item.get("rule_id"),
+                                issue_id=item.get("issue_id"),
                             )
 
         # ── 3. assess["data_quality_issues"]["global_issues"] ──────────────────
@@ -886,6 +927,7 @@ class IngestionBridge:
                         existing.issue_type.lower(),
                     )
                     if existing_key == key:
+                        existing.merged_issue_ids.append(iss.issue_id)
                         for pk, pv in iss.parameters.items():
                             if pk not in existing.parameters:
                                 existing.parameters[pk] = pv
@@ -1035,8 +1077,28 @@ class IngestionBridge:
             if action is not None and c_iss.source != "manual_review" and c_iss.suggested_action != "manual_review":
                 cols = [c_iss.column] if c_iss.column else []
                 # Referential integrity actions use child_key from parameters if column is missing
-                if action == ActionType.VALIDATE_REFERENTIAL_INTEGRITY and not cols and c_iss.parameters.get("child_key"):
-                    cols = [c_iss.parameters["child_key"]]
+                if action == ActionType.VALIDATE_REFERENTIAL_INTEGRITY:
+                    if not cols and c_iss.parameters.get("child_key"):
+                        cols = [c_iss.parameters["child_key"]]
+                    if not c_iss.parameters.get("parent_key") and c_iss.parameters.get("parent_columns"):
+                        p_cols = c_iss.parameters["parent_columns"]
+                        c_iss.parameters["parent_key"] = p_cols[0] if isinstance(p_cols, (list, tuple)) else p_cols
+                    if not c_iss.parameters.get("parent_dataset"):
+                        c_iss.parameters["parent_dataset"] = c_iss.dataset
+                    if not c_iss.parameters.get("child_key") and cols:
+                        c_iss.parameters["child_key"] = cols[0]
+                    c_iss.parameters.setdefault("allow_null", True)
+                    c_iss.parameters.setdefault("disposition", "FLAG")
+
+                    required_ri = {"child_key", "parent_dataset", "parent_key"}
+                    if not required_ri.issubset(c_iss.parameters) or not all(c_iss.parameters.get(k) for k in required_ri) or not cols:
+                        logger.warning(
+                            "[IngestionBridge] Routing incomplete RI action on %s to manual review.",
+                            c_iss.dataset,
+                        )
+                        c_iss.resolved_action = None
+                        c_iss.resolution_path = "manual_review_incomplete_relationship_metadata"
+                        continue
 
                 # Handle composite column strings (e.g., "EmployeeID, EffectiveFrom")
                 if cols and "," in cols[0]:
@@ -1134,7 +1196,7 @@ class IngestionBridge:
                     parameters=dict(c_iss.parameters),
                     source=source_enum,
                     source_reference=c_iss.rule_id or c_iss.issue_id,
-                    source_issue_ids=[c_iss.issue_id],
+                    source_issue_ids=sorted(set([c_iss.issue_id] + getattr(c_iss, "merged_issue_ids", []))),
                     extraction_method=c_iss.resolution_path or "deterministic",
                     confidence=1.0,
                     requires_approval=bool(c_iss.parameters.get("requires_approval", False)),
