@@ -3630,11 +3630,20 @@ def _get_plan_hash(plan: Dict[str, Any]) -> str:
     return hashlib.sha256(plan_json.encode("utf-8")).hexdigest()
 
 
-def _get_cache_key(plan: Dict[str, Any], assessment: Dict[str, Any], engine_key: str) -> str:
+def _get_cache_key(
+    plan: Dict[str, Any],
+    assessment: Dict[str, Any],
+    engine_key: str,
+    session_id: Optional[str] = None,
+) -> str:
     import hashlib
     plan_hash = _get_plan_hash(plan)
     MODEL_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT") or os.getenv("OPENAI_MODEL") or "default"
     cache_identity = {
+        # Include session_id so each session gets its own cache namespace.
+        # This prevents past-session code from leaking into a new session
+        # even when the plan_hash is the same.
+        "session_id": (session_id or "default"),
         "plan_hash": plan_hash,
         "engine": engine_key,
         "prompt_version": PROMPT_VERSION,
@@ -3665,9 +3674,11 @@ async def generate_etl_with_llm(
     validation_errors: Optional[List[str]] = None,
     validate_fn: Optional[Callable[[str], Tuple[bool, List[str]]]] = None,
     strict_mode: bool = False,
+    session_id: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     engine_key = normalize_codegen_engine(engine, sql_dialect)
-    cache_key = _get_cache_key(plan, assessment, engine_key)
+    # Use session-scoped cache key to prevent cross-session code leakage
+    cache_key = _get_cache_key(plan, assessment, engine_key, session_id=session_id)
     plan_hash = _get_plan_hash(plan)
     
     # Invalidate/flush only this plan hash for debugging

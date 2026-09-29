@@ -1983,19 +1983,24 @@ def etl_generate_code(
         }
     plan = _rehydrate_plan(plan, ctx, assess=assess)
 
-    # Step 1 & Step 3: Log all sources and resolve user_prompt with session as source of truth
+    # Step 1 & Step 3: Log all sources and resolve user_prompt from the CURRENT
+    # session / plan only.  We deliberately do NOT fall back to sess / ctx user_prompt
+    # from prior sessions because those may contain stale rules (e.g. training-enrollment
+    # business rules leaking into a dbo.Accounts run).
+    # Priority: explicit API param > plan > flow (same session) > etl_intent description.
     biz_rules = plan.get("business_rules") or flow.get("business_rules") or {}
     resolved_prompt = (
-        user_prompt
-        or plan.get("user_prompt")
-        or flow.get("user_prompt")
-        or sess.get("user_prompt")
-        or ctx.get("user_prompt")
-        or (biz_rules.get("user_prompt") if isinstance(biz_rules, dict) else None)
-        or plan.get("description")
-        or plan.get("notes")
-        or (biz_rules.get("notes") if isinstance(biz_rules, dict) else None)
+        user_prompt                                                                 # 1. Caller-supplied (highest priority)
+        or plan.get("user_prompt")                                                  # 2. Frozen inside the confirmed plan
+        or flow.get("user_prompt")                                                  # 3. Current flow (same session)
+        or plan.get("description")                                                  # 4. Plan description field
+        or plan.get("notes")                                                        # 5. Plan notes field
+        or (biz_rules.get("user_prompt") if isinstance(biz_rules, dict) else None) # 6. Business rules prompt
+        or (biz_rules.get("notes") if isinstance(biz_rules, dict) else None)       # 7. Business rules notes
         or (flow.get("etl_intent", {}).get("description") if isinstance(flow.get("etl_intent"), dict) else None)
+        # NOTE: We intentionally do NOT fall back to sess.get("user_prompt") or
+        # ctx.get("user_prompt") here — those store the last value written during any
+        # previous run of this session and may belong to a completely different dataset.
     )
     user_prompt = resolved_prompt
 
@@ -2224,6 +2229,12 @@ ctx.user_prompt={ctx.get('user_prompt')}
             code, ok, errs = _template_fallback(eng, plan, assess, sql_dialect=sd)
             generated_by = "template"
         elif mode == "llm":
+            # Flush in-process LLM cache for this session before every explicit LLM run
+            # so we never serve stale code from a previous request/session.
+            from agent.etl_pipeline.llm_codegen import clear_codegen_caches
+            clear_codegen_caches()
+            logger.info("[LLM] Flushed in-process codegen caches for fresh generation (session=%s)", sid)
+
             code, ok, errs, generated_by = _generate_for_engine(
                 eng,
                 plan,
@@ -2233,6 +2244,14 @@ ctx.user_prompt={ctx.get('user_prompt')}
                 output_path=output_path,
                 inject_errors=fix_hints,
             )
+            # When mode is explicitly 'llm', do NOT silently swap to template.
+            # Return the LLM output (and its validation errors) as-is so the user
+            # can see exactly what was generated and why it failed.
+            if not ok:
+                logger.warning(
+                    "[LLM] Validation errors for session=%s engine=%s: %s — returning LLM output without template fallback",
+                    sid, eng, errs,
+                )
         else:
             code, ok, errs, generated_by = _generate_for_engine(
                 eng,
