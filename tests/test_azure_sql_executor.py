@@ -276,4 +276,62 @@ def test_llm_codegen_postprocess_fixes_throw():
     assert "END;\n        ;THROW" in cleaned
 
 
+def test_split_sql_batches_handles_semicolon_and_remediates_go_syntax():
+    from agent.azure_sql_executor import _split_sql_batches, _remediate_batch_syntax_error
 
+    # 1. Splitting with GO; and comments
+    sql_with_semicolon_go = """
+CREATE TABLE #Temp1 (id INT);
+GO;
+CREATE TABLE #Temp2 (id INT);
+GO -- trailing comment
+SELECT 1;
+"""
+    batches = _split_sql_batches(sql_with_semicolon_go)
+    assert len(batches) == 3
+    assert "CREATE TABLE #Temp1" in batches[0]
+    assert "CREATE TABLE #Temp2" in batches[1]
+    assert "SELECT 1" in batches[2]
+
+    # 2. Remediation for Msg 102: Incorrect syntax near 'GO'
+    failing_batch = """
+SET NOCOUNT ON;
+BEGIN TRY
+    SELECT 1;
+    GO;
+    SELECT 2;
+END TRY
+BEGIN CATCH
+    THROW;
+END CATCH;
+"""
+    error = "('42000', \"[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Incorrect syntax near 'GO'. (102) (SQLExecDirectW)\")"
+    remediated = _remediate_batch_syntax_error(failing_batch, error)
+    assert len(remediated) == 1
+    assert "GO;" not in remediated[0]
+    assert "-- (GO stripped for execution batch)" in remediated[0]
+
+
+
+
+
+def test_remediate_msg_120_insert_select_column_mismatch():
+    failing_batch = """
+    INSERT INTO cleanedTables.[TrainingEnrollments_Clean] (
+        [BatchID_clean],
+        [Region_clean],
+        etl_batch_id,
+        etl_created_at
+    )
+    SELECT
+        COALESCE([BatchID_clean], [BatchID]),
+        @run_id,
+        GETDATE()
+    FROM #TrainingEnrollments_Staging;
+    """
+    err = "('07008', '[07008] [Microsoft][ODBC SQL Server Driver][SQL Server]The select list for the INSERT statement contains fewer items than the insert list. The number of SELECT values must match the number of INSERT columns. (120) (SQLExecDirectW)')"
+    remediated = ase._remediate_batch_syntax_error(failing_batch, err)
+    assert len(remediated) == 1
+    assert "COALESCE([Region_clean], [Region])" in remediated[0]
+    assert "@run_id" in remediated[0]
+    assert "GETDATE()" in remediated[0]

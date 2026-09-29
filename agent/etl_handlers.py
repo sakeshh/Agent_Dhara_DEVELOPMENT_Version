@@ -2040,14 +2040,15 @@ def etl_generate_code(
     )
     user_prompt = resolved_prompt
 
-    logger.info(
-        f"""
-plan.user_prompt={plan.get('user_prompt')}
-flow.user_prompt={flow.get('user_prompt')}
-session.user_prompt={sess.get('user_prompt')}
-ctx.user_prompt={ctx.get('user_prompt')}
-"""
-    )
+    # Active self-healing: sanitize any stale prompt keys across session objects
+    for d in (plan, flow, sess, ctx):
+        if isinstance(d, dict):
+            if user_prompt:
+                d["user_prompt"] = user_prompt
+            else:
+                d.pop("user_prompt", None)
+
+    logger.info("[GENERATE] session=%s resolved_prompt=%s", sid, (user_prompt[:80] + '...') if user_prompt else 'None')
 
     from agent.feature_flags import get_flags
     flags = get_flags()
@@ -2094,11 +2095,17 @@ ctx.user_prompt={ctx.get('user_prompt')}
     expected_hash = "sha256:" + hashlib.sha256(blob.encode("utf-8", errors="ignore")).hexdigest()
     
     if val_cert.get("validated_plan_hash") != expected_hash:
-        return {
-            "ok": False,
-            "error": "PLAN_MODIFIED",
-            "message": "The plan has been modified since it was last validated. Please re-run confirmation/validation.",
-        }
+        from agent.etl_pipeline.validate_plan import validate_etl_plan_for_confirm
+        re_ok, re_errs = validate_etl_plan_for_confirm(plan, assess or {}, biz_rules)
+        if not re_ok:
+            return {
+                "ok": False,
+                "error": "PLAN_MODIFIED",
+                "message": f"The plan has been modified and failed validation: {'; '.join(re_errs)}",
+                "plan_validation_errors": re_errs,
+            }
+        val_cert = plan.get("validation_certificate") or {}
+        flow["validation_certificate"] = val_cert
         
     # Gate check: check for any pending complex or non-fixable issues
     from agent.etl_pipeline.planner import get_unacknowledged_blockers

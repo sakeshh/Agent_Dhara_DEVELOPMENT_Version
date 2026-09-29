@@ -986,6 +986,48 @@ def _postprocess_tsql_code(code: str) -> str:
 
     code = _sanitize_unquoted_nan_in_code(code)
 
+    # 0a. Strip prompt contamination: HTML tags, Markdown links, and leaked URLs
+    code = re.sub(r"\[([a-zA-Z0-9_\. ]+)\]\((?:https?://[^\)]+|[^\)]+)\)", r"\1", code)
+    code = re.sub(r"\[https?://[^\]]+\]\([^\)]+\)", "", code)
+    code = re.sub(r"</?(?:a|em|strong|span|div|p|b|i)\b[^>]*>", "", code, flags=re.IGNORECASE)
+    code = re.sub(r"https?://[^\s,\'\";\)]+", "", code)
+
+    # 0b. Deterministic T-SQL Syntax & Function Repairs
+    # Fix OBJECTID(...) -> OBJECT_ID(...)
+    code = re.sub(r"\bOBJECTID\s*\(", "OBJECT_ID(", code, flags=re.IGNORECASE)
+    # Fix ROWNUMBER(...) -> ROW_NUMBER(...)
+    code = re.sub(r"\bROWNUMBER\s*\(", "ROW_NUMBER(", code, flags=re.IGNORECASE)
+    # Fix invalid leading comma after SELECT: SELECT , -> SELECT 
+    code = re.sub(r"\bSELECT\s*,\s*", "SELECT ", code, flags=re.IGNORECASE)
+    # Normalize variable naming: @runid -> @run_id
+    code = re.sub(r"@runid\b", "@run_id", code, flags=re.IGNORECASE)
+
+    # 0c. Normalize validation status column names and duplicate values
+    code = re.sub(r"\browvalidationstatus\b", "row_validation_status", code, flags=re.IGNORECASE)
+    code = re.sub(r"\browvalidationreason\b", "row_validation_reason", code, flags=re.IGNORECASE)
+    code = re.sub(r"'(?:near-duplicate-cluster|duplicatecandidate|duplicate-candidate)'", "'duplicate_candidate'", code, flags=re.IGNORECASE)
+
+    # 0d. Safeguard against unconstrained duplicate updates without WHERE clause
+    def _guard_unconstrained_dup_update(m):
+        full_stmt = m.group(0)
+        if not re.search(r"\bWHERE\b", full_stmt, re.IGNORECASE):
+            return f"-- [Auto-Repaired: blocked unconstrained duplicate update without WHERE clause]\n-- {full_stmt}\n"
+        return full_stmt
+
+    code = re.sub(
+        r"\bUPDATE\s+[#\w\[\]]+\s+SET\s+[^;]*?(?:row_validation_status\s*=\s*'duplicate_candidate'|is_duplicate_row\s*=\s*1)[^;]*?;",
+        _guard_unconstrained_dup_update,
+        code,
+        flags=re.IGNORECASE
+    )
+
+    # 0e. Fix CustomerID and standard column type sizing in clean table DDL
+    code = re.sub(r"(\[?CustomerID_clean\]?)\s+NVARCHAR\(MAX\)", r"\1 INT", code, flags=re.IGNORECASE)
+    code = re.sub(r"(\[?CustomerID_raw\]?)\s+NVARCHAR\(MAX\)", r"\1 INT", code, flags=re.IGNORECASE)
+    code = re.sub(r"(\[?\w*(?:name|city|state|address|department|title)\w*_clean\]?)\s+NVARCHAR\(MAX\)", r"\1 NVARCHAR(255)", code, flags=re.IGNORECASE)
+    code = re.sub(r"(\[?\w*email\w*_clean\]?)\s+NVARCHAR\(MAX\)", r"\1 NVARCHAR(320)", code, flags=re.IGNORECASE)
+    code = re.sub(r"(\[?\w*phone\w*_clean\]?)\s+NVARCHAR\(MAX\)", r"\1 NVARCHAR(20)", code, flags=re.IGNORECASE)
+
     # 0. Ensure ANSI_NULLS and QUOTED_IDENTIFIER are set (mandatory for Azure SQL views/indexes)
     upper_code = code.upper()
     ansi_prefix = ""
@@ -996,7 +1038,7 @@ def _postprocess_tsql_code(code: str) -> str:
     if ansi_prefix:
         code = ansi_prefix + "GO\n\n" + code
 
-    # 0b. Sanitize dynamic @clean_table / @clean_suffix DDL patterns into static clean tables
+    # 0f. Sanitize dynamic @clean_table / @clean_suffix DDL patterns into static clean tables
     if "@clean_table" in code or "@clean_suffix" in code:
         tbl_match = re.search(r"QUOTENAME\s*\(\s*'([a-zA-Z0-9_]+?)(?:_Clean)?_?'\s*\+\s*@clean_suffix", code, re.IGNORECASE)
         if not tbl_match:
@@ -1141,7 +1183,7 @@ def _postprocess_tsql_code(code: str) -> str:
 
     if exec_start_idx != -1:
         for i in range(exec_start_idx, len(lines)):
-            if re.match(r"^\s*GO\s*(?:--.*)?$", lines[i], re.IGNORECASE):
+            if re.match(r"^\s*GO\s*;?\s*(?:--.*)?$", lines[i], re.IGNORECASE):
                 # Check previous non-empty line
                 prev_line = ""
                 for k in range(i - 1, -1, -1):
@@ -1157,10 +1199,18 @@ def _postprocess_tsql_code(code: str) -> str:
             line_clean = line.strip().upper()
             if "BEGIN TRY" in line_clean:
                 try_seen = True
-            if try_seen and re.match(r"^\s*GO\s*(?:--.*)?$", lines[i], re.IGNORECASE):
+            if try_seen and re.match(r"^\s*GO\s*;?\s*(?:--.*)?$", lines[i], re.IGNORECASE):
                 lines[i] = "-- GO (omitted for variable scope across execution batch)"
 
     code = "\n".join(lines)
+
+    # 2-extra. Defensively ensure zero GO statements exist inside any BEGIN TRY ... END CATCH block
+    def _strip_inner_go(m):
+        inner = m.group(1)
+        cleaned_inner = re.sub(r"(?im)^\s*GO\s*;?\s*(?:--.*)?$", "-- GO (omitted inside TRY/CATCH)", inner)
+        return f"BEGIN TRY{cleaned_inner}END CATCH"
+
+    code = re.sub(r"\bBEGIN\s+TRY([\s\S]*?)\bEND\s+CATCH\b", _strip_inner_go, code, flags=re.IGNORECASE)
 
     # 2a. Strip any Python logging calls that leaked into T-SQL
     code = re.sub(r"^\s*logger\.(?:info|warning|error|debug)\([^;\n]*\);?\s*$", "", code, flags=re.MULTILINE | re.IGNORECASE)
@@ -1480,7 +1530,79 @@ def _postprocess_tsql_code(code: str) -> str:
         flags=re.IGNORECASE
     )
 
+    # 10. Ensure Clean Tables Schema & Table DDL exist
+    code = _ensure_clean_tables_ddl(code)
+
+    # 11. Reconcile INSERT columns vs SELECT expressions (Msg 120 / Msg 121 prevention)
+    from agent.azure_sql_executor import _reconcile_insert_select_columns
+    code = _reconcile_insert_select_columns(code)
+
     return code
+
+
+def _ensure_clean_tables_ddl(sql: str) -> str:
+    """
+    Ensures that for any INSERT INTO cleanedTables.[<Table>_Clean],
+    the schema 'cleanedTables' and the table DDL exist before BEGIN TRY.
+    """
+    if not sql or "cleanedtables" not in sql.lower():
+        return sql
+
+    matches = re.findall(
+        r"INSERT\s+INTO\s+\[?cleanedTables\]?\.\[?([a-zA-Z0-9_]+)\]?\s*\(([^()]+)\)",
+        sql,
+        re.IGNORECASE
+    )
+    if not matches:
+        return sql
+
+    ddl_statements = []
+    for tbl_name, cols_raw in matches:
+        clean_tbl = tbl_name.strip("[]")
+        if re.search(rf"\bCREATE\s+TABLE\s+\[?cleanedTables\]?\.\[?{re.escape(clean_tbl)}\]?", sql, re.IGNORECASE):
+            continue
+
+        cols = [c.strip() for c in cols_raw.split(",") if c.strip() and not c.strip().startswith("--")]
+        col_defs = []
+        for col in cols:
+            c_name = re.sub(r"[\[\]\s]", "", col)
+            c_low = c_name.lower()
+            if c_low in ("etl_batch_id", "batch_id", "run_id"):
+                col_defs.append(f"[{c_name}] INT NULL")
+            elif c_low in ("etl_created_at", "etl_updated_at", "created_at", "updated_at"):
+                col_defs.append(f"[{c_name}] DATETIME2 NULL DEFAULT GETDATE()")
+            elif any(k in c_low for k in ("score", "percent", "amount", "cost", "price", "rate", "ratio", "hours")):
+                col_defs.append(f"[{c_name}] FLOAT NULL")
+            elif any(k in c_low for k in ("attempt", "count", "qty", "quantity")):
+                col_defs.append(f"[{c_name}] INT NULL")
+            elif any(k in c_low for k in ("feedback", "comment", "description", "notes", "reason")):
+                col_defs.append(f"[{c_name}] NVARCHAR(500) NULL")
+            else:
+                col_defs.append(f"[{c_name}] NVARCHAR(255) NULL")
+
+        formatted_defs = ",\n        ".join(col_defs)
+        ddl_statements.append(
+            f"IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'cleanedTables')\n"
+            f"    EXEC('CREATE SCHEMA cleanedTables');\n"
+            f"GO\n\n"
+            f"IF OBJECT_ID('cleanedTables.{clean_tbl}', 'U') IS NULL\n"
+            f"BEGIN\n"
+            f"    CREATE TABLE [cleanedTables].[{clean_tbl}] (\n"
+            f"        {formatted_defs}\n"
+            f"    );\n"
+            f"END;\n"
+            f"GO"
+        )
+
+    if not ddl_statements:
+        return sql
+
+    ddl_block = "\n\n-- =============================================\n-- Target Clean Tables Infrastructure DDL\n-- =============================================\n" + "\n\n".join(ddl_statements)
+
+    try_match = re.search(r"\bBEGIN\s+TRY\b", sql, re.IGNORECASE)
+    if try_match:
+        return sql[:try_match.start()].rstrip() + "\n\n" + ddl_block + "\n\n" + sql[try_match.start():]
+    return ddl_block + "\n\n" + sql
 
 
 def _fix_toplevel_pipeline_duplication(code: str) -> str:
@@ -2147,6 +2269,11 @@ PYTHON REQUIREMENTS:
 
 T-SQL REQUIREMENTS:
 - Header comment block with plan_id.
+- COMPILER SYNTAX & FUNCTION CONVENTIONS (CRITICAL):
+  - Function names: ALWAYS use exact T-SQL function names: `OBJECT_ID('schema.table', 'U')` (never `OBJECTID`), `ROW_NUMBER() OVER (...)` (never `ROWNUMBER`), `SCOPE_IDENTITY()` (never `IDENTITY()`).
+  - No leading commas: NEVER emit `SELECT ,` with an orphaned or leading comma.
+  - Variable naming: ALWAYS use `@run_id` consistently across all blocks (`DECLARE @run_id INT;`, `SET @run_id = SCOPE_IDENTITY();`, `WHERE id = @run_id;`). NEVER name it `@runid`.
+  - PURE SQL OUTPUT: NEVER emit markdown links `[text](url)`, HTML tags (`<em>`, `<a>`, `<span>`), or URLs in the generated code.
 - SCRIPT STRUCTURE & IDEMPOTENT DDL (CRITICAL FOR RUNTIME COMPILATION):
   1. ALL table DDL statements MUST be executed FIRST at the top, BEFORE execution or stored procedure bodies:
      - Infrastructure tables: `dbo.etl_log`, `dbo.etl_rejects`, `dbo.etl_watermark`.
@@ -2195,13 +2322,24 @@ T-SQL REQUIREMENTS:
      `SELECT ... INTO #<Table>_Staging FROM dbo.[<Table>];`
      NEVER run `INSERT INTO #<Table>_Staging SELECT ...` without creating `#<Table>_Staging` first (fails with Msg 208).
   2. Staging Companion Columns Completeness (CRITICAL):
-     When creating `#<Table>_Staging`, you MUST declare ALL companion columns for EVERY column in the dataset:
-     `src.[<col>], src.[<col>] AS [<col>_raw], CAST(NULL AS NVARCHAR(MAX)) AS [<col>_clean], CAST(NULL AS VARCHAR(50)) AS [<col>_validation_status], CAST(NULL AS VARCHAR(500)) AS [<col>_validation_reason]`.
-     Include row-level duplicate companion columns: `CAST(0 AS BIT) AS [is_duplicate_row], CAST('valid' AS VARCHAR(50)) AS [row_validation_status], CAST(NULL AS VARCHAR(500)) AS [row_validation_reason]`.
-  3. Single Composite CASE Expression per Field: For each column with multiple rules (sentinels, nulls, formats, ranges), compile into ONE unified `CASE` statement following the canonical validation hierarchy:
+     Preserve original source data types and use appropriate bounded types. Avoid excessive `NVARCHAR(MAX)`!
+     - Integer IDs (e.g. `CustomerID`, `OrderID`, `EnrollmentID`): `src.[<id>], src.[<id>] AS [<id>_raw], CAST(NULL AS INT) AS [<id>_clean]`. NEVER store `TRY_CAST(CustomerID AS INT)` into an `NVARCHAR(MAX)` column!
+     - Names / Titles / Descriptions: `CAST(NULL AS NVARCHAR(255)) AS [<col>_clean]`
+     - Cities / States / Categories: `CAST(NULL AS NVARCHAR(100)) AS [<col>_clean]`
+     - Email: `CAST(NULL AS NVARCHAR(320)) AS [Email_clean]`
+     - Phone: `CAST(NULL AS NVARCHAR(20)) AS [Phone_clean]`
+     - Dates: `CAST(NULL AS DATETIME2) AS [<col>_clean]`
+     - Measures / Currency / Price: `CAST(NULL AS DECIMAL(18,2)) AS [<col>_clean]`
+     - Validation Status: `CAST('valid' AS VARCHAR(50)) AS [<col>_validation_status]`
+     - Validation Reason: `CAST(NULL AS VARCHAR(500)) AS [<col>_validation_reason]`
+     - Row duplicates: `CAST(0 AS BIT) AS [is_duplicate_row], CAST('valid' AS VARCHAR(50)) AS [row_validation_status], CAST(NULL AS VARCHAR(500)) AS [row_validation_reason]`
+  3. Single-Pass Consolidated Updates (Performance Optimization):
+     Do NOT execute separate sequential `UPDATE` passes for each rule on the same column (`UPDATE #1`, `UPDATE #2`, `UPDATE #3`).
+     Consolidate all checks for a column into ONE unified `CASE` expression following the canonical validation hierarchy:
      `source_null -> empty_value -> registered_placeholder -> punctuation_only -> unparseable_value -> format_violation -> domain_violation -> valid`.
+     This reduces execution passes from O(n * rules) down to a single scan (60-80% faster).
   4. Validation Status Integrity: When a value is out of range, negative, unparseable, or sentinel, `<col>_validation_status` MUST be marked with the defect status code, and NEVER marked `'valid'`.
-  5. Target Clean Table DDL and Inserts: Include companion columns in clean table DDL ([col_raw], [col_clean], [col_validation_status], [col_validation_reason], [row_validation_status], [row_validation_reason], [is_duplicate_row]). ALWAYS specify explicit column lists in `INSERT INTO cleanedTables.<Table>_Clean ([Col1], [Col2], ..., etl_batch_id, etl_created_at, etl_updated_at) SELECT COALESCE(s.[Col1_clean], s.[Col1]), ..., @run_id, GETDATE(), GETDATE() FROM #<Table>_Staging s;`.
+  5. Target Clean Table DDL and Inserts: Clean table DDL must match bounded types ([col_clean] INT, NVARCHAR(255), etc.) and include companion columns. ALWAYS specify explicit column lists in `INSERT INTO cleanedTables.<Table>_Clean ([Col1], [Col2], ..., etl_batch_id, etl_created_at, etl_updated_at) SELECT COALESCE(s.[Col1_clean], s.[Col1]), ..., @run_id, GETDATE(), GETDATE() FROM #<Table>_Staging s;`.
   6. Bracket Quoting: Quote all identifiers safely: `[dbo].[Orders]`, `[column_name]`.
 - MANDATORY DATA QUALITY RULES (Must cover findings relevant to existing columns):
   1. Negative Values & Measures (P1):
@@ -2242,11 +2380,13 @@ T-SQL REQUIREMENTS:
      NEVER check `TRY_CAST([col] AS INT) IS NULL` on genuine text columns (such as Country, Department, EmployeeName, Location, BusinessUnit, Status, WorkMode) where text values are expected!
      For true numeric bounded columns (e.g. Age, Percentage): check boundaries (`TRY_CAST([Age] AS INT) < 0 OR TRY_CAST([Age] AS INT) > 120`).
      Set `[col_clean] = NULL`, `[col_validation_status] = 'invalid_out_of_range'` (or `'implausible_age'`), reason `'Age must be between 0 and 120'`.
-  7. Row-Level Duplicate Candidates (NO PSEUDO-COLUMNS):
+  7. Row-Level Duplicate Candidates (NO PSEUDO-COLUMNS & MUST HAVE WHERE CLAUSE):
      NEVER write `SET [Row-level] = ...`. `[Row-level]` is a DQ metadata label, NOT a database column!
      Use companion columns on the staging table: `[is_duplicate_row]`, `[row_validation_status]`, `[row_validation_reason]`.
-     Use a CTE with `ROW_NUMBER() OVER (PARTITION BY <candidate_keys> ORDER BY (SELECT NULL))` and update:
-     `SET [is_duplicate_row] = 1, [row_validation_status] = 'duplicate_candidate', [row_validation_reason] = 'Duplicate candidate row detected based on candidate keys' WHERE rn > 1;`
+     Always use canonical status value `'duplicate_candidate'` (NEVER `'near-duplicate-cluster'`, `'duplicatecandidate'`).
+     Pattern:
+     `;WITH d AS (SELECT [<KeyColumn>], ROW_NUMBER() OVER (PARTITION BY [<KeyColumn>] ORDER BY (SELECT NULL)) AS rn FROM #<Table>_Staging) UPDATE s SET s.[is_duplicate_row] = 1, s.[row_validation_status] = 'duplicate_candidate', s.[row_validation_reason] = 'Duplicate candidate row detected based on candidate keys' FROM #<Table>_Staging s JOIN d ON s.[<KeyColumn>] = d.[<KeyColumn>] WHERE d.rn > 1;`
+     CRITICAL: You MUST include `WHERE d.rn > 1;`! NEVER emit an unconstrained UPDATE without a WHERE clause, which would mark 100% of rows in the table as duplicates.
   8. Quarantine & Rejects Logging (CRITICAL: EXACTLY ONE REJECT ROW PER REJECTED RECORD):
      In `dbo.etl_rejects`, you MUST insert EXACTLY ONE record per rejected/violating row using a correlated subquery driven by `FROM #<Table>_Staging s`.
      DO NOT aggregate multiple rows into a single JSON batch array!

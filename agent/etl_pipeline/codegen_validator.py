@@ -67,6 +67,16 @@ def validate_tsql(code: str, never_drop_rows: bool = False) -> Tuple[bool, List[
          "Invalid T-SQL: ON CONFLICT is PostgreSQL syntax"),
         ("SERIAL" in upper and "SERIAL" not in upper.replace("SERIAL", ""), 
          "Possible SERIAL usage — invalid in T-SQL, use IDENTITY(1,1)"),
+        (bool(re.search(r"\bOBJECTID\s*\(", code, re.IGNORECASE)),
+         "Invalid T-SQL: OBJECTID() is invalid, use OBJECT_ID()"),
+        (bool(re.search(r"\bROWNUMBER\s*\(", code, re.IGNORECASE)),
+         "Invalid T-SQL: ROWNUMBER() is invalid, use ROW_NUMBER()"),
+        (bool(re.search(r"\bSELECT\s*,\s*", code, re.IGNORECASE)),
+         "Invalid T-SQL: Syntax error 'SELECT ,' (leading comma)"),
+        (bool(re.search(r"</?(?:a|em|strong|span|div)\b", code, re.IGNORECASE)),
+         "Invalid T-SQL: Prompt/HTML tag contamination found in SQL code"),
+        (bool(re.search(r"\[[a-zA-Z0-9_\. ]+\]\(https?://", code, re.IGNORECASE)),
+         "Invalid T-SQL: Markdown link contamination found in SQL code"),
     ]
     for condition, msg in hard_checks:
         if condition:

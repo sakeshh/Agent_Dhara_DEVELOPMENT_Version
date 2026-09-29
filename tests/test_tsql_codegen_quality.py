@@ -966,8 +966,92 @@ END CATCH;
     assert "INSERT INTO [cleanedTables].[TrainingCourseMaster_Clean]" in processed
 
 
+def test_compiler_repairs_audit_issues():
+    from agent.etl_pipeline.llm_codegen import _postprocess_tsql_code
+    from agent.etl_pipeline.codegen_validator import validate_tsql
 
+    # Flawed script demonstrating the 8 audit review issues
+    flawed_sql = """
+-- Corrupted link and prompt contamination
+-- See <em>details</em> in [cleanedTables.CustomersRawClean](https://m365.cloud.microsoft/customers)
+IF OBJECTID('cleanedTables.CustomersRawClean', 'U') IS NULL
+CREATE TABLE [cleanedTables].[CustomersRawClean] (
+    [CustomerID_clean] NVARCHAR(MAX),
+    [CustomerName_clean] NVARCHAR(MAX),
+    [Email_clean] NVARCHAR(MAX),
+    [Phone_clean] NVARCHAR(MAX)
+);
+GO
 
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+DECLARE @runid BIGINT;
 
+BEGIN TRY
+    INSERT INTO dbo.etl_log (process_name, start_time, status) VALUES ('ETL', GETDATE(), 'RUNNING');
+    SET @run_id = SCOPE_IDENTITY();
+    BEGIN TRANSACTION;
+
+    SELECT src.CustomerID, src.CustomerName, src.Email, src.Phone
+    INTO #Customers_Staging
+    FROM dbo.[Customers];
+
+    ;WITH d AS (
+        SELECT ,
+        ROWNUMBER() OVER (PARTITION BY CustomerID ORDER BY (SELECT NULL)) AS rn
+        FROM #Customers_Staging
+    )
+    UPDATE s
+    SET rowvalidationstatus = 'near-duplicate-cluster',
+        rowvalidationreason = 'Duplicate row'
+    FROM #Customers_Staging s;
+
+    COMMIT TRANSACTION;
+    UPDATE dbo.etl_log SET end_time = GETDATE(), status = 'SUCCESS' WHERE id = @run_id;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0 ROLLBACK;
+    ;THROW;
+END CATCH;
+"""
+    processed = _postprocess_tsql_code(flawed_sql)
+
+    # 1. OBJECTID -> OBJECT_ID
+    assert "OBJECTID(" not in processed
+    assert "OBJECT_ID('cleanedTables.CustomersRawClean'" in processed
+
+    # 2. Corrupted links & HTML tags stripped
+    assert "https://m365.cloud.microsoft" not in processed
+    assert "<em>" not in processed
+    assert "</em>" not in processed
+
+    # 3. ROWNUMBER -> ROW_NUMBER and SELECT , fixed
+    assert "ROWNUMBER()" not in processed
+    assert "ROW_NUMBER()" in processed
+    assert "SELECT ," not in processed
+
+    # 4. @runid -> @run_id standardized
+    assert "@runid" not in processed
+    assert "@run_id" in processed
+
+    # 5. Unconstrained duplicate update neutralized/blocked
+    assert "-- [Auto-Repaired: blocked unconstrained duplicate update without WHERE clause]" in processed
+
+    # 6. Status and column names standardized
+    assert "near-duplicate-cluster" not in processed
+    assert "rowvalidationstatus" not in processed
+    assert "row_validation_status" in processed
+
+    # 7. CustomerID INT type preserved
+    assert "[CustomerID_clean] INT" in processed
+
+    # 8. Bounded column sizes
+    assert "[CustomerName_clean] NVARCHAR(255)" in processed
+    assert "[Email_clean] NVARCHAR(320)" in processed
+    assert "[Phone_clean] NVARCHAR(20)" in processed
+
+    # Verify that the postprocessed SQL passes the validator
+    ok, errors, _ = validate_tsql(processed)
+    assert ok, f"Validation failed with errors: {errors}"
 
 

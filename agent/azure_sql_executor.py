@@ -183,12 +183,13 @@ def test_connection(connection_string: str | None = None) -> dict:
 def _split_sql_batches(sql: str) -> list[str]:
     """
     Split on GO statements (T-SQL batch separator). Strip empty batches.
+    Handles 'GO', 'GO;', inline comments, and carriage returns.
     """
     if not sql:
         return []
-    # Match GO on a line by itself (case-insensitive, optionally with comments/spaces)
-    pattern = r"(?i)^\s*GO\s*(?:--.*)?$"
-    batches = re.split(pattern, sql, flags=re.MULTILINE)
+    # Match GO on a line by itself (case-insensitive, optionally with semicolons, comments, or trailing spaces)
+    pattern = r"(?im)^\s*GO\s*;?\s*(?:--.*)?$"
+    batches = re.split(pattern, sql)
     result = []
     for b in batches:
         b_stripped = b.strip()
@@ -196,13 +197,128 @@ def _split_sql_batches(sql: str) -> list[str]:
             result.append(b_stripped)
     return result
 
+
+def _split_sql_expressions(expr_str: str) -> list[str]:
+    """Split comma-separated SQL expressions respecting nested parentheses, brackets, and quotes."""
+    items = []
+    cur = []
+    depth = 0
+    in_quote = False
+    quote_char = ''
+    i = 0
+    n = len(expr_str)
+    while i < n:
+        char = expr_str[i]
+        if in_quote:
+            cur.append(char)
+            if char == quote_char:
+                if i + 1 < n and expr_str[i + 1] == quote_char:
+                    cur.append(quote_char)
+                    i += 1
+                else:
+                    in_quote = False
+        else:
+            if char in ("'", '"'):
+                in_quote = True
+                quote_char = char
+                cur.append(char)
+            elif char in ('(', '['):
+                depth += 1
+                cur.append(char)
+            elif char in (')', ']'):
+                depth = max(0, depth - 1)
+                cur.append(char)
+            elif char == ',' and depth == 0:
+                item = "".join(cur).strip()
+                if item:
+                    items.append(item)
+                cur = []
+            else:
+                cur.append(char)
+        i += 1
+    if cur:
+        item = "".join(cur).strip()
+        if item:
+            items.append(item)
+    return items
+
+
+def _reconcile_insert_select_columns(sql: str) -> str:
+    """
+    Reconciles INSERT INTO <table> (<cols>) SELECT <items> FROM #Staging statements
+    where the number of SELECT values does not match the number of INSERT columns (Msg 120/121).
+    """
+    if not sql or "INSERT" not in sql.upper() or "SELECT" not in sql.upper():
+        return sql
+
+    pattern = re.compile(
+        r"INSERT\s+INTO\s+([^\(\n]+)\s*\(([^()]+)\)\s*SELECT\s+([\s\S]+?)\s+FROM\s+(#\w+_Staging\b[^\n;]*)",
+        re.IGNORECASE
+    )
+
+    def _replace_mismatch(match):
+        target = match.group(1).strip()
+        cols_raw = match.group(2)
+        select_raw = match.group(3)
+        from_part = match.group(4).strip()
+
+        cols = [c.strip() for c in cols_raw.split(",") if c.strip() and not c.strip().startswith("--")]
+        items = _split_sql_expressions(select_raw)
+
+        if len(cols) == len(items):
+            return match.group(0)
+
+        logger.warning(
+            "Reconciling column count mismatch for %s: %d target columns vs %d select expressions",
+            target, len(cols), len(items)
+        )
+
+        item_by_col = {}
+        for it in items:
+            refs = re.findall(r"\[([a-zA-Z0-9_]+)\]|\b([a-zA-Z0-9_]+)\b", it)
+            flat_refs = [r[0] or r[1] for r in refs if (r[0] or r[1])]
+            keywords = {"coalesce", "getdate", "cast", "try_cast", "null", "case", "when", "then", "else", "end", "run_id", "is", "not"}
+            col_refs = [r for r in flat_refs if r.lower() not in keywords and not r.startswith("@")]
+
+            for cr in col_refs:
+                item_by_col[cr.lower()] = it
+                if cr.lower().endswith("_clean"):
+                    item_by_col[cr[:-6].lower()] = it
+                else:
+                    item_by_col[f"{cr.lower()}_clean"] = it
+
+        new_items = []
+        for col in cols:
+            c_name = re.sub(r"[\[\]\s]", "", col)
+            c_lower = c_name.lower()
+            if c_lower in ("etl_batch_id", "batch_id", "run_id"):
+                new_items.append("@run_id")
+            elif c_lower in ("etl_created_at", "created_at", "etl_updated_at", "updated_at", "loaded_at"):
+                new_items.append("GETDATE()")
+            elif c_lower in item_by_col:
+                new_items.append(item_by_col[c_lower])
+            elif c_lower.endswith("_clean"):
+                base = c_name[:-6]
+                new_items.append(f"COALESCE([{c_name}], [{base}])")
+            else:
+                new_items.append(f"[{c_name}]")
+
+        formatted_cols = ",\n        ".join(cols)
+        formatted_items = ",\n        ".join(new_items)
+        return f"INSERT INTO {target} (\n        {formatted_cols}\n    )\n    SELECT \n        {formatted_items}\n    FROM {from_part}"
+
+    return pattern.sub(_replace_mismatch, sql)
+
+
 def _remediate_batch_syntax_error(batch_sql: str, error_msg: str) -> list[str]:
     """
     Attempt automated remediation for known SQL Server batch execution errors:
-    1. Msg 102 (Incorrect syntax near ';'): Unclosed stored procedure AS BEGIN block missing END;
-    2. Msg 111 ('CREATE/ALTER PROCEDURE' must be the first statement in a query batch) / embedded EXEC
-    3. Msg 208 (Invalid object name '#..._Staging'): INSERT INTO #Staging without prior creation
-    4. Msg 156 (Incorrect syntax near the keyword 'OR'):
+    1. Msg 102 (Incorrect syntax near 'GO'): GO statement leaked into execution batch
+    2. Msg 102 (Incorrect syntax near ';'): Unclosed stored procedure AS BEGIN block missing END;
+    3. Msg 111 ('CREATE/ALTER PROCEDURE' must be the first statement in a query batch) / embedded EXEC
+    4. Msg 208 (Invalid object name '#..._Staging'): INSERT INTO #Staging without prior creation
+    5. Msg 120 / Msg 121: INSERT column list and SELECT expression count mismatch
+    6. Msg 156 (Incorrect syntax near the keyword 'OR'):
        - 'CREATE OR ALTER' on database compatibility level < 130
        - 'CREATE OR REPLACE' -> convert to CREATE (with drop if exists)
        - 'CREATE OR ALTER TABLE' -> convert to CREATE TABLE
@@ -213,6 +329,12 @@ def _remediate_batch_syntax_error(batch_sql: str, error_msg: str) -> list[str]:
         return []
 
     err_low = error_msg.lower()
+
+    # Remediation 0: Msg 102 - Incorrect syntax near 'GO' (GO statement inside batch or followed by semicolon)
+    if "near 'go'" in err_low or "syntax near 'go'" in err_low or "near go" in err_low:
+        fixed = re.sub(r"(?im)^\s*GO\s*;?\s*(?:--.*)?$", "-- (GO stripped for execution batch)", batch_sql)
+        if fixed != batch_sql:
+            return [fixed]
 
     # Remediation A: Msg 102 (Incorrect syntax near ';') - Stored procedure missing outer END;
     if "102" in err_low or "near ';'" in err_low or "syntax near ';'" in err_low:
@@ -345,6 +467,29 @@ def _remediate_batch_syntax_error(batch_sql: str, error_msg: str) -> list[str]:
         cleaned = re.sub(r"\bCREATE\s+(?:NONCLUSTERED\s+)?INDEX\s+[^;]+;", "", cleaned, flags=re.IGNORECASE)
         if cleaned != batch_sql:
             return [cleaned]
+
+    # Remediation J: Msg 120 / Msg 121 - INSERT list and SELECT list column count mismatch
+    if ("120" in err_low or "121" in err_low or 
+        ("fewer items than the insert list" in err_low) or 
+        ("more items than the insert list" in err_low) or
+        ("number of select values must match" in err_low)):
+        reconciled = _reconcile_insert_select_columns(batch_sql)
+        if reconciled != batch_sql:
+            return [reconciled]
+
+    # Remediation K: Msg 208 - Invalid object name 'cleanedTables....'
+    if "208" in err_low and "cleanedtables" in err_low:
+        m_tbl = re.search(r"cleanedtables\.\[?(\w+)\]?", batch_sql, re.IGNORECASE)
+        tbl_name = m_tbl.group(1) if m_tbl else "TrainingEnrollments_Clean"
+        ddl_create = (
+            f"IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'cleanedTables')\n"
+            f"    EXEC('CREATE SCHEMA cleanedTables');\n"
+            f"IF OBJECT_ID('cleanedTables.{tbl_name}', 'U') IS NULL\n"
+            f"BEGIN\n"
+            f"    SELECT TOP 0 * INTO cleanedTables.[{tbl_name}] FROM #TrainingEnrollments_Staging;\n"
+            f"END;"
+        )
+        return [ddl_create, batch_sql]
 
     # Check for keyword 'OR' errors (Msg 156)
     if not any(k in err_low for k in ("keyword 'or'", "near 'or'", "near the keyword 'or'")):
@@ -597,6 +742,9 @@ def run_transactional_sql(
                         batch_sql,
                         flags=re.IGNORECASE
                     )
+
+            # Proactively reconcile INSERT INTO ... SELECT column count mismatches (Msg 120/121)
+            batch_sql = _reconcile_insert_select_columns(batch_sql)
 
             # Check if this specific batch is DDL
             is_ddl = bool(ddl_pattern.search(batch_sql))
