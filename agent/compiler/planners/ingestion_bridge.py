@@ -228,6 +228,17 @@ class IngestionBridge:
         "missing_approved_fill_semantics",
         "incompatible_trim_on_date_column",
         "missing_declared_key_self_reference",
+        # Planner-emitted detection/flagging types — no deterministic SQL action available;
+        # these are near-duplicate cluster detections and statistical outlier flags
+        # that require human review to decide whether to quarantine, merge, or waive.
+        "planned_flag_near_duplicate_cluster",
+        "flag_near_duplicate_cluster",
+        "planned_flag_duplicate_candidates",
+        "flag_duplicate_candidates",
+        "planned_flag_outliers",
+        "flag_outliers",
+        "near_duplicate_cluster",
+        "duplicate_candidates",
     }
 
     # Category mapping for typed Issue model

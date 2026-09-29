@@ -2392,7 +2392,7 @@ def etl_generate_code(
         "session_id": sid,
         "engine": eng,
         "format": ext,
-        "code": code if ok else "",
+        "code": combined_code if ok else "",
         "code_hash": saved_code_hash,
         "saved_code_hash": saved_code_hash,
         "artifact_emitted": artifact_emitted,
@@ -2556,13 +2556,54 @@ def etl_execute_sql(
         }
 
     code = flow.get("code")
+
+    # Rehydrate from two-phase parts if flow["code"] is empty but both phases exist
+    if not code:
+        cleanse = flow.get("code_cleanse") or ""
+        transform = flow.get("code_transform") or ""
+        current_plan_id = str((flow.get("plan") or {}).get("plan_id") or "")
+        cleanse_pid = flow.get("code_cleanse_plan_id", "")
+        transform_pid = flow.get("code_transform_plan_id", "")
+        if cleanse and transform and cleanse_pid == current_plan_id and transform_pid == current_plan_id:
+            if target_engine in ("sql", "tsql", "ansi"):
+                code = cleanse + "\nGO\n\n" + transform
+            else:
+                code = cleanse
+            logger.info("[etl_execute_sql] Rehydrated code from two-phase parts (cleanse+transform) for session=%s", sid)
+            flow["code"] = code
+        elif cleanse and cleanse_pid == current_plan_id:
+            code = cleanse
+            logger.info("[etl_execute_sql] Rehydrated code from cleanse-only part for session=%s", sid)
+            flow["code"] = code
+        elif transform and transform_pid == current_plan_id:
+            code = transform
+            logger.info("[etl_execute_sql] Rehydrated code from transform-only part for session=%s", sid)
+            flow["code"] = code
+
+    # Final fallback: read from persisted artifact file on disk
+    if not code:
+        rel_path = flow.get("artifact_rel_path")
+        if rel_path:
+            try:
+                _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                _abs_p = os.path.join(_root, rel_path)
+                if os.path.exists(_abs_p):
+                    with open(_abs_p, "r", encoding="utf-8") as _f:
+                        code = _f.read()
+                    if code:
+                        logger.info("[etl_execute_sql] Rehydrated code from disk artifact=%s for session=%s", rel_path, sid)
+                        flow["code"] = code
+            except Exception as _e:
+                logger.warning("[etl_execute_sql] Failed to read artifact from disk: %s", _e)
+
     if not code:
         return {
             "ok": False,
             "session_id": sid,
             "error": "NO_CODE",
-            "message": "No generated SQL/PySpark code found for this session. Generate code first."
+            "message": "No generated SQL/PySpark code found for this session. Generate code first.",
         }
+
 
     # Dynamically re-verify code validity before execution using the actual code language
     code_str = str(code or "")

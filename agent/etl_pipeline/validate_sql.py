@@ -6,7 +6,7 @@ from typing import List, Tuple
 _DANGEROUS = [
     (r"\bdrop\s+table\s+(?!.*\b\w*(?:_clean|_transformed|_stg|_staging|temp_|_temp)\b|.*#)", "contains DROP TABLE on non-staging/clean/transformed table — remove for safety"),
     (r"\btruncate\s+table\s+(?!.*\b\w*(?:_clean|_transformed|_stg|_staging|temp_|_temp)\b|.*#)", "contains TRUNCATE TABLE on non-staging/clean/transformed table — remove for safety"),
-    (r"\bdelete\s+from\s+(?!.*\b\w*(?:_clean|_transformed|_stg|_staging|_dedup|temp_|etl_log|cte|_temp)\b|.*#)", "contains DELETE FROM on non-staging/clean/transformed table — remove for safety"),
+    (r"\bdelete\s+from\s+(?!.*\b\w*(?:_clean|_transformed|_stg|_staging|_dedup|temp_|etl_log|cte|_temp)\b|.*#|.*\[\w*(?:cte|CTE|_staging|_clean|_dedup|_temp)\w*\])", "contains DELETE FROM on non-staging/clean/transformed table — remove for safety"),
     (r"\bxp_cmdshell\b", "contains xp_cmdshell — system command execution not allowed"),
     (r"\bopenrowset\b", "contains OPENROWSET — external data source access not allowed in execution mode"),
 ]
