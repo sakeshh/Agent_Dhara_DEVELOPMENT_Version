@@ -15,12 +15,34 @@ logger = logging.getLogger("agent.memory_system.embeddings")
 class DefaultEmbeddingProvider(EmbeddingProviderInterface):
     def __init__(self, dimension: int = 1536):
         self.dimension = dimension
-        self._openai_client = None
+        self._client = None
+        self._model = None
 
-        if os.getenv("OPENAI_API_KEY"):
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_key = os.getenv("AZURE_OPENAI_API_KEY")
+        azure_emb_dep = (
+            os.getenv("AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT")
+            or os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+            or os.getenv("AZURE_OPENAI_EMBEDDING_MODEL")
+        )
+
+        if azure_endpoint and azure_key and azure_emb_dep:
+            try:
+                from openai import AzureOpenAI
+                self._client = AzureOpenAI(
+                    azure_endpoint=azure_endpoint,
+                    api_key=azure_key,
+                    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
+                )
+                self._model = azure_emb_dep
+            except Exception as e:
+                logger.warning(f"Could not initialize Azure OpenAI embedding client: {e}")
+        elif os.getenv("OPENAI_API_KEY") and not azure_endpoint:
+            # Only connect to public OpenAI if Azure OpenAI is not the configured provider
             try:
                 from openai import OpenAI
-                self._openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+                self._client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+                self._model = "text-embedding-3-small"
             except Exception as e:
                 logger.warning(f"Could not initialize OpenAI embedding client: {e}")
 
@@ -31,15 +53,15 @@ class DefaultEmbeddingProvider(EmbeddingProviderInterface):
         if not text or not text.strip():
             return [0.0] * self.dimension
 
-        if self._openai_client:
+        if self._client and self._model:
             try:
-                resp = self._openai_client.embeddings.create(
-                    model="text-embedding-3-small",
+                resp = self._client.embeddings.create(
+                    model=self._model,
                     input=text.strip(),
                 )
                 return resp.data[0].embedding
             except Exception as e:
-                logger.debug(f"OpenAI embedding error, falling back to local: {e}")
+                logger.debug(f"OpenAI/Azure embedding error, falling back to local: {e}")
 
         # Deterministic local hash-based pseudo-vector representation for fallback
         return self._local_hash_embedding(text)
