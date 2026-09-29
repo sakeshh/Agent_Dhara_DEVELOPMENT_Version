@@ -1350,6 +1350,61 @@ def api_etl_deploy(payload: EtlDeployPayload) -> Dict[str, Any]:
     return etl_deploy(payload.session_id)
 
 
+class EtlPurgePromptPayload(BaseModel):
+    session_id: str
+
+
+@app.post("/etl/purge-prompt")
+def api_etl_purge_prompt(payload: EtlPurgePromptPayload) -> Dict[str, Any]:
+    """Surgically remove stale user_prompt from an existing session.
+
+    Call this when the code editor is empty or generating wrong code because an
+    old user_prompt (e.g. training-enrollment rules) is still stored inside the
+    SQLite session from a previous run.  All other session state (plan, assessment,
+    DQ gate results, etc.) is preserved.
+    """
+    from agent.session_store import load_session, save_session
+
+    sid = (payload.session_id or "default").strip() or "default"
+    sess = load_session(sid)
+    ctx = sess.setdefault("context", {})
+    flow = ctx.setdefault("etl_flow", {})
+
+    purged: list[str] = []
+
+    for container, label in [(sess, "sess"), (ctx, "ctx"), (flow, "flow")]:
+        if container.get("user_prompt"):
+            container.pop("user_prompt", None)
+            purged.append(label)
+
+    # Also strip user_prompt from the frozen plan objects so the next
+    # generate call sees a clean slate
+    for plan_key in ("approved_plan", "plan"):
+        p = flow.get(plan_key)
+        if isinstance(p, dict) and p.get("user_prompt"):
+            p.pop("user_prompt", None)
+            purged.append(f"flow.{plan_key}.user_prompt")
+        biz = p.get("business_rules") if isinstance(p, dict) else None
+        if isinstance(biz, dict) and biz.get("user_prompt"):
+            biz.pop("user_prompt", None)
+            purged.append(f"flow.{plan_key}.business_rules.user_prompt")
+
+    save_session(sess)
+
+    from agent.etl_pipeline.llm_codegen import clear_codegen_caches
+    clear_codegen_caches()
+
+    return {
+        "ok": True,
+        "session_id": sid,
+        "purged_from": purged,
+        "message": (
+            f"Purged stale user_prompt from: {', '.join(purged) if purged else 'nothing — already clean'}. "
+            "In-process LLM cache also flushed. Re-run POST /etl/generate to get fresh code."
+        ),
+    }
+
+
 @app.get("/etl/dq-gate")
 def api_etl_dq_gate(session_id: str, dataset: str, threshold: float = 70.0) -> Dict[str, Any]:
     """Check dataset against the DQ Gate threshold."""

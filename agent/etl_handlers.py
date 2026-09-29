@@ -1756,11 +1756,13 @@ def etl_confirm_plan(session_id: str, plan_override: Optional[Dict[str, Any]] = 
         reason="confirm_plan_called" if not auto_ok else "auto_approved_all_steps_safe",
     )
 
+    # NOTE: We intentionally do NOT propagate plan.user_prompt back into sess/ctx/flow.
+    # Doing so causes stale prompts (e.g. training-enrollment rules) to persist in
+    # the session and contaminate future generate runs on completely different datasets.
+    # The generate step resolves the prompt from the caller API param first, then falls
+    # back to fields that are intrinsic to the dataset (plan.description, etl_intent.description).
     if plan.get("user_prompt"):
-        sess["user_prompt"] = plan.get("user_prompt")
-        ctx["user_prompt"] = plan.get("user_prompt")
-        flow["user_prompt"] = plan.get("user_prompt")
-        logger.info("[SESSION] Persisted user_prompt")
+        logger.info("[SESSION] Noted plan.user_prompt exists; NOT propagating to sess/ctx/flow to prevent cross-run contamination.")
 
     save_session(sess)
     logger.info(
@@ -1983,24 +1985,27 @@ def etl_generate_code(
         }
     plan = _rehydrate_plan(plan, ctx, assess=assess)
 
-    # Step 1 & Step 3: Log all sources and resolve user_prompt from the CURRENT
-    # session / plan only.  We deliberately do NOT fall back to sess / ctx user_prompt
-    # from prior sessions because those may contain stale rules (e.g. training-enrollment
-    # business rules leaking into a dbo.Accounts run).
-    # Priority: explicit API param > plan > flow (same session) > etl_intent description.
+    # Resolve user_prompt using ONLY inputs that are intrinsic to the current request.
+    # Priority order (highest to lowest):
+    #   1. Explicit API param supplied by the caller (always wins)
+    #   2. etl_intent.description — describes what this specific dataset connection intends to do
+    #   3. plan.description / plan.notes — structural description of the plan steps
+    #   4. business_rules.notes — annotations attached to the rules object
+    # 
+    # We do NOT fall back to:
+    #   - plan.user_prompt   — persisted from the prior confirm call; may contain text
+    #                           from an entirely different dataset (e.g. training-enrollment
+    #                           rules bleeding into a dbo.Accounts run).
+    #   - flow.user_prompt   — same issue; written by the previous confirm cycle.
+    #   - sess.user_prompt   — global session value; written by any prior run.
+    #   - ctx.user_prompt    — same as sess.
     biz_rules = plan.get("business_rules") or flow.get("business_rules") or {}
     resolved_prompt = (
-        user_prompt                                                                 # 1. Caller-supplied (highest priority)
-        or plan.get("user_prompt")                                                  # 2. Frozen inside the confirmed plan
-        or flow.get("user_prompt")                                                  # 3. Current flow (same session)
-        or plan.get("description")                                                  # 4. Plan description field
-        or plan.get("notes")                                                        # 5. Plan notes field
-        or (biz_rules.get("user_prompt") if isinstance(biz_rules, dict) else None) # 6. Business rules prompt
-        or (biz_rules.get("notes") if isinstance(biz_rules, dict) else None)       # 7. Business rules notes
-        or (flow.get("etl_intent", {}).get("description") if isinstance(flow.get("etl_intent"), dict) else None)
-        # NOTE: We intentionally do NOT fall back to sess.get("user_prompt") or
-        # ctx.get("user_prompt") here — those store the last value written during any
-        # previous run of this session and may belong to a completely different dataset.
+        user_prompt                                                                     # 1. Caller-supplied
+        or (flow.get("etl_intent", {}).get("description") if isinstance(flow.get("etl_intent"), dict) else None)  # 2. ETL intent
+        or plan.get("description")                                                      # 3. Plan description
+        or plan.get("notes")                                                            # 4. Plan notes
+        or (biz_rules.get("notes") if isinstance(biz_rules, dict) else None)           # 5. Business rules notes
     )
     user_prompt = resolved_prompt
 
