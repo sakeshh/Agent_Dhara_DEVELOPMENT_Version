@@ -273,18 +273,14 @@ def _run_compiler_codegen(
             ds = iss.get("dataset") or (list(profiles.keys())[0] if profiles else "default")
             detected_issues.append(compiler.compile_raw_issue(iss, ds, idx))
 
-    # Extract user prompt from all possible request and session locations
+    # Extract user prompt from intrinsic request/plan metadata (avoid stale session fallbacks)
     biz_rules = plan.get("business_rules") or flow.get("business_rules") or {}
     user_prompt = (
         user_prompt
-        or plan.get("user_prompt")
-        or flow.get("user_prompt")
-        or ctx.get("user_prompt")
-        or (biz_rules.get("user_prompt") if isinstance(biz_rules, dict) else None)
+        or (flow.get("etl_intent", {}).get("description") if isinstance(flow.get("etl_intent"), dict) else None)
         or plan.get("description")
         or plan.get("notes")
         or (biz_rules.get("notes") if isinstance(biz_rules, dict) else None)
-        or (flow.get("etl_intent", {}).get("description") if isinstance(flow.get("etl_intent"), dict) else None)
     )
 
     ir_plan_data = (
@@ -295,9 +291,38 @@ def _run_compiler_codegen(
     if not ir_plan_data:
         snap = load_plan_snapshot(session_id)
         if snap and snap.get("ir_plan"):
-            ir_plan_data = snap.get("ir_plan")
-            if not user_prompt:
-                user_prompt = snap.get("user_prompt")
+            snap_pid = snap.get("plan_id")
+            cur_pid = plan.get("plan_id")
+            if not snap_pid or snap_pid == cur_pid:
+                ir_plan_data = snap.get("ir_plan")
+                if not user_prompt:
+                    user_prompt = snap.get("user_prompt")
+
+    # Guard: verify persisted IR plan actually matches the current dataset profiles/plan
+    if ir_plan_data:
+        from agent.ir.models import IrPlan
+        try:
+            cand_ir = IrPlan.model_validate(ir_plan_data) if isinstance(ir_plan_data, dict) else ir_plan_data
+            cand_pid = getattr(getattr(cand_ir, "metadata", None), "plan_id", None)
+            cur_pid = plan.get("plan_id")
+            source_tables = [s.lower().replace("dbo.", "").strip("[]") for s in cand_ir.get_source_tables()]
+            current_tables = [t.lower().replace("dbo.", "").strip("[]") for t in profiles.keys()]
+            
+            is_matching_plan = (not cand_pid or not cur_pid or cand_pid == cur_pid)
+            has_matching_tables = not source_tables or not current_tables or any(st in current_tables for st in source_tables)
+            
+            if not is_matching_plan or not has_matching_tables:
+                logger.warning(
+                    "[CompilerPipeline] Discarding stale IR plan from different dataset/plan (cand_pid=%s, cur_pid=%s, ir_sources=%s, current_tables=%s)",
+                    cand_pid, cur_pid, source_tables, current_tables,
+                )
+                ir_plan_data = None
+                plan.pop("ir_plan", None)
+                flow.pop("ir_plan", None)
+                ctx.pop("ir_plan", None)
+        except Exception as e:
+            logger.warning("[CompilerPipeline] Error validating persisted IR against current dataset: %s", e)
+            ir_plan_data = None
 
     had_prompt = bool(
         ctx.get("had_user_prompt")
@@ -1217,8 +1242,14 @@ def etl_plan_start(
             "is_draft": False,
             "lineage": None,
             "artifact_version": flow.get("artifact_version") or 0,
+            "ir_plan": None,
+            "planner_route": None,
         }
     )
+    for obj in (flow, sess, ctx):
+        obj.pop("ir_plan", None)
+        obj.pop("planner_route", None)
+        obj.pop("user_prompt", None)
 
     # Compiler cleaning plan integration
     try:
