@@ -128,10 +128,23 @@ class PlanReadinessService:
         ]
 
         # 4. Identify waivers and applied manual resolutions
-        approved_waivers: Set[str] = set(plan.get("approved_waivers") or [])
+        approved_waivers_map: Dict[str, Any] = {}
+        for w in (plan.get("approved_waivers") or []):
+            if isinstance(w, str):
+                approved_waivers_map[w] = {"issue_id": w, "approved": True}
+            elif isinstance(w, dict) and w.get("issue_id"):
+                approved_waivers_map[w["issue_id"]] = w
         if isinstance(active_rules, dict):
-            approved_waivers.update(active_rules.get("approved_waivers") or [])
-        waived_issue_ids: Set[str] = set(plan.get("waived_issue_ids") or [])
+            for w in (active_rules.get("approved_waivers") or []):
+                if isinstance(w, str):
+                    approved_waivers_map[w] = {"issue_id": w, "approved": True}
+                elif isinstance(w, dict) and w.get("issue_id"):
+                    approved_waivers_map[w["issue_id"]] = w
+        for wid in (plan.get("waived_issue_ids") or []):
+            if isinstance(wid, str):
+                approved_waivers_map[wid] = {"issue_id": wid, "approved": True}
+            elif isinstance(wid, dict) and wid.get("issue_id"):
+                approved_waivers_map[wid["issue_id"]] = wid
 
         # 5. Classify every canonical issue into exactly one terminal status and check blocking
         issue_alias_map = telemetry.get("issue_alias_map") or {}
@@ -169,11 +182,29 @@ class PlanReadinessService:
             category = c_iss.issue_type
 
             # Check if explicitly waived
-            if iss_id in approved_waivers or iss_id in waived_issue_ids:
-                final_status = TerminalResolutionStatus.WAIVED
-                is_blocking = False
-                blocking_reason = ""
-                waived_count += 1
+            if iss_id in approved_waivers_map:
+                waiver_info = approved_waivers_map[iss_id]
+                ds_prof = profiles.get(dataset_name)
+                from agent.compiler.models.key_semantics import classify_column_semantics
+                key_sem = classify_column_semantics(col_name, dataset_profile=ds_prof)
+
+                requires_steward = key_sem.is_authoritative_key or severity in ("CRITICAL", "HIGH")
+                approver_role = str(waiver_info.get("approver_role") or "").upper()
+                authorized_roles = {"DATA_STEWARD", "GOVERNANCE_LEAD", "SYSTEM_ADMIN", "DATA_OWNER"}
+
+                if requires_steward and approver_role and approver_role not in authorized_roles:
+                    final_status = TerminalResolutionStatus.APPROVAL_REQUIRED
+                    is_blocking = True
+                    blocking_reason = (
+                        f"Waiver for high-risk {key_sem.authority.value} defect requires DATA_STEWARD or GOVERNANCE_LEAD approval "
+                        f"(provided: {approver_role or 'none'})."
+                    )
+                    approval_pending_blocking_count += 1
+                else:
+                    final_status = TerminalResolutionStatus.WAIVED
+                    is_blocking = False
+                    blocking_reason = ""
+                    waived_count += 1
             # Check if compiled into action
             elif iss_id in compiled_issue_ids:
                 final_status = TerminalResolutionStatus.COMPILED_ACTION_READY
@@ -332,7 +363,7 @@ class PlanReadinessService:
                 issue_alias_map=issue_alias_map,
                 structured_actions=raw_actions,
                 approval_references=[p.proposal_id for p in tier3_res.approval_pending_proposals],
-                waiver_references=list(approved_waivers | waived_issue_ids),
+                waiver_references=list(approved_waivers_map.keys()),
                 manual_resolution_references=[m["issue_id"] for m in tier3_res.manual_review_issues],
                 reconciliation={
                     "assessment_issue_count": len(assess.get("issues", [])) if assess else len(canonical_issues),

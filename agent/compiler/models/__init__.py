@@ -34,6 +34,7 @@ from agent.compiler.models.plan_readiness import (
     ReadinessState,
     TerminalResolutionStatus,
     BLOCKING_TERMINAL_STATUSES,
+    WaiverRecord,
     BlockingIssue,
     PlanReadinessResult,
 )
@@ -88,6 +89,7 @@ __all__ = [
     "ReadinessState",
     "TerminalResolutionStatus",
     "BLOCKING_TERMINAL_STATUSES",
+    "WaiverRecord",
     "BlockingIssue",
     "PlanReadinessResult",
     "CanonicalResolutionManifest",

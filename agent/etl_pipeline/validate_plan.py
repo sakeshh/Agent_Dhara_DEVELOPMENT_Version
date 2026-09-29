@@ -395,16 +395,34 @@ def validate_etl_plan_for_confirm(
     assessment: Dict[str, Any],
     business_rules: Dict[str, Any],
 ) -> Tuple[bool, List[str]]:
-    """Like validate_etl_plan but also requires all manual_review items resolved."""
+    """Like validate_etl_plan but also requires all blocking manual_review items resolved."""
     ok, errs = validate_etl_plan(plan, assessment, business_rules)
-    manual_pending = [
-        m
-        for m in (plan.get("manual_review") or [])
-        if isinstance(m, dict) and str(m.get("status") or "pending") == "pending"
-    ]
-    if manual_pending:
+    from agent.compiler.planners.ingestion_bridge import CanonicalIssue
+    from agent.compiler.tier3.resolution_service import Tier3ResolutionService
+
+    manual_pending_blocking = []
+    for m in (plan.get("manual_review") or []):
+        if not isinstance(m, dict) or str(m.get("status") or "pending").lower() != "pending":
+            continue
+        if m.get("is_blocking") is False or str(m.get("severity") or "").upper() == "LOW":
+            continue
+        c_iss = CanonicalIssue(
+            issue_id=str(m.get("id") or m.get("issue_id") or "iss_mr"),
+            dataset=m.get("dataset") or "",
+            raw_dataset=m.get("dataset") or "",
+            column=m.get("column"),
+            issue_type=m.get("issue_type") or "",
+            suggested_action=m.get("suggested_action") or "",
+            severity=str(m.get("severity") or "MEDIUM"),
+            message=m.get("message") or "",
+            resolution_path=m.get("resolution_path") or "",
+        )
+        if Tier3ResolutionService.is_blocking_manual_review(c_iss):
+            manual_pending_blocking.append(m)
+
+    if manual_pending_blocking:
         errs.append(
-            f"{len(manual_pending)} manual review item(s) still need a resolution before confirm"
+            f"{len(manual_pending_blocking)} manual review item(s) still need a resolution before confirm"
         )
         ok = False
     return ok, errs

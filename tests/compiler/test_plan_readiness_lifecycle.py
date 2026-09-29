@@ -530,3 +530,286 @@ def test_apply_manual_resolutions_never_returns_ready_with_blockers():
     assert resp["lifecycle_state"] == "MANUAL_REVIEW_REQUIRED"
     assert resp["blocking_issue_count"] > 0
 
+
+def test_non_blocking_observational_review_policy():
+    """Observational issues (like string length outliers or all-caps names) are non-blocking."""
+    sid = "sess_non_blocking_policy"
+    sess = load_session(sid)
+    sess["context"] = {
+        "last_assessment_result": {
+            "datasets": {
+                "ClientData": {
+                    "columns": {
+                        "ClientID": {"dtype": "int"},
+                        "CustomerName": {"dtype": "string"},
+                    },
+                    "primary_key_columns": ["ClientID"],
+                }
+            },
+            "issues": [
+                {
+                    "dataset": "ClientData",
+                    "column": "CustomerName",
+                    "issue_type": "string_length_outlier",
+                    "severity": "LOW",
+                }
+            ],
+        },
+        "etl_flow": {
+            "phase": "planned",
+            "plan_version": 1,
+            "plan": {
+                "plan_id": "p_obs",
+                "plan_version": 1,
+                "datasets": {"ClientData": {"steps": []}},
+                "manual_review": [
+                    {
+                        "id": "rev_obs_1",
+                        "dataset": "ClientData",
+                        "column": "CustomerName",
+                        "issue_type": "string_length_outlier",
+                        "severity": "LOW",
+                        "status": "pending",
+                    }
+                ],
+            },
+        },
+    }
+    save_session(sess)
+
+    # Evaluating readiness: string_length_outlier is an observational finding, non-blocking
+    service = PlanReadinessService()
+    res = service.evaluate(
+        sid,
+        plan=sess["context"]["etl_flow"]["plan"],
+        assessment=sess["context"]["last_assessment_result"],
+    )
+    assert res.blocking_issue_count == 0
+    assert res.ready_for_confirmation is True
+
+    # Confirmation succeeds because blocking count is 0
+    conf_res = etl_confirm_plan(session_id=sid)
+    assert conf_res["ok"] is True
+    assert conf_res["status"] == "CONFIRMED"
+
+
+def test_blocking_review_policy_mandatory_pk_unresolved():
+    """Missing value in declared primary key is strictly blocking."""
+    sid = "sess_blocking_pk_unresolved"
+    sess = load_session(sid)
+    sess["context"] = {
+        "last_assessment_result": {
+            "datasets": {
+                "ClientData": {
+                    "columns": {"ClientID": {"dtype": "int"}},
+                    "primary_key_columns": ["ClientID"],
+                }
+            },
+            "issues": [
+                {
+                    "dataset": "ClientData",
+                    "column": "ClientID",
+                    "issue_type": "null_values",
+                    "severity": "HIGH",
+                }
+            ],
+        },
+        "etl_flow": {
+            "phase": "planned",
+            "plan_version": 1,
+            "plan": {
+                "plan_id": "p_pk_block",
+                "plan_version": 1,
+                "datasets": {"ClientData": {"steps": []}},
+                "manual_review": [
+                    {
+                        "id": "rev_pk_null",
+                        "dataset": "ClientData",
+                        "column": "ClientID",
+                        "issue_type": "null_values",
+                        "status": "pending",
+                    }
+                ],
+            },
+        },
+    }
+    save_session(sess)
+
+    conf_res = etl_confirm_plan(session_id=sid)
+    assert conf_res["ok"] is False
+    assert conf_res["http_status"] == 422
+    assert conf_res["error"] == "PLAN_NOT_READY_FOR_CONFIRMATION"
+    assert conf_res["lifecycle_state"] == "MANUAL_REVIEW_REQUIRED"
+    assert conf_res["blocking_issue_count"] > 0
+
+
+def test_manifest_action_mutation_rejects_generation():
+    """Mutating an action parameter in the frozen manifest invalidates hash and fails generation."""
+    sid = "sess_action_mutation"
+    sess = load_session(sid)
+    sess["context"] = {
+        "last_assessment_result": {
+            "datasets": {
+                "ClientData": {
+                    "columns": {"ClientID": {"dtype": "int"}, "City": {"dtype": "string"}},
+                    "primary_key_columns": ["ClientID"],
+                }
+            },
+            "issues": [],
+        },
+        "etl_flow": {
+            "phase": "planned",
+            "plan_version": 1,
+            "plan": {
+                "plan_id": "p_mut",
+                "plan_version": 1,
+                "datasets": {"ClientData": {"steps": [{"action": "trim", "column": "City"}]}},
+                "manual_review": [],
+            },
+        },
+    }
+    save_session(sess)
+
+    # 1. Confirm plan to freeze canonical manifest
+    conf_res = etl_confirm_plan(session_id=sid)
+    assert conf_res["ok"] is True
+
+    # 2. Tamper with an action parameter inside the frozen manifest
+    sess_confirmed = load_session(sid)
+    manifest = sess_confirmed["context"]["etl_flow"]["canonical_manifest"]
+    # Tamper with the action
+    if manifest.get("structured_actions"):
+        manifest["structured_actions"][0]["target_columns"] = ["ForgedColumn"]
+    else:
+        manifest["structured_actions"].append({"action_type": "DROP_COLUMN", "target_columns": ["ForgedColumn"]})
+    save_session(sess_confirmed)
+
+    # 3. Generating code must fail with hash mismatch
+    gen_res = etl_generate_code(session_id=sid, engine="sql", codegen_mode="compiler")
+    assert gen_res["ok"] is False
+    assert gen_res["error"] == "MANIFEST_HASH_MISMATCH"
+
+
+def test_generate_rejects_revoked_approval():
+    """Revoking approval after confirmation invalidates generation."""
+    sid = "sess_approval_revocation"
+    sess = load_session(sid)
+    sess["context"] = {
+        "last_assessment_result": {
+            "datasets": {
+                "ClientData": {
+                    "columns": {"ClientID": {"dtype": "int"}, "City": {"dtype": "string"}},
+                    "primary_key_columns": ["ClientID"],
+                }
+            },
+            "issues": [],
+        },
+        "etl_flow": {
+            "phase": "planned",
+            "plan_version": 1,
+            "plan": {
+                "plan_id": "p_app_rev",
+                "plan_version": 1,
+                "datasets": {"ClientData": {"steps": [{"action": "trim", "column": "City"}]}},
+                "manual_review": [],
+                "cleaning_approval": {"approved_by": "lead_steward", "revoked": False},
+            },
+        },
+    }
+    save_session(sess)
+
+    # 1. Confirm plan
+    conf_res = etl_confirm_plan(session_id=sid)
+    assert conf_res["ok"] is True
+
+    # 2. Revoke approval
+    sess_confirmed = load_session(sid)
+    sess_confirmed["context"]["etl_flow"]["cleaning_approval"] = {"approved_by": "lead_steward", "revoked": True}
+    save_session(sess_confirmed)
+
+    # 3. Generate code must reject with APPROVAL_REVOKED
+    gen_res = etl_generate_code(session_id=sid, engine="sql", codegen_mode="compiler")
+    assert gen_res["ok"] is False
+    assert gen_res["error"] == "APPROVAL_REVOKED"
+
+
+def test_high_risk_waiver_requires_steward_approval():
+    """An unprivileged user role cannot waive a declared primary key null defect."""
+    service = PlanReadinessService()
+    issue_id = "iss_pk_high_risk_waiver"
+    plan = {
+        "plan_id": "p_steward_waiver_test",
+        "datasets": {"Employee": {"columns": ["EmployeeID"]}},
+        "approved_waivers": [
+            {
+                "issue_id": issue_id,
+                "reason": "Test waiver",
+                "approver_role": "OPERATOR",  # Unprivileged role
+            }
+        ],
+    }
+    assess = {
+        "datasets": {
+            "Employee": {
+                "columns": {"EmployeeID": {"dtype": "int"}},
+                "primary_key_columns": ["EmployeeID"],
+            }
+        },
+        "issues": [
+            {
+                "issue_id": issue_id,
+                "dataset": "Employee",
+                "column": "EmployeeID",
+                "issue_type": "null_values",
+                "severity": "HIGH",
+            }
+        ],
+    }
+
+    res = service.evaluate("sess_waiver_role", plan=plan, assessment=assess)
+    assert res.ready_for_confirmation is False
+    assert res.approval_pending_blocking_count >= 1
+    assert any("DATA_STEWARD" in b.reason for b in res.blocking_issues)
+
+
+def test_high_risk_waiver_succeeds_with_data_steward_role():
+    """A declared primary key null defect can be waived when authorized by DATA_STEWARD."""
+    service = PlanReadinessService()
+    issue_id = "iss_pk_high_risk_waiver_ok"
+    plan = {
+        "plan_id": "p_steward_waiver_ok",
+        "datasets": {"Employee": {"columns": ["EmployeeID"]}},
+        "approved_waivers": [
+            {
+                "issue_id": issue_id,
+                "reason": "Legacy source rows cannot have IDs assigned",
+                "approved_by": "lead_steward",
+                "approver_role": "DATA_STEWARD",
+                "execution_behavior": "PRESERVE_AND_FLAG",
+            }
+        ],
+    }
+    assess = {
+        "datasets": {
+            "Employee": {
+                "columns": {"EmployeeID": {"dtype": "int"}},
+                "primary_key_columns": ["EmployeeID"],
+            }
+        },
+        "issues": [
+            {
+                "issue_id": issue_id,
+                "dataset": "Employee",
+                "column": "EmployeeID",
+                "issue_type": "null_values",
+                "severity": "HIGH",
+            }
+        ],
+    }
+
+    res = service.evaluate("sess_waiver_steward_ok", plan=plan, assessment=assess)
+    assert res.ready_for_confirmation is True
+    assert res.blocking_issue_count == 0
+
+
+

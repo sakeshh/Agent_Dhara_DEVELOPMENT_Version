@@ -1990,6 +1990,16 @@ def etl_generate_code(
                 "plan_validation_errors": ["SCHEMA_DRIFT_DETECTED: Schema has changed since plan confirmation."],
             }
 
+        # 3. Verify approval records are still valid and not revoked
+        clean_app = flow.get("cleaning_approval") or {}
+        if clean_app.get("revoked") or flow.get("approval_revoked"):
+            return {
+                "ok": False,
+                "error": "APPROVAL_REVOKED",
+                "message": "Approved actions were revoked after confirmation. Please reconfirm the plan before generating code.",
+                "plan_validation_errors": ["APPROVAL_REVOKED: Approval records have been revoked."],
+            }
+
     eng = (engine or "python").lower()
     plan_id = plan.get("plan_id") or ""
 

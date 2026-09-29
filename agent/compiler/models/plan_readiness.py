@@ -35,6 +35,30 @@ BLOCKING_TERMINAL_STATUSES: Set[TerminalResolutionStatus] = {
 
 
 @dataclass(frozen=True)
+class WaiverRecord:
+    issue_id: str
+    decision: str = "WAIVED"
+    reason: str = ""
+    approved_by: Optional[str] = None
+    approver_role: Optional[str] = None  # e.g., "DATA_STEWARD", "GOVERNANCE_LEAD", "DATA_OWNER", "USER"
+    policy_id: Optional[str] = None
+    expires_at: Optional[str] = None
+    execution_behavior: str = "PRESERVE_AND_FLAG"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "issue_id": self.issue_id,
+            "decision": self.decision,
+            "reason": self.reason,
+            "approved_by": self.approved_by,
+            "approver_role": self.approver_role,
+            "policy_id": self.policy_id,
+            "expires_at": self.expires_at,
+            "execution_behavior": self.execution_behavior,
+        }
+
+
+@dataclass(frozen=True)
 class BlockingIssue:
     issue_id: str
     canonical_issue_id: str
