@@ -275,6 +275,21 @@ def validate_sql_basic(source: str) -> Tuple[bool, List[str], List[str]]:
             create_body = create_st.group(1)
             alter_stmts = re.findall(rf"ALTER\s+TABLE\s+{re.escape(st_full)}\s+ADD\s+\[?([a-zA-Z0-9_]+)\]?", cleaned, re.IGNORECASE)
             declared_cols = set(alter_stmts)
+            has_wildcard = bool(re.search(r"(?:\*|\.\*)", create_body))
+
+            # Load known columns from schema_cache.json if available
+            try:
+                import json, os
+                cache_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config", "schema_cache.json")
+                if os.path.exists(cache_path):
+                    with open(cache_path, "r", encoding="utf-8") as f:
+                        sc_cache = json.load(f)
+                        for tbl, cols in sc_cache.items():
+                            if st_name.lower() in tbl.lower():
+                                declared_cols.update(cols.keys())
+            except Exception:
+                pass
+
             # Add columns declared in SELECT
             for c_match in re.finditer(r"(?:AS\s+\[?([a-zA-Z0-9_]+)\]?|src\.\[?([a-zA-Z0-9_]+)\]?|\[([a-zA-Z0-9_]+)\]|\b([a-zA-Z0-9_]+)\b)", create_body, re.IGNORECASE):
                 col_name = c_match.group(1) or c_match.group(2) or c_match.group(3) or c_match.group(4)
@@ -286,6 +301,9 @@ def validate_sql_basic(source: str) -> Tuple[bool, List[str], List[str]]:
                 set_cols = [m[0] or m[1] for m in re.findall(r"(?:\[([a-zA-Z0-9_]+)\]|\b([a-zA-Z0-9_]+)\b)\s*=", upd) if (m[0] or m[1])]
                 for sc in set_cols:
                     if sc not in declared_cols and not sc.startswith("etl_"):
+                        # If SELECT * INTO was used, base source columns are inherently present
+                        if has_wildcard and not sc.endswith("_clean") and not sc.endswith("_validation_status") and not sc.endswith("_validation_reason"):
+                            continue
                         err_msg = f"Undeclared column '{sc}' in UPDATE on staging table '{st_full}' (Msg 207)"
                         if err_msg not in hard_errors:
                             hard_errors.append(err_msg)

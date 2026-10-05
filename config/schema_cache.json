@@ -1,31 +1,15 @@
 {
-    "dbo.Dhara_Employee": {
-        "EmployeeRowID": "int64",
+    "dbo.Dhara_EmployeeStatusHistory": {
+        "StatusHistoryRowID": "int64",
+        "StatusEventID": "object",
         "EmployeeID": "object",
-        "EmployeeName": "object",
-        "Email": "object",
-        "Phone": "object",
-        "Department": "object",
-        "Location": "object",
-        "ManagerID": "object",
-        "JobTitle": "object",
-        "HireDate": "object",
-        "DateOfBirth": "object",
-        "Salary": "float64",
-        "EmploymentType": "object",
-        "Status": "object",
-        "Gender": "object",
-        "Country": "object",
-        "BusinessUnit": "object",
-        "CostCenter": "object",
-        "EmployeeGrade": "object",
-        "LastPromotionDate": "object",
-        "WorkMode": "object",
-        "OfficeLocation": "object",
-        "ContractStartDate": "object",
-        "ContractEndDate": "object",
-        "ReferenceID": "object",
-        "RecordEffectiveFrom": "object",
-        "RecordEffectiveTo": "object"
+        "PreviousStatus": "object",
+        "NewStatus": "object",
+        "EffectiveFrom": "object",
+        "EffectiveTo": "object",
+        "ChangedAt": "object",
+        "ChangedBy": "object",
+        "ReasonCode": "object",
+        "IsCurrent": "bool"
     }
 }

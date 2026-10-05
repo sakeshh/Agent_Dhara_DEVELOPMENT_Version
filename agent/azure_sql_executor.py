@@ -480,16 +480,40 @@ def _remediate_batch_syntax_error(batch_sql: str, error_msg: str) -> list[str]:
     # Remediation K: Msg 208 - Invalid object name 'cleanedTables....'
     if "208" in err_low and "cleanedtables" in err_low:
         m_tbl = re.search(r"cleanedtables\.\[?(\w+)\]?", batch_sql, re.IGNORECASE)
-        tbl_name = m_tbl.group(1) if m_tbl else "TrainingEnrollments_Clean"
+        tbl_name = m_tbl.group(1) if m_tbl else "Dhara_Employee_Clean"
+        m_stg = re.search(r"FROM\s+(#\w+)", batch_sql, re.IGNORECASE)
+        base_name = re.sub(r"_Clean$", "", tbl_name, flags=re.IGNORECASE)
+        stg_tbl = m_stg.group(1) if m_stg else f"#{base_name}_Staging"
+        
+        extra_cols = ""
+        if "@run_id" in batch_sql:
+            extra_cols = ", CAST(1 AS INT) AS [etl_batch_id], CAST(GETDATE() AS DATETIME2) AS [etl_created_at], CAST(GETDATE() AS DATETIME2) AS [etl_updated_at]"
+
         ddl_create = (
             f"IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'cleanedTables')\n"
             f"    EXEC('CREATE SCHEMA cleanedTables');\n"
             f"IF OBJECT_ID('cleanedTables.{tbl_name}', 'U') IS NULL\n"
             f"BEGIN\n"
-            f"    SELECT TOP 0 * INTO cleanedTables.[{tbl_name}] FROM #TrainingEnrollments_Staging;\n"
+            f"    SELECT TOP 0 *{extra_cols} INTO cleanedTables.[{tbl_name}] FROM {stg_tbl};\n"
             f"END;"
         )
         return [ddl_create, batch_sql]
+
+    # Remediation L: Msg 102 - Incorrect syntax near ','
+    if "102" in err_low and ("near ','" in err_low or "syntax near ','" in err_low or "near ," in err_low):
+        cleaned = batch_sql
+        # 1. Strip trailing comma before FROM, WHERE, GROUP BY, ORDER BY, HAVING
+        cleaned = re.sub(r",\s*\n?\s*(FROM|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING)\b", r" \1", cleaned, flags=re.IGNORECASE)
+        # 2. Strip trailing comma before closing parenthesis
+        cleaned = re.sub(r",\s*\)", r")", cleaned)
+        # 3. Collapse multiple consecutive commas into a single comma
+        cleaned = re.sub(r",\s*,+", r",", cleaned)
+        # 4. Strip trailing comma before semicolon
+        cleaned = re.sub(r",\s*;", r";", cleaned)
+        # 5. Remove comma directly after SELECT or SET keyword
+        cleaned = re.sub(r"\b(SELECT|SET)\s*,\s*", r"\1 ", cleaned, flags=re.IGNORECASE)
+        if cleaned != batch_sql:
+            return [cleaned]
 
     # Check for keyword 'OR' errors (Msg 156)
     if not any(k in err_low for k in ("keyword 'or'", "near 'or'", "near the keyword 'or'")):
@@ -745,6 +769,13 @@ def run_transactional_sql(
 
             # Proactively reconcile INSERT INTO ... SELECT column count mismatches (Msg 120/121)
             batch_sql = _reconcile_insert_select_columns(batch_sql)
+
+            # Proactively sanitize Msg 102 comma errors
+            batch_sql = re.sub(r",\s*\n?\s*(FROM|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING)\b", r" \1", batch_sql, flags=re.IGNORECASE)
+            batch_sql = re.sub(r",\s*\)", r")", batch_sql)
+            batch_sql = re.sub(r",\s*,+", r",", batch_sql)
+            batch_sql = re.sub(r",\s*;", r";", batch_sql)
+            batch_sql = re.sub(r"\b(SELECT|SET)\s*,\s*", r"\1 ", batch_sql, flags=re.IGNORECASE)
 
             # Check if this specific batch is DDL
             is_ddl = bool(ddl_pattern.search(batch_sql))

@@ -335,3 +335,18 @@ def test_remediate_msg_120_insert_select_column_mismatch():
     assert "COALESCE([Region_clean], [Region])" in remediated[0]
     assert "@run_id" in remediated[0]
     assert "GETDATE()" in remediated[0]
+
+
+def test_remediate_msg_102_incorrect_syntax_near_comma():
+    failing_batch = """
+    SELECT [id], [name],, [status],
+    FROM dbo.[Orders]
+    WHERE [active] = 1,;
+    """
+    err = "('42000', \"[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Incorrect syntax near ','. (102) (SQLExecDirectW)\")"
+    remediated = ase._remediate_batch_syntax_error(failing_batch, err)
+    assert len(remediated) == 1
+    assert ",," not in remediated[0]
+    assert ", FROM" not in remediated[0]
+    assert ",;" not in remediated[0]
+

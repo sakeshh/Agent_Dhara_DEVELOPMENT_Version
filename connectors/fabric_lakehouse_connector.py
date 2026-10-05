@@ -69,21 +69,30 @@ def get_fabric_storage_options() -> Dict[str, str]:
             options["tenant_id"] = tenant_id
         return options
 
-    # Default authentication path
-    logger.info("Executing token-based authentication via DefaultAzureCredential...")
+    # Token authentication path (Azure CLI or DefaultAzureCredential)
+    logger.info("Executing token-based authentication for Fabric OneLake...")
     try:
-        from azure.identity import DefaultAzureCredential
-        if tenant_id:
-            os.environ["AZURE_TENANT_ID"] = tenant_id
-            cred = DefaultAzureCredential()
-            token_response = cred.get_token("https://storage.azure.com/.default", tenant_id=tenant_id)
-        else:
-            cred = DefaultAzureCredential()
-            token_response = cred.get_token("https://storage.azure.com/.default")
-        options["bearer_token"] = token_response.token
-        logger.info("Successfully acquired storage access token via DefaultAzureCredential.")
+        from azure.identity import AzureCliCredential, DefaultAzureCredential
+        token_response = None
+        try:
+            cli_cred = AzureCliCredential(tenant_id=tenant_id) if tenant_id else AzureCliCredential()
+            token_response = cli_cred.get_token("https://storage.azure.com/.default")
+            logger.info("Successfully acquired storage access token via AzureCliCredential.")
+        except Exception as cli_ex:
+            logger.debug(f"AzureCliCredential failed: {cli_ex}, attempting DefaultAzureCredential...")
+            if tenant_id:
+                os.environ["AZURE_TENANT_ID"] = tenant_id
+                cred = DefaultAzureCredential()
+                token_response = cred.get_token("https://storage.azure.com/.default", tenant_id=tenant_id)
+            else:
+                cred = DefaultAzureCredential()
+                token_response = cred.get_token("https://storage.azure.com/.default")
+            logger.info("Successfully acquired storage access token via DefaultAzureCredential.")
+
+        if token_response:
+            options["bearer_token"] = token_response.token
     except Exception as e:
-        logger.warning(f"Could not acquire token via DefaultAzureCredential: {e}. "
+        logger.warning(f"Could not acquire token via AzureCliCredential or DefaultAzureCredential: {e}. "
                        f"Please ensure you have configured Azure CLI and executed 'az login' in your shell.")
 
     return options
@@ -138,13 +147,13 @@ def write_to_lakehouse(df: pd.DataFrame, table_name: str, mode: str = "append", 
     workspace = _clean_env_value(os.getenv("FABRIC_WORKSPACE_ID") or os.getenv("FABRIC_WORKSPACE_NAME"))
     lakehouse = _clean_env_value(os.getenv("FABRIC_LAKEHOUSE_NAME") or os.getenv("FABRIC_LAKEHOUSE_ID"))
 
+    safe_table_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name.split(".")[-1])
+
     if not workspace or not lakehouse:
         err_msg = "Fabric Workspace ID/Name or Lakehouse Name/ID is not configured in environment."
         logger.error(err_msg)
-        return {"ok": False, "error": "MISSING_CONFIG", "message": err_msg}
+        return {"ok": False, "error": "MISSING_CONFIG", "message": err_msg, "table": safe_table_name}
 
-    # Format table name to be safe for folders (alphanumeric and underscores)
-    safe_table_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name.split(".")[-1])
     lakehouse_folder = get_lakehouse_folder(lakehouse)
 
     # Build the ABFSS target URI
@@ -163,13 +172,13 @@ def write_to_lakehouse(df: pd.DataFrame, table_name: str, mode: str = "append", 
     except ImportError as ie:
         err_msg = "The 'deltalake' library is not installed. Run 'pip install deltalake'."
         logger.error(err_msg, exc_info=ie)
-        return {"ok": False, "error": "LIBRARY_NOT_FOUND", "message": err_msg}
+        return {"ok": False, "error": "LIBRARY_NOT_FOUND", "message": err_msg, "table": safe_table_name}
 
     storage_options = get_fabric_storage_options()
     if "bearer_token" not in storage_options and "client_id" not in storage_options:
         err_msg = "Authentication failed: Could not acquire Azure storage access token via DefaultAzureCredential or Service Principal. Please run 'az login --tenant <tenant-id>'."
         logger.error(err_msg)
-        return {"ok": False, "error": "AUTH_FAILED", "message": err_msg}
+        return {"ok": False, "error": "AUTH_FAILED", "message": err_msg, "table": safe_table_name}
 
     # Meta check & strict schema validation
     table_exists = False

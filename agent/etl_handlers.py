@@ -2707,7 +2707,9 @@ def etl_execute_sql(
 
     verification_reports = {}
     output_contracts = flow.get("output_contracts") or {}
-    post_summary = result.get("post_execution_summary") or {}
+    post_summary = result.get("post_execution_summary")
+    if not isinstance(post_summary, dict):
+        post_summary = {}
     deltas = post_summary.get("row_deltas") or {}
 
     rid = result.get("run_id") or f"run_{sid}_{int(time.time())}"
