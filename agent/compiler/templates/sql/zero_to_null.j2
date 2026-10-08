@@ -3,7 +3,11 @@
 UPDATE {{ target_table }}
 SET
 {% for col in columns %}
+{% if is_numeric or data_type in ['int', 'bigint', 'smallint', 'tinyint', 'decimal', 'numeric', 'float', 'real', 'money', 'smallmoney'] %}
+    [{{ col }}] = NULLIF([{{ col }}], 0){% if not loop.last %},{% endif %}
+{% else %}
     [{{ col }}] = NULLIF(NULLIF([{{ col }}], '0'), ''){% if not loop.last %},{% endif %}
+{% endif %}
 {% endfor %}
 ;
 

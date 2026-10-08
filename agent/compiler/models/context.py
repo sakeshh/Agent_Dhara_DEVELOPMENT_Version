@@ -21,6 +21,7 @@ class CompilerContext(BaseModel):
     include_operational_metadata: bool = False
     dataset_profiles: Dict[str, DatasetProfile] = Field(default_factory=dict)
     business_rules: List[BusinessRule] = Field(default_factory=list)
+    normalized_business_rules: Optional[Any] = Field(default=None, description="Canonical NormalizedBusinessRules instance")
     detected_issues: List[Issue] = Field(default_factory=list)
     structured_actions: List[Any] = Field(default_factory=list, description="Validated StructuredAction instances from any source")
     logical_plan: Optional[LogicalPlan] = None
@@ -28,6 +29,7 @@ class CompilerContext(BaseModel):
     code_artifact: Optional[CodeArtifact] = None
     validation_result: Optional[ValidationResult] = None
     artifact_manifest: Optional[ArtifactManifest] = None
+    semantic_plan: Optional[Any] = Field(default=None, description="SemanticCleaningPlan instance with entity contracts, canonical keys, and column roles")
     options: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 

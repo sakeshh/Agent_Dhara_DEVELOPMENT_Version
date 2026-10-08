@@ -263,6 +263,35 @@ class PhysicalPlanner(BaseAgent):
                     })
                 continue
 
+            # Semantic compatibility gates:
+            # 1. Block PARSE_DATES on identifiers or numeric columns
+            if step.action == ActionType.PARSE_DATES and step.target_columns:
+                ident_cols = {"id", "key", "code", "managerid", "employeeid", "customerid", "accountmanagerid", "phone", "ssn"}
+                if any(c.lower() in ident_cols or c.lower().endswith("id") or c.lower().endswith("key") for c in step.target_columns):
+                    logger.warning("[PhysicalPlanner] Withholding invalid PARSE_DATES on identifier column(s) %s in dataset %s", step.target_columns, step.dataset_name)
+                    continue
+
+            # 2. Block string operations (TRIM, LOWERCASE, UPPERCASE) on numeric columns
+            if step.action in (ActionType.TRIM, ActionType.LOWERCASE, ActionType.UPPERCASE) and step.target_columns:
+                metric_cols = {"salary", "creditlimit", "amount", "price", "quantity", "rate", "balance", "total", "cost", "revenue", "count", "age"}
+                if any(c.lower() in metric_cols for c in step.target_columns):
+                    logger.warning("[PhysicalPlanner] Withholding invalid string operation %s on numeric column(s) %s in dataset %s", step.action.value, step.target_columns, step.dataset_name)
+                    continue
+
+            # 3. Block DEDUPLICATE without partition keys or on single categorical column
+            if step.action == ActionType.DEDUPLICATE:
+                dedup_cols = list(step.target_columns)
+                if not dedup_cols:
+                    sub = step.parameters.get("subset_columns") or step.parameters.get("keys") or step.parameters.get("candidate_keys") or []
+                    if isinstance(sub, list):
+                        dedup_cols = [c for c in sub if c and str(c).strip().strip("[]").lower() not in ("row-level", "table-level", "*", "")]
+                if not dedup_cols:
+                    logger.warning("[PhysicalPlanner] Withholding DEDUPLICATE on %s because no partition keys were provided.", step.dataset_name)
+                    continue
+                if len(dedup_cols) == 1 and dedup_cols[0].lower() in {"status", "customerstatus", "gender", "type", "flag", "isactive", "maritalstatus", "category"}:
+                    logger.warning("[PhysicalPlanner] Withholding DEDUPLICATE on %s because single categorical key '%s' would cause catastrophic data loss.", step.dataset_name, dedup_cols[0])
+                    continue
+
             if step.action == ActionType.VALIDATE_REFERENTIAL_INTEGRITY:
                 step_params = dict(step.parameters)
                 if "parent_key" not in step_params and "parent_columns" in step_params:

@@ -909,6 +909,118 @@ class PlanBuilder:
                     })
                 )
 
+        # Tier 3B Governed Resolution via ResolutionOrchestrator
+        tier3_telemetry = {}
+        tier3_informational = []
+        try:
+            from agent.compiler.resolution import ResolutionOrchestrator
+            from agent.compiler.models.physical import ExecutionEngine
+            t_eng = ExecutionEngine.AZURE_SQL
+            if str(engine).lower() in ("pyspark", "spark"):
+                t_eng = ExecutionEngine.PYSPARK
+
+            res_orchestrator = ResolutionOrchestrator()
+            resolved_mr = (
+                rules.get("resolved_manual_review")
+                or (source_context.get("resolved_manual_review") if isinstance(source_context, dict) else None)
+                or self.kwargs.get("resolved_manual_review")
+            )
+            user_fb = (
+                rules.get("user_feedback_by_issue")
+                or (source_context.get("user_feedback_by_issue") if isinstance(source_context, dict) else None)
+                or self.kwargs.get("user_feedback_by_issue")
+            )
+            appr_recs = (
+                rules.get("cleaning_approval")
+                or (source_context.get("cleaning_approval") if isinstance(source_context, dict) else None)
+                or self.kwargs.get("cleaning_approval")
+            )
+
+            res_result = res_orchestrator.resolve_for_plan(
+                assessment=assessment,
+                suggestions=suggestions,
+                rules=rules,
+                semantic_schema=sem_schema,
+                target_engine=t_eng,
+                resolved_manual_review=resolved_mr,
+                user_feedback_by_issue=user_fb,
+                approval_records=appr_recs,
+            )
+
+            tier3_telemetry = res_result.telemetry
+            tier3_informational = res_result.informational_items
+
+            # 1. Promote auto-approved safe Tier 3 actions into datasets_steps
+            for p_step in res_result.promoted_steps:
+                p_ds = p_step.get("dataset")
+                if p_ds in datasets_steps:
+                    datasets_steps[p_ds].append(p_step)
+                elif p_ds:
+                    datasets_steps.setdefault(p_ds, []).append(p_step)
+
+            # 2. Reconcile manual_review queue:
+            # - Remove items resolved by Tier 3 actions
+            # - Enrich approval-required items with AI recommendations
+            resolved_issue_ids = set()
+            for s_act in res_result.structured_actions:
+                resolved_issue_ids.update(s_act.source_issue_ids)
+
+            orchestrated_mr_by_key = {}
+            for omr in res_result.manual_review:
+                k = (
+                    str(omr.get("dataset") or "").lower(),
+                    str(omr.get("column") or "").strip("[]").lower() if omr.get("column") else None,
+                    str(omr.get("issue_type") or "").lower(),
+                )
+                orchestrated_mr_by_key[k] = omr
+
+            info_keys = {
+                (
+                    str(inf.get("dataset") or "").lower(),
+                    str(inf.get("column") or "").strip("[]").lower() if inf.get("column") else None,
+                    str(inf.get("issue_type") or "").lower(),
+                )
+                for inf in tier3_informational
+            }
+
+            reconciled_manual_review = []
+            for mr_item in manual_review:
+                mr_ds = str(mr_item.get("dataset") or "").lower()
+                mr_col = str(mr_item.get("column") or "").strip("[]").lower() if mr_item.get("column") else None
+                mr_it = str(mr_item.get("issue_type") or "").lower()
+                mr_k = (mr_ds, mr_col, mr_it)
+                mr_id = str(mr_item.get("id") or mr_item.get("issue_id") or "")
+
+                # Skip if already resolved by auto-approved Tier 3 action
+                if mr_id in resolved_issue_ids or any(sid in resolved_issue_ids for sid in mr_item.get("source_issue_ids") or []):
+                    continue
+
+                # Mark non-blocking if informational observation
+                if mr_k in info_keys:
+                    mr_item["is_blocking"] = False
+                    mr_item["reason_code"] = "INFORMATIONAL"
+
+                # If orchestrated item exists, enrich with recommendation and approval metadata
+                if mr_k in orchestrated_mr_by_key:
+                    omr = orchestrated_mr_by_key[mr_k]
+                    if omr.get("llm_recommendation"):
+                        mr_item["llm_recommendation"] = omr["llm_recommendation"]
+                        mr_item["validation_status"] = omr.get("validation_status", "VALIDATED")
+                        mr_item["approval_required"] = omr.get("approval_required", True)
+                        mr_item["allowed_user_actions"] = omr.get("allowed_user_actions", [])
+                        if omr.get("resolution_options"):
+                            mr_item["resolution_options"] = omr["resolution_options"]
+                    if omr.get("reason_code"):
+                        mr_item["reason_code"] = omr["reason_code"]
+                    if "is_blocking" in omr:
+                        mr_item["is_blocking"] = omr["is_blocking"]
+
+                reconciled_manual_review.append(mr_item)
+
+            manual_review = reconciled_manual_review
+        except Exception as tier3_err:
+            logger.warning("ResolutionOrchestrator failed during planning, falling back to deterministic review: %s", tier3_err)
+
         blocked = []
 
         step_map = {}
@@ -1315,6 +1427,18 @@ class PlanBuilder:
             "semantic_schema": {k: v for k, v in sem_schema.items()},
             "dq_gate_summary": dq_gate_summary,
             "build_warnings": self.build_warnings,
+            "tier3_telemetry": tier3_telemetry,
+            "tier3_summary": {
+                "canonical_unresolved_count": tier3_telemetry.get("unresolved_received", 0),
+                "eligible_count": tier3_telemetry.get("eligible", 0),
+                "model_call_count": tier3_telemetry.get("model_called", 0),
+                "cache_hit_count": tier3_telemetry.get("cache_hit", 0),
+                "validated_count": tier3_telemetry.get("validated", 0),
+                "auto_approved_count": tier3_telemetry.get("auto_approved", 0),
+                "approval_required_count": tier3_telemetry.get("approval_required", 0),
+                "invalid_count": tier3_telemetry.get("validation_failed", 0),
+            },
+            "informational_observations": tier3_informational,
         }
         # Provenance signature block
         prov_data = {

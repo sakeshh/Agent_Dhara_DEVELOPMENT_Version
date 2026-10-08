@@ -28,6 +28,7 @@ class Tier3ReplayCache:
 
     def compute_request_key(self, request: Tier3ResolutionRequest) -> str:
         """Computes deterministic hash from invariant request inputs."""
+        user_feedback = request.metadata.get("user_feedback") if request.metadata else None
         payload = {
             "contract_version": request.contract_version,
             "issue_type": request.issue_type.strip().upper(),
@@ -37,6 +38,7 @@ class Tier3ReplayCache:
             "dataset_schema": {k: str(v).lower() for k, v in sorted(request.dataset_schema.items())},
             "available_rules": sorted([json.dumps(r, sort_keys=True) for r in request.available_rules]),
             "target_engine": request.target_engine.upper().strip(),
+            "user_feedback": str(user_feedback).strip() if user_feedback else None,
         }
         canonical_str = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical_str.encode("utf-8")).hexdigest()
@@ -57,10 +59,16 @@ class Tier3ReplayCache:
             return None
 
         # Always re-validate cached proposals against the live active schema
-        val_res = self.orchestrator.validate_proposal(cached_proposal, dataset_profiles)
-        if not val_res.is_valid:
-            # Active schema or safety policy changed, invalidate stale cached item
-            del self._cache[key]
+        try:
+            val_res = self.orchestrator.validate_proposal(cached_proposal, dataset_profiles)
+            if not val_res.is_valid:
+                # Active schema or safety policy changed, invalidate stale cached item
+                del self._cache[key]
+                self.misses += 1
+                return None
+        except Exception:
+            # Temporary validation infrastructure failure (e.g. transient schema lookup error)
+            # Retain cached proposal for future validation, treat current attempt as miss
             self.misses += 1
             return None
 

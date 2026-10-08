@@ -75,12 +75,19 @@ class LogicalPlanner(BaseAgent):
         action: StructuredAction,
         step_index: int,
         dataset_profiles: Optional[Dict[str, DatasetProfile]] = None,
+        semantic_plan: Optional[Any] = None,
+        context: Optional[CompilerContext] = None,
     ) -> LogicalStep:
         """
         Adapts a validated StructuredAction into an engine-neutral LogicalStep.
         Rejects invalid actions before logical planning continues.
         """
-        val_result = self.action_validator.validate(action, dataset_profiles=dataset_profiles)
+        val_result = self.action_validator.validate(
+            action,
+            dataset_profiles=dataset_profiles,
+            semantic_plan=semantic_plan,
+            context=context,
+        )
         if not val_result.is_valid:
             errors = [f"{i.issue_code}: {i.message}" for i in val_result.issues]
             raise ValueError(f"Invalid StructuredAction cannot enter LogicalPlanner: {'; '.join(errors)}")
@@ -186,10 +193,22 @@ class LogicalPlanner(BaseAgent):
             action_source = "structured_actions"
             for idx, action in enumerate(context.structured_actions):
                 if isinstance(action, StructuredAction):
-                    step = self.action_to_logical_step(action, idx, context.dataset_profiles)
+                    step = self.action_to_logical_step(
+                        action,
+                        idx,
+                        dataset_profiles=context.dataset_profiles,
+                        semantic_plan=context.semantic_plan,
+                        context=context,
+                    )
                 elif isinstance(action, dict):
                     act_obj = StructuredAction.model_validate(action)
-                    step = self.action_to_logical_step(act_obj, idx, context.dataset_profiles)
+                    step = self.action_to_logical_step(
+                        act_obj,
+                        idx,
+                        dataset_profiles=context.dataset_profiles,
+                        semantic_plan=context.semantic_plan,
+                        context=context,
+                    )
                 else:
                     continue
                 steps.append(step)

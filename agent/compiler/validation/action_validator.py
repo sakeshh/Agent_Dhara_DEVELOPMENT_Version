@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Dict, List, Optional, Set
 from pydantic import BaseModel, Field, ValidationError
+
+logger = logging.getLogger("agent.compiler.validation.action")
 
 from agent.compiler.models.actions import ACTION_PARAMETER_REGISTRY, StructuredAction
 from agent.compiler.models.logical import ActionType
@@ -111,6 +114,8 @@ class ActionValidator:
         action: StructuredAction,
         dataset_profiles: Optional[Dict[str, DatasetProfile]] = None,
         target_engine: Optional[ExecutionEngine] = None,
+        semantic_plan: Optional[Any] = None,
+        context: Optional[CompilerContext] = None,
     ) -> ActionValidationResult:
         """Executes all 5 validation layers sequentially."""
         issues: List[DiagnosticIssue] = []
@@ -128,8 +133,8 @@ class ActionValidator:
             type_issues = self.validate_type_compatibility(action, dataset_profiles)
             issues.extend(type_issues)
 
-        # 4. Semantic Validation
-        semantic_issues = self.validate_semantic(action)
+        # 4. Semantic Validation (Structural bounds & ColumnRole matrix)
+        semantic_issues = self.validate_semantic(action, semantic_plan=semantic_plan, context=context)
         issues.extend(semantic_issues)
 
         # 5. Engine Capability Validation (if engine specified)
@@ -293,9 +298,23 @@ class ActionValidator:
 
         return issues
 
-    def validate_semantic(self, action: StructuredAction) -> List[DiagnosticIssue]:
-        """Layer 4: Verifies semantic bounds and domain invariants."""
+    def validate_semantic(
+        self,
+        action: StructuredAction,
+        semantic_plan: Optional[Any] = None,
+        context: Optional[CompilerContext] = None,
+    ) -> List[DiagnosticIssue]:
+        """Layer 4: Verifies semantic bounds, domain invariants, and ColumnRole matrix."""
         issues: List[DiagnosticIssue] = []
+
+        # 4a. Enforce ColumnRole x ActionType matrix & Deduplication Key Governance
+        try:
+            from agent.compiler.validation.semantic_action_validator import SemanticActionValidator
+            sem_issues = SemanticActionValidator.validate_action(action, semantic_plan=semantic_plan, context=context)
+            issues.extend(sem_issues)
+        except Exception as e:
+            # If semantic validator throws, do not fail silently
+            logger.warning(f"Error executing SemanticActionValidator: {e}")
 
         # Operator-specific semantic logic
         if action.action_type == ActionType.PAD:

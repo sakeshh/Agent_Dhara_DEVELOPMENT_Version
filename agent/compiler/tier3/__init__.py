@@ -59,6 +59,14 @@ from agent.compiler.tier3.validation_result import (
 )
 from agent.compiler.tier3.validator import Tier3ValidationOrchestrator
 from agent.compiler.tier3.resolution_service import Tier3ResolutionResult, Tier3ResolutionService
+from agent.compiler.tier3.eligibility import (
+    Tier3EligibilityResult,
+    is_tier3b_eligible,
+    is_tier3_llm_enabled,
+    is_tier3_auto_resolution_enabled,
+    is_tier3_cache_enabled,
+    get_tier3_model_deployment,
+)
 
 __all__ = [
     "ApprovalDecision",
@@ -117,4 +125,10 @@ __all__ = [
     "ValidationFinding",
     "ValidationSeverity",
     "compute_proposal_fingerprint",
+    "Tier3EligibilityResult",
+    "is_tier3b_eligible",
+    "is_tier3_llm_enabled",
+    "is_tier3_auto_resolution_enabled",
+    "is_tier3_cache_enabled",
+    "get_tier3_model_deployment",
 ]

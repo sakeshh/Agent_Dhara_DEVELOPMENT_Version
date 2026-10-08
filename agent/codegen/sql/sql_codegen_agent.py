@@ -54,7 +54,10 @@ class SQLCodegenAgent(BaseCodegenAgent):
 
     def generate(self, physical_plan: PhysicalPlan, context: CompilerContext) -> CodeArtifact:
         dataset_transforms: Dict[str, str] = {}
-        never_drop = context.options.get("never_drop_rows", False)
+        never_drop = context.options.get("never_drop_rows", False) or any(
+            getattr(r, "never_drop_rows", False) or getattr(r, "name", "") == "never_drop_rows"
+            for r in getattr(context, "business_rules", []) or []
+        )
         compilation_results: List[StepCompilationResult] = []
         infrastructure_statement_count = 2  # Rejection schema + Rejection_Log DDL
         projection_statement_count = 0
@@ -389,7 +392,24 @@ class SQLCodegenAgent(BaseCodegenAgent):
                             )
                         )
                     else:
-                        rendered_steps.append(step_code)
+                        action_meta = {}
+                        if context and getattr(context, "structured_actions", None) and getattr(step, "source_action_id", None):
+                            for act in context.structured_actions:
+                                if getattr(act, "action_id", None) == step.source_action_id:
+                                    action_meta = getattr(act, "metadata", {}) or {}
+                                    break
+                        rule_id = action_meta.get("source_rule_id", "") or (step_issue_ids[0] if step_issue_ids else "")
+                        authority = action_meta.get("remediation_authority", "")
+                        if not authority:
+                            authority = "CONSTRAINT_ONLY" if action_meta.get("is_constraint_only") else "MUTATION_AUTHORIZED"
+
+                        lineage_header = (
+                            f"-- ActionId: {step.source_action_id or step.step_id}\n"
+                            f"-- RuleId: {rule_id or 'NONE'}\n"
+                            f"-- RemediationAuthority: {authority}\n"
+                        )
+                        rendered_sql_block = f"{lineage_header}{step_code}" if not step_code.strip().startswith("-- ActionId:") else step_code
+                        rendered_steps.append(rendered_sql_block)
                         compilation_results.append(
                             StepCompilationResult(
                                 step_id=step.step_id,

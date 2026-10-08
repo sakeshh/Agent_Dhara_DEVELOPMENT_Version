@@ -83,6 +83,35 @@ class CompilerPipeline:
         # 1. Enterprise Domain Pattern Matching
         context, _ = self.pattern_library.run_with_metrics(context)
 
+        # 1b. Deterministic Semantic Action Validation & Admission Gate
+        from agent.compiler.validation.semantic_action_validator import SemanticActionValidator
+        from agent.compiler.models.validation import DiagnosticSeverity
+        from agent.errors import CompilationBlockedError
+        sem_valid, sem_issues = SemanticActionValidator.validate_context(context)
+        if not sem_valid:
+            blocking_msgs = [i.message for i in sem_issues if i.severity in (DiagnosticSeverity.BLOCKING, DiagnosticSeverity.ERROR)]
+            logger.error(f"[CompilerPipeline] Semantic validation blocked compilation: {blocking_msgs}")
+            raise CompilationBlockedError(
+                f"Semantic validation blocked compilation: {'; '.join(blocking_msgs)}",
+                details={"issues": [i.model_dump() for i in sem_issues]}
+            )
+
+        # 1c. Business Rule Safety & Consistency Validation Gate
+        if context.normalized_business_rules:
+            from agent.compiler.rules.validator import BusinessRuleValidator
+            br_val_res = BusinessRuleValidator.validate(
+                rules=context.normalized_business_rules,
+                dataset_profiles=context.dataset_profiles,
+                semantic_plan=context.semantic_plan,
+            )
+            if not br_val_res.is_valid:
+                blocking_msgs = br_val_res.error_messages
+                logger.error(f"[CompilerPipeline] Business rule validation blocked compilation: {blocking_msgs}")
+                raise CompilationBlockedError(
+                    f"Business rule validation blocked compilation: {'; '.join(blocking_msgs)}",
+                    details={"issues": [i.to_dict() for i in br_val_res.issues]},
+                )
+
         # 2. Logical Planning (Issue Compilation + Priority Topological Ordering + Confidence)
         context, _ = self.logical_planner.run_with_metrics(context)
 
@@ -123,6 +152,21 @@ class CompilerPipeline:
                 raise CompilationBlockedError(
                     f"Execution blocked by compiler validation: {'; '.join(blocking_msgs)}"
                 )
+
+        # 7b. Artifact Semantic & Structural Validation Gate (Defense in Depth)
+        if context.code_artifact and context.code_artifact.language == "sql":
+            from agent.compiler.validation.artifact_semantic_validator import ArtifactSemanticValidator
+            from agent.compiler.models.validation import DiagnosticSeverity
+            from agent.errors import CompilationBlockedError
+            art_val = ArtifactSemanticValidator.validate_artifact(context.code_artifact.content, context=context)
+            if not art_val.is_valid:
+                blocking_msgs = [i.message for i in art_val.issues if i.severity in (DiagnosticSeverity.BLOCKING, DiagnosticSeverity.ERROR)]
+                logger.error(f"[CompilerPipeline] ArtifactSemanticValidator blocked compilation: {blocking_msgs}")
+                raise CompilationBlockedError(
+                    f"Artifact semantic validation blocked compilation: {'; '.join(blocking_msgs)}",
+                    details={"issues": [i.model_dump() for i in art_val.issues]},
+                )
+            context.metadata["artifact_semantic_validation"] = art_val.model_dump()
 
         # 8. Companion Verification Test Suite Generation
         context, _ = self.test_generator.run_with_metrics(context)

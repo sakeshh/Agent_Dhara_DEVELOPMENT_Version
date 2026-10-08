@@ -1,23 +1,45 @@
 -- Step: {{ step_id }} ({{ description }})
 {% set target_table = staging_table | default('[dbo].[' ~ dataset_name ~ '_Staging]') %}
-WITH [DedupCTE] AS (
-    SELECT *,
+{% set safe_step_id = step_id | replace('.', '_') | replace('-', '_') %}
+{% if not columns %}
+-- CRITICAL ERROR: Deduplication requires explicit business key partition columns.
+-- Refusing to generate table-wide ROW_NUMBER deletion.
+RAISERROR('Deduplication blocked: No partition key columns provided for dataset {{ dataset_name }}', 16, 1);
+{% else %}
+-- Deduplication: materialize duplicate staging row IDs
+IF OBJECT_ID('tempdb..#DuplicateRows_{{ safe_step_id }}') IS NOT NULL DROP TABLE #DuplicateRows_{{ safe_step_id }};
+
+SELECT [_DharaStagingRowId]
+INTO #DuplicateRows_{{ safe_step_id }}
+FROM (
+    SELECT [_DharaStagingRowId],
            ROW_NUMBER() OVER (
-               {% if columns %}PARTITION BY {% for col in columns %}[{{ col }}]{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
-               ORDER BY {{ survivor_order | default(order_by_clause) | default("[" ~ columns[0] ~ "] ASC" if columns else "(SELECT 1)") }}
+               PARTITION BY {% for col in columns %}[{{ col }}]{% if not loop.last %}, {% endif %}{% endfor %}
+               ORDER BY {{ survivor_order | default(order_by_clause) | default("[_DharaStagingRowId] ASC") }}
            ) AS [__duplicate_rank]
     FROM {{ target_table }}
-)
-{% if never_drop_rows %}
--- Flag duplicate rows to Rejection_Log (retained due to never_drop_rows policy)
-INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData])
-SELECT @PipelineId, @RunId, '{{ dataset_name }}', '{{ issue_id | default("") }}', '{{ step_id }}', '{{ columns | join(", ") }}', 'Duplicate record (retained due to never_drop_rows policy)', 'FLAG', NULL, (SELECT * FROM [DedupCTE] c WHERE c.[__duplicate_rank] > 1 FOR JSON PATH);
-{% else %}
--- Quarantine duplicate rows to Rejection_Log and delete
-INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData])
-SELECT @PipelineId, @RunId, '{{ dataset_name }}', '{{ issue_id | default("") }}', '{{ step_id }}', '{{ columns | join(", ") }}', 'Duplicate record', 'QUARANTINE', NULL, (SELECT * FROM [DedupCTE] c WHERE c.[__duplicate_rank] > 1 FOR JSON PATH);
+) AS [__RankedDedup_{{ safe_step_id }}]
+WHERE [__duplicate_rank] > 1;
 
-DELETE FROM [DedupCTE] WHERE [__duplicate_rank] > 1;
+-- Log individual duplicate rows to Rejection_Log
+INSERT INTO [ETL_REJECT].[Rejection_Log] ([PipelineId], [RunId], [DatasetName], [IssueId], [StepId], [ColumnName], [Reason], [Disposition], [OriginalValue], [RejectedRowData])
+SELECT @PipelineId, @RunId, '{{ dataset_name }}', '{{ issue_id | default("") }}', '{{ step_id }}', '{{ columns | join(", ") }}',
+       'Duplicate record{% if never_drop_rows %} (retained due to never_drop_rows policy){% endif %}',
+       '{% if never_drop_rows %}FLAG{% else %}QUARANTINE{% endif %}',
+       CAST(s.[_DharaStagingRowId] AS NVARCHAR(MAX)),
+       (SELECT s.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+FROM {{ target_table }} s
+INNER JOIN #DuplicateRows_{{ safe_step_id }} d ON s.[_DharaStagingRowId] = d.[_DharaStagingRowId];
+
+{% if not never_drop_rows %}
+-- Delete quarantined duplicate records from staging
+DELETE s
+FROM {{ target_table }} s
+INNER JOIN #DuplicateRows_{{ safe_step_id }} d ON s.[_DharaStagingRowId] = d.[_DharaStagingRowId];
 {% endif %}
+
+IF OBJECT_ID('tempdb..#DuplicateRows_{{ safe_step_id }}') IS NOT NULL DROP TABLE #DuplicateRows_{{ safe_step_id }};
+{% endif %}
+
 
 

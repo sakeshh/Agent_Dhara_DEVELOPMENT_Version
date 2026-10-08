@@ -143,6 +143,11 @@ class PlanReadinessService:
                     approved_waivers_map[w] = {"issue_id": w, "approved": True}
                 elif isinstance(w, dict) and w.get("issue_id"):
                     approved_waivers_map[w["issue_id"]] = w
+        for w in (plan.get("approved_waivers") or []):
+            if isinstance(w, str):
+                approved_waivers_map[w] = {"issue_id": w, "approved": True}
+            elif isinstance(w, dict) and w.get("issue_id"):
+                approved_waivers_map[w["issue_id"]] = w
         for wid in (plan.get("waived_issue_ids") or []):
             if isinstance(wid, str):
                 approved_waivers_map[wid] = {"issue_id": wid, "approved": True}
@@ -156,7 +161,7 @@ class PlanReadinessService:
         for mr in resolved_mr_list:
             if not isinstance(mr, dict):
                 continue
-            for id_k in ("id", "item_id", "issue_id"):
+            for id_k in ("canonical_issue_id", "id", "item_id", "issue_id"):
                 val = mr.get(id_k)
                 if val:
                     resolved_mr_by_id[str(val)] = mr
@@ -255,9 +260,50 @@ class PlanReadinessService:
                             mr_match = cand
                             break
 
+            # Verify issue fingerprint to prevent stale resolutions if issue evidence/parameters changed
+            if mr_match and mr_match.get("issue_fingerprint"):
+                exp_fingerprint = c_iss.compute_fingerprint() if hasattr(c_iss, "compute_fingerprint") else None
+                if exp_fingerprint and mr_match["issue_fingerprint"] != exp_fingerprint:
+                    logger.warning(
+                        "[ReadinessReconciliation] Stale resolution for %s: recorded fingerprint %s != current %s",
+                        iss_id,
+                        mr_match.get("issue_fingerprint"),
+                        exp_fingerprint,
+                    )
+                    mr_match = None
+
+            # Decision type analysis for manual review resolutions
+            mr_decision = str(mr_match.get("decision") or mr_match.get("resolved_action") or "").lower() if mr_match else ""
+            mr_status = str(mr_match.get("status") or "").lower() if mr_match else ""
+            mr_has_compiled_step = bool(
+                mr_match
+                and mr_status in ("resolved", "auto_resolved")
+                and (
+                    str(mr_match.get("id")) in compiled_issue_ids
+                    or str(mr_match.get("item_id")) in compiled_issue_ids
+                    or str(mr_match.get("issue_id")) in compiled_issue_ids
+                    or any(str(s) in compiled_issue_ids for s in mr_match.get("source_issue_ids") or [])
+                )
+            )
+
+            # Check if pending or review_later (must remain blocking MANUAL_REVIEW_REQUIRED)
+            if mr_match and (mr_status == "pending" or mr_decision in ("review_later", "pending")):
+                final_status = TerminalResolutionStatus.MANUAL_REVIEW_REQUIRED
+                is_blocking = True
+                blocking_reason = mr_match.get("message") or "Item marked for later manual review."
+                blocking_manual_review_count += 1
             # Check if explicitly waived
-            if iss_id in approved_waivers_map or (mr_match and (mr_match.get("status") == "skipped" or mr_match.get("resolved_action") in ("skip", "waive", "skip_requirement"))):
-                waiver_info = approved_waivers_map.get(iss_id) or (mr_match if mr_match else {})
+            elif (
+                iss_id in approved_waivers_map
+                or any(mid in approved_waivers_map for mid in getattr(c_iss, "merged_issue_ids", []))
+                or mr_status in ("skipped", "waived")
+                or mr_decision in ("skip", "waive", "skip_requirement", "accept_risk")
+            ):
+                waiver_info = (
+                    approved_waivers_map.get(iss_id)
+                    or next((approved_waivers_map[mid] for mid in getattr(c_iss, "merged_issue_ids", []) if mid in approved_waivers_map), None)
+                    or (mr_match if mr_match else {})
+                )
                 ds_prof = profiles.get(dataset_name)
                 from agent.compiler.models.key_semantics import classify_column_semantics
                 key_sem = classify_column_semantics(col_name, dataset_profile=ds_prof)
@@ -279,12 +325,28 @@ class PlanReadinessService:
                     is_blocking = False
                     blocking_reason = ""
                     waived_count += 1
+            # Check if informational acknowledgement
+            elif mr_match and (mr_status in ("acknowledged", "informational") or mr_decision in ("acknowledge", "informational_acknowledged")):
+                final_status = TerminalResolutionStatus.INFORMATIONAL
+                is_blocking = False
+                blocking_reason = ""
+                informational_count += 1
             # Check if compiled into action or resolved via manual review
-            elif iss_id in compiled_issue_ids or (mr_match and mr_match.get("status") in ("resolved", "auto_resolved")):
+            elif (
+                iss_id in compiled_issue_ids
+                or any(mid in compiled_issue_ids for mid in getattr(c_iss, "merged_issue_ids", []))
+                or mr_has_compiled_step
+            ):
                 final_status = TerminalResolutionStatus.COMPILED_ACTION_READY
                 is_blocking = False
                 blocking_reason = ""
                 compiled_action_ready_count += 1
+            elif mr_match and mr_status in ("resolved", "auto_resolved"):
+                # Invariant: Recorded resolution without an executable plan step cannot claim COMPILED_ACTION_READY
+                final_status = TerminalResolutionStatus.MANUAL_REVIEW_REQUIRED
+                is_blocking = True
+                blocking_reason = "Manual resolution recorded, but no corresponding compiled plan step exists."
+                blocking_manual_review_count += 1
             # Check if approval pending
             elif iss_id in approval_pending_map:
                 final_status = TerminalResolutionStatus.APPROVAL_REQUIRED
@@ -340,6 +402,7 @@ class PlanReadinessService:
             source_ids = [iss_id] + getattr(c_iss, "merged_issue_ids", [])
             manifest_canonical_issues.append({
                 "canonical_issue_id": iss_id,
+                "issue_fingerprint": c_iss.compute_fingerprint() if hasattr(c_iss, "compute_fingerprint") else None,
                 "dataset": dataset_name,
                 "column": col_name,
                 "issue_type": c_iss.issue_type,

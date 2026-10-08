@@ -3,7 +3,11 @@
 UPDATE {{ target_table }}
 SET
 {% for col in columns %}
-    [{{ col }}] = COALESCE([{{ col }}], '{{ fill_value | default("") }}'){% if not loop.last %},{% endif %}
+{% if is_numeric or data_type in ['int', 'bigint', 'smallint', 'tinyint', 'decimal', 'numeric', 'float', 'real', 'money', 'smallmoney'] %}
+    [{{ col }}] = COALESCE([{{ col }}], {{ fill_value if (fill_value is defined and fill_value is not none and fill_value != '') else 0 }}){% if not loop.last %},{% endif %}
+{% else %}
+    [{{ col }}] = COALESCE([{{ col }}], {{ fill_value | default('') | render_literal }}){% if not loop.last %},{% endif %}
+{% endif %}
 {% endfor %}
 WHERE
 {% for col in columns %}

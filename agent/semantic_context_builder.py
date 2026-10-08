@@ -346,3 +346,43 @@ def build_all_semantic_contexts(
     from agent.semantic_context import attach_contract_to_semantic_payload
 
     return attach_contract_to_semantic_payload(payload)
+
+
+def build_semantic_cleaning_plan(
+    assessment: Dict[str, Any],
+    manifest: Optional[Dict[str, Any]] = None,
+) -> Optional[Any]:
+    """
+    Constructs or extracts a SemanticCleaningPlan from an assessment dictionary
+    and optional manifest.
+    """
+    from agent.semantic_context import SemanticCleaningPlan
+
+    if not assessment:
+        return None
+
+    # 1. Check if already built in assessment semantic context
+    sem_ctx = assessment.get("semantic_context") or {}
+    sem_model = sem_ctx.get("semantic_model")
+    if isinstance(sem_model, dict) and "entities" in sem_model:
+        try:
+            return SemanticCleaningPlan(
+                entities=sem_model.get("entities") or {},
+                relationships=sem_model.get("relationships") or [],
+            )
+        except Exception:
+            pass
+
+    # 2. Otherwise build semantic contexts and extract
+    try:
+        payload = build_all_semantic_contexts(assessment, manifest=manifest or {})
+        sm = payload.get("semantic_model") or {}
+        if isinstance(sm, dict) and "entities" in sm:
+            return SemanticCleaningPlan(
+                entities=sm.get("entities") or {},
+                relationships=sm.get("relationships") or [],
+            )
+    except Exception:
+        pass
+
+    return None

@@ -114,17 +114,25 @@ class SQLValidator(BaseValidationAgent):
                 )
 
         # 6. Invariant check: never_drop_rows
-        never_drop = context.options.get("never_drop_rows", False)
+        never_drop = context.options.get("never_drop_rows", False) or any(
+            getattr(r, "never_drop_rows", False) or getattr(r, "name", "") == "never_drop_rows"
+            for r in context.business_rules
+        )
         invariants_ok = True
         if never_drop:
-            if "DELETE FROM [DedupCTE]" in clean_code and "Rejection_Log" not in clean_code:
+            has_executable_delete = bool(
+                re.search(r"\bDELETE\s+(FROM\s+)?(\[?dbo\]?\.)?\[?[a-zA-Z0-9_]+_Staging\]?", clean_code, re.IGNORECASE)
+                or re.search(r"\bDELETE\s+s\s+FROM", clean_code, re.IGNORECASE)
+                or ("DELETE FROM [DedupCTE]" in clean_code)
+            )
+            if has_executable_delete:
                 invariants_ok = False
                 issues.append(
                     DiagnosticIssue(
                         issue_code="SQL_INVARIANT_VIOLATION",
                         issue_type=ValidationIssueType.GOVERNANCE,
                         severity=DiagnosticSeverity.ERROR,
-                        message="Violated 'never_drop_rows' invariant: records deleted without quarantine logging.",
+                        message="Violated 'never_drop_rows' invariant: executable DELETE statement detected in generated SQL.",
                     )
                 )
 

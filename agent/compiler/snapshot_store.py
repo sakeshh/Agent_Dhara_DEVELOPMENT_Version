@@ -28,6 +28,7 @@ class CompilerSnapshot:
     companion_test: Optional[Dict[str, Any]] = None
     repair_analytics: Optional[Dict[str, Any]] = None
     deployment_manifest: Optional[Dict[str, Any]] = None
+    semantic_plan: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -67,6 +68,7 @@ class SnapshotStore:
             companion_test=context.metadata.get("companion_test_artifact"),
             repair_analytics=context.metadata.get("repair_analytics"),
             deployment_manifest=context.metadata.get("deployment_manifest"),
+            semantic_plan=context.semantic_plan.model_dump() if hasattr(context.semantic_plan, "model_dump") else (dict(context.semantic_plan) if isinstance(context.semantic_plan, dict) else None),
             metadata=dict(context.metadata),
         )
 

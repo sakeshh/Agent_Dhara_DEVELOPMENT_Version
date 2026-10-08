@@ -84,3 +84,23 @@ class Tier3ValidationResult:
     @property
     def warnings(self) -> List[ValidationFinding]:
         return [f for f in self.findings if f.severity == ValidationSeverity.WARNING]
+
+    @property
+    def contract_valid(self) -> bool:
+        return not any(f.validator.lower() == "contract" and f.severity == ValidationSeverity.ERROR for f in self.findings)
+
+    @property
+    def schema_valid(self) -> bool:
+        return not any(f.validator.lower() == "schema" and f.severity == ValidationSeverity.ERROR for f in self.findings)
+
+    @property
+    def type_valid(self) -> bool:
+        return not any(f.validator.lower() == "type" and f.severity == ValidationSeverity.ERROR for f in self.findings)
+
+    @property
+    def safety_valid(self) -> bool:
+        return not any(f.validator.lower() == "safety" and f.severity == ValidationSeverity.ERROR for f in self.findings)
+
+    @property
+    def has_conflict_errors(self) -> bool:
+        return any(f.validator.lower() == "conflict" and f.severity == ValidationSeverity.ERROR for f in self.findings)

@@ -35,6 +35,25 @@ class CanonicalIssue:
     resolution_path: Optional[str] = None
     merged_issue_ids: List[str] = field(default_factory=list)
 
+    def compute_fingerprint(self) -> str:
+        """Deterministic fingerprint of canonical issue evidence and semantics."""
+        import hashlib
+        import json
+        payload = {
+            "dataset": self.dataset.strip().lower(),
+            "column": (self.column or "").strip().lower(),
+            "issue_type": self.issue_type.strip().lower(),
+            "severity": self.severity.strip().upper(),
+            "rule_id": str(self.rule_id or "").strip(),
+            "parameters": {k: str(v) for k, v in sorted(self.parameters.items())} if self.parameters else {},
+        }
+        canonical_str = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return f"sha256:{hashlib.sha256(canonical_str.encode('utf-8')).hexdigest()}"
+
+    @property
+    def fingerprint(self) -> str:
+        return self.compute_fingerprint()
+
 
 class IngestionBridge:
     """Extracts, normalizes, deduplicates, and maps assessment findings and planned rules
@@ -359,6 +378,7 @@ class IngestionBridge:
         issue_type: str,
         suggested_action: Optional[str],
         message: str = "",
+        column: Optional[str] = None,
     ) -> Tuple[Optional[ActionType], str]:
         """Resolves an ActionType following strict controlled precedence:
         1. Explicit planned action
@@ -400,7 +420,19 @@ class IngestionBridge:
 
         # Additional keyword inspection on description / message
         msg_clean = str(message or "").strip().lower()
-        if "whitespace" in msg_clean or "trim" in msg_clean:
+        col_clean = str(column or "").strip("[]").lower()
+        is_ident = (
+            col_clean.endswith("id")
+            or col_clean.endswith("key")
+            or col_clean.endswith("code")
+            or col_clean in ("id", "key", "code")
+        )
+        is_metric = col_clean in (
+            "salary", "creditlimit", "amount", "price", "quantity", "rate",
+            "balance", "total", "cost", "revenue", "count", "age"
+        )
+
+        if ("whitespace" in msg_clean or "trim" in msg_clean) and not is_metric and not is_ident:
             return ActionType.TRIM, "message_keyword:trim"
         if "email" in msg_clean:
             return ActionType.SANITIZE_EMAIL, "message_keyword:email"
@@ -410,7 +442,7 @@ class IngestionBridge:
             return ActionType.DEDUPLICATE, "message_keyword:duplicate"
         if "null" in msg_clean:
             return ActionType.FILL_NULLS, "message_keyword:null"
-        if "date" in msg_clean:
+        if re.search(r"\b(date|dates|datetime|timestamp)\b", msg_clean) and not is_ident and not is_metric:
             return ActionType.PARSE_DATES, "message_keyword:date"
 
         # 5. Unsupported
@@ -421,8 +453,14 @@ class IngestionBridge:
         assess: Dict[str, Any],
         plan: Dict[str, Any],
         known_datasets: Optional[Set[str]] = None,
+        resolved_manual_review: Optional[List[Dict[str, Any]]] = None,
+        **kwargs: Any,
     ) -> Tuple[List[CanonicalIssue], List[BusinessRule], Dict[str, Any]]:
         """Harvests issues and rules from all assessment and planning containers."""
+        if resolved_manual_review is not None and "resolved_manual_review" not in plan:
+            plan = dict(plan)
+            plan["resolved_manual_review"] = resolved_manual_review
+
         raw_issues: List[CanonicalIssue] = []
         business_rules: List[BusinessRule] = []
 
@@ -487,6 +525,7 @@ class IngestionBridge:
                 issue_type=itype,
                 suggested_action=sug,
                 message=msg,
+                column=col_clean,
             )
 
             # Parameter enrichment for Tier 2 decomposable primitives
@@ -928,19 +967,123 @@ class IngestionBridge:
                         explicit_act=act,
                     )
 
-        # ── 5. plan["domain_rules"] ───────────────────────────────────────────
+        # ── 5. Business Rules Normalization, Validation, and Compilation ──────
+        from agent.compiler.rules.normalizer import BusinessRuleNormalizer
+        from agent.compiler.rules.validator import BusinessRuleValidator
+        from agent.compiler.rules.compiler import BusinessRuleCompiler
+        from agent.compiler.rules.normalized_rules import NormalizedBusinessRules, ConstraintType
         from agent.compiler.rules.decomposer import RuleDecomposer
         from agent.compiler.rules.models import DecompositionStatus
-        decomposer = RuleDecomposer()
+        from agent.errors import CompilationBlockedError
 
+        # Default dataset resolution
+        def_ds = sorted(list(known_datasets))[0] if known_datasets else "dbo.DefaultDataset"
+
+        # Harvest from all raw business rule sources
+        combined_rules_input: Dict[str, Any] = {}
+        if isinstance(plan.get("business_rules"), dict):
+            combined_rules_input.update(plan["business_rules"])
+        elif isinstance(plan.get("business_rules"), list):
+            combined_rules_input["rules"] = list(plan["business_rules"])
+
+        if isinstance(assess.get("business_rules"), dict):
+            for k, v in assess["business_rules"].items():
+                if k not in combined_rules_input:
+                    combined_rules_input[k] = v
+
+        if isinstance(plan.get("domain_rules"), dict):
+            combined_rules_input.setdefault("domain_rules", {})
+            combined_rules_input["domain_rules"].update(plan["domain_rules"])
+
+        if isinstance(assess.get("domain_rules"), dict):
+            combined_rules_input.setdefault("domain_rules", {})
+            for k, v in assess["domain_rules"].items():
+                if k not in combined_rules_input["domain_rules"]:
+                    combined_rules_input["domain_rules"][k] = v
+
+        # Top-level policy and constraint keys
+        for k in ("never_drop_rows", "required_columns", "non_nullable", "valid_values", "custom_assertions"):
+            if k in plan and k not in combined_rules_input:
+                combined_rules_input[k] = plan[k]
+
+        normalized_rules = BusinessRuleNormalizer.normalize(
+            raw_sources=combined_rules_input,
+            default_dataset=def_ds,
+            source_name="business_rules",
+        )
+
+        # Validate business rules (fail-closed if blocking issues detected)
+        ds_profiles = kwargs.get("dataset_profiles")
+        sem_plan = kwargs.get("semantic_plan")
+        val_res = BusinessRuleValidator.validate(
+            rules=normalized_rules,
+            dataset_profiles=ds_profiles,
+            semantic_plan=sem_plan,
+        )
+        if not val_res.is_valid:
+            blocking_errs = val_res.error_messages
+            logger.error("[IngestionBridge] BusinessRuleValidator blocked compilation: %s", blocking_errs)
+            raise CompilationBlockedError(
+                f"Business rule validation blocked compilation: {'; '.join(blocking_errs)}",
+                details={"issues": [i.to_dict() for i in val_res.issues]},
+            )
+
+        # Compile normalized rules into StructuredActions
+        compiled_rule_actions = BusinessRuleCompiler.compile(
+            rules=normalized_rules,
+            semantic_plan=sem_plan,
+        )
+
+        for act in compiled_rule_actions:
+            _add_raw(
+                ds_name=act.dataset_name,
+                col=act.target_columns[0] if act.target_columns else None,
+                itype=f"rule_{act.action_type.value}",
+                sug=act.action_type.value,
+                sev="high" if act.action_type == ActionType.CONDITIONAL_UPDATE else "medium",
+                params=dict(act.parameters),
+                source="business_rule",
+                msg=act.metadata.get("rule_description", f"Business rule action: {act.action_type.value}"),
+                rule_id=act.source_reference,
+                explicit_act=act.action_type.value,
+            )
+
+        # Backwards-compatible legacy BusinessRule generation
+        for cr in normalized_rules.column_rules:
+            b_rule = BusinessRule(
+                rule_id=cr.rule_id,
+                name=cr.rule_id,
+                scope=RuleScope.COLUMN if cr.column else RuleScope.DATASET,
+                dataset_name=cr.dataset,
+                column_name=cr.column,
+                parameters=dict(cr.parameters),
+                enabled=cr.enabled,
+                never_drop_rows=normalized_rules.never_drop_rows,
+                description=cr.description or f"Business rule for {cr.column}",
+            )
+            business_rules.append(b_rule)
+
+        for pr in normalized_rules.policy_rules:
+            p_rule = BusinessRule(
+                rule_id=pr.rule_id,
+                name=pr.name,
+                scope=RuleScope.GLOBAL,
+                dataset_name=pr.dataset,
+                parameters={"value": pr.value},
+                enabled=pr.enabled,
+                never_drop_rows=normalized_rules.never_drop_rows,
+                description=pr.description,
+            )
+            business_rules.append(p_rule)
+
+        # Retain Decomposer fallback for legacy domain_rules with complex unparsed text
+        decomposer = RuleDecomposer()
         for rule_k, rule_data in (plan.get("domain_rules") or {}).items():
             if isinstance(rule_data, dict):
-                ds = rule_data.get("dataset") or (rule_k.split(".")[0] if "." in rule_k else "")
+                rule_text = rule_data.get("rule") or rule_data.get("expression") or rule_data.get("text") or rule_data.get("description") or ""
+                ds = rule_data.get("dataset") or (rule_k.split(".")[0] if "." in rule_k else def_ds)
                 col = rule_data.get("column") or (rule_k.split(".")[1] if "." in rule_k else None)
                 norm_ds = self.normalize_dataset_name(ds, known_datasets=known_datasets)
-                rule_text = rule_data.get("rule") or rule_data.get("expression") or rule_data.get("text") or rule_data.get("description") or ""
-
-                # Tier 2: Decompose business rule text into StructuredActions
                 if rule_text:
                     decomp_res = decomposer.decompose(rule_text, norm_ds)
                     if decomp_res.status == DecompositionStatus.RESOLVED and decomp_res.actions:
@@ -957,19 +1100,6 @@ class IngestionBridge:
                                 rule_id=rule_k,
                                 explicit_act=act.action_type.value,
                             )
-
-                b_rule = BusinessRule(
-                    rule_id=rule_data.get("rule_id") or rule_k,
-                    name=rule_data.get("name") or rule_k,
-                    scope=RuleScope.COLUMN if col else RuleScope.DATASET,
-                    dataset_name=norm_ds,
-                    column_name=col,
-                    parameters=rule_data.get("parameters") or {},
-                    enabled=rule_data.get("enabled", True),
-                    never_drop_rows=rule_data.get("never_drop_rows", False),
-                    description=rule_data.get("description") or f"Business rule for {rule_k}",
-                )
-                business_rules.append(b_rule)
 
         # ── 6. Deduplication & Consolidation ──────────────────────────────────
         deduped: List[CanonicalIssue] = []
@@ -1012,6 +1142,29 @@ class IngestionBridge:
 
             seen_keys.add(key)
             deduped.append(iss)
+
+        # Authority Conflict Resolution:
+        # Constraint-only business rules take precedence over lower-authority mutating heuristics.
+        constraint_rule_cols = {
+            (cr.dataset.lower(), cr.column.lower())
+            for cr in normalized_rules.column_rules
+            if cr.is_constraint_only and cr.column
+        }
+        for iss in deduped:
+            if iss.column and (iss.dataset.lower(), iss.column.lower()) in constraint_rule_cols:
+                if iss.source.startswith("assessment") and iss.resolved_action in (
+                    ActionType.RANGE_CLIP,
+                    ActionType.FILL_NULLS,
+                    ActionType.VALUE_MAP,
+                ):
+                    logger.info(
+                        "[IngestionBridge] Suppressing heuristic action '%s' on %s.%s because approved business rule specifies constraint-only validation.",
+                        iss.resolved_action.value if iss.resolved_action else "",
+                        iss.dataset,
+                        iss.column,
+                    )
+                    iss.resolved_action = None
+                    iss.resolution_path = "suppressed_by_business_rule_constraint"
 
         # Conflict detection: same dataset & column with both FILL_NULLS and CONDITIONAL_UPDATE (FLAG)
         flagged_key_cols = {
@@ -1159,6 +1312,7 @@ class IngestionBridge:
     def bridge_to_compiler_models(
         self,
         canonical_issues: List[CanonicalIssue],
+        semantic_plan: Optional[Any] = None,
     ) -> Tuple[List[Issue], List[StructuredAction]]:
         """Converts canonical issues into typed Issue models and executable StructuredAction models."""
         issues: List[Issue] = []
@@ -1239,6 +1393,28 @@ class IngestionBridge:
                     # Ensure parameters have subset_columns set
                     c_iss.parameters["subset_columns"] = list(cols)
 
+                    # Deduplication MUST have non-empty partition keys
+                    if not cols:
+                        logger.warning(
+                            "[IngestionBridge] Dropping DEDUPLICATE on %s because no valid partition key was provided.",
+                            c_iss.dataset,
+                        )
+                        c_iss.resolved_action = None
+                        c_iss.resolution_path = "manual_review_missing_deduplication_key"
+                        continue
+
+                    # Deduplication MUST NOT partition solely by a low-cardinality categorical attribute
+                    categorical_cols = {"status", "customerstatus", "gender", "type", "flag", "isactive", "maritalstatus", "category"}
+                    if len(cols) == 1 and cols[0].lower() in categorical_cols:
+                        logger.warning(
+                            "[IngestionBridge] Dropping DEDUPLICATE on %s because single categorical key '%s' would cause catastrophic data loss.",
+                            c_iss.dataset,
+                            cols[0],
+                        )
+                        c_iss.resolved_action = None
+                        c_iss.resolution_path = "manual_review_invalid_categorical_dedup_key"
+                        continue
+
                 # DEFENSE IN DEPTH GUARD 1: Missing target columns for column-bound action
                 if action not in self.DATASET_LEVEL_ACTIONS and not cols:
                     logger.warning(
@@ -1249,6 +1425,29 @@ class IngestionBridge:
                     c_iss.resolved_action = None
                     c_iss.resolution_path = "unsupported_missing_target_columns"
                     continue
+
+                # DEFENSE IN DEPTH GUARD 1b: Incompatible PARSE_DATES on identifiers/metrics
+                if action == ActionType.PARSE_DATES and cols:
+                    non_date_ident_cols = {
+                        "id", "key", "code", "ssn", "phone", "email", "managerid",
+                        "employeeid", "customerid", "accountmanagerid", "salary",
+                        "creditlimit", "amount", "price", "quantity", "rate", "balance"
+                    }
+                    if any(
+                        c.lower() in non_date_ident_cols
+                        or c.lower().endswith("id")
+                        or c.lower().endswith("key")
+                        or c.lower().endswith("code")
+                        for c in cols
+                    ):
+                        logger.warning(
+                            "[IngestionBridge] Dropping PARSE_DATES on %s.%s because column is an identifier/metric.",
+                            c_iss.dataset,
+                            cols,
+                        )
+                        c_iss.resolved_action = None
+                        c_iss.resolution_path = "manual_review_incompatible_parse_dates_on_identifier"
+                        continue
 
                 # DEFENSE IN DEPTH GUARD 2: Missing bounds for RANGE_CLIP
                 if action == ActionType.RANGE_CLIP:
@@ -1276,21 +1475,28 @@ class IngestionBridge:
                         c_iss.resolution_path = "unsupported_missing_target_type"
                         continue
 
-                # DEFENSE IN DEPTH GUARD 4: Incompatible TRIM on date columns
-                if action == ActionType.TRIM and cols:
+                # DEFENSE IN DEPTH GUARD 4: Incompatible string operations (TRIM/LOWER/UPPER) on numeric or date columns
+                if action in (ActionType.TRIM, ActionType.LOWERCASE, ActionType.UPPERCASE) and cols:
                     known_date_cols = {
                         "effectivefrom", "effectiveto", "changedat", "createdat", "updatedat",
                         "hiredate", "contractstartdate", "contractenddate", "dateofbirth",
                         "lastpromotiondate", "eventdate", "statuseventdate"
                     }
-                    if any(c.lower() in known_date_cols for c in cols):
+                    known_numeric_metric_cols = {
+                        "salary", "creditlimit", "amount", "price", "quantity", "rate",
+                        "balance", "total", "cost", "revenue", "count", "age",
+                        "managerid", "employeeid", "customerid", "accountmanagerid"
+                    }
+                    if any(c.lower() in known_date_cols or c.lower() in known_numeric_metric_cols for c in cols):
                         logger.warning(
-                            "[IngestionBridge] Dropping TRIM on %s.%s because column is date-typed.",
+                            "[IngestionBridge] Dropping %s on %s.%s because column is numeric, identifier, or date-typed.",
+                            action.value,
                             c_iss.dataset,
                             cols,
                         )
                         c_iss.resolved_action = None
-                        c_iss.resolution_path = "manual_review_incompatible_trim_on_date_column"
+                        c_iss.resolution_path = f"manual_review_incompatible_{action.value}_on_non_string_column"
+                        continue
                 # DEFENSE IN DEPTH GUARD 5: Missing condition for CONDITIONAL_UPDATE
                 if action == ActionType.CONDITIONAL_UPDATE:
                     if not c_iss.parameters.get("condition") and not c_iss.parameters.get("condition_ast"):
@@ -1324,20 +1530,40 @@ class IngestionBridge:
                     },
                 )
 
-                # UNIVERSAL DEFENSE IN DEPTH GUARD: Validate typed parameter contract before emission
+                # UNIVERSAL PARAMETER CONTRACT GUARD
                 try:
                     s_action.get_typed_parameters()
-                except Exception as val_err:
+                except Exception as p_err:
                     logger.warning(
-                        "[IngestionBridge] Dropping action '%s' on %s.%s due to invalid parameter contract: %s",
+                        "[IngestionBridge] Dropping action '%s' on %s.%s due to parameter validation failure: %s",
                         action.value,
                         c_iss.dataset,
                         cols,
-                        val_err,
+                        p_err,
                     )
                     c_iss.resolved_action = None
                     c_iss.resolution_path = f"unsupported_invalid_parameters:{action.value}"
                     continue
+
+                # SEMANTIC ADMISSION GUARD: Check SemanticActionValidator
+                try:
+                    from agent.compiler.validation.semantic_action_validator import SemanticActionValidator
+                    from agent.compiler.models.validation import DiagnosticSeverity
+                    sem_issues = SemanticActionValidator.validate_action(s_action, semantic_plan=semantic_plan)
+                    if any(i.severity in (DiagnosticSeverity.BLOCKING, DiagnosticSeverity.ERROR) for i in sem_issues):
+                        blocking_reasons = [i.message for i in sem_issues if i.severity in (DiagnosticSeverity.BLOCKING, DiagnosticSeverity.ERROR)]
+                        logger.warning(
+                            "[IngestionBridge] Dropping action '%s' on %s.%s due to semantic role violation: %s",
+                            action.value,
+                            c_iss.dataset,
+                            cols,
+                            blocking_reasons,
+                        )
+                        c_iss.resolved_action = None
+                        c_iss.resolution_path = f"manual_review_semantic_violation:{action.value}"
+                        continue
+                except Exception as sem_err:
+                    logger.warning("[IngestionBridge] Error running SemanticActionValidator check: %s", sem_err)
 
                 structured_actions.append(s_action)
 
