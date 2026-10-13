@@ -131,14 +131,22 @@ class SemanticCleaningPlan(BaseModel):
     schema_hash: str = ""
 
     def get_cleaning_contracts(self, ds_name: str) -> Dict[str, ColumnCleaningContract]:
+        ds_clean = ds_name.lower().replace("dbo.", "").strip("[]")
         for entity in self.entities.values():
-            if ds_name in entity.source_datasets:
+            if any(
+                ds_name == s or ds_clean == s.lower().replace("dbo.", "").strip("[]")
+                for s in entity.source_datasets
+            ):
                 return entity.column_contracts
         return {}
 
     def get_dedup_key(self, ds_name: str) -> Optional[str]:
+        ds_clean = ds_name.lower().replace("dbo.", "").strip("[]")
         for entity in self.entities.values():
-            if ds_name in entity.source_datasets:
+            if any(
+                ds_name == s or ds_clean == s.lower().replace("dbo.", "").strip("[]")
+                for s in entity.source_datasets
+            ):
                 return entity.canonical_key
         return None
 

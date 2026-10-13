@@ -2034,7 +2034,7 @@ def etl_generate_code(
     # Changes to any of these inputs must produce a different ETL artifact.
     _idem_strict = str(flow.get("strict_execution", "")).lower()
     _idem_preview = str(flow.get("preview_mode", "")).lower()
-    _idem_compiler_ver = "2.0.2"  # bump when compiler contract changes
+    _idem_compiler_ver = "2.0.3"  # bump when compiler contract changes
     _idem_compiler_build = os.getenv("APP_COMMIT_SHA", "ec67830")
     idempotency_key = "|".join([
         f"sid={sid}",

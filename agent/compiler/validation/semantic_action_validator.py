@@ -24,7 +24,20 @@ class SemanticActionValidator:
     Runs prior to LogicalPlanner and Manifest Freeze.
     """
 
-    ID_REGEX = re.compile(r"(^|_)(id|key|uuid|guid|pk|fk|code|ref)($|_)", re.I)
+    ID_REGEX = re.compile(r"(^|_|[a-z0-9])(id|key|uuid|guid|pk|fk|code|ref)($|_|[0-9])", re.I)
+
+    @classmethod
+    def is_identifier_column(cls, col_name: str) -> bool:
+        c = str(col_name or "").strip().strip("[]").lower()
+        if not c:
+            return False
+        if c in ("id", "pk", "fk", "key", "uuid", "guid", "code", "ref"):
+            return True
+        if c.endswith(("id", "_id", "key", "_key", "pk", "_pk", "fk", "_fk", "uuid", "guid", "code", "ref")):
+            return True
+        if c.startswith(("id_", "pk_", "fk_", "key_")):
+            return True
+        return bool(cls.ID_REGEX.search(c))
     METRIC_REGEX = re.compile(r"(salary|wage|amount|price|cost|fee|limit|balance|revenue|tax|total|count|qty|quantity|rate)", re.I)
     DATE_REGEX = re.compile(r"(date|time|timestamp|dob|created|updated|birth|expiry|due)", re.I)
     STATUS_REGEX = re.compile(r"(status|state|category|type|flag|phase|tier|level)", re.I)
@@ -134,11 +147,11 @@ class SemanticActionValidator:
     @classmethod
     def infer_role_heuristic(cls, col_name: str, dtype: Optional[str] = None) -> ColumnRole:
         """Fallback deterministic role inference based on naming patterns and physical dtype."""
-        c_low = col_name.strip().lower()
+        c_low = col_name.strip().strip("[]").lower()
         d_low = (dtype or "").lower()
 
-        if cls.ID_REGEX.search(c_low):
-            return ColumnRole.PRIMARY_KEY if c_low in ("id", "pk") else ColumnRole.IDENTIFIER
+        if cls.is_identifier_column(col_name):
+            return ColumnRole.PRIMARY_KEY if c_low in ("id", "pk", "customerid", "employeeid") else ColumnRole.IDENTIFIER
         if cls.METRIC_REGEX.search(c_low) or any(t in d_low for t in ("decimal", "numeric", "float", "double", "money")):
             return ColumnRole.METRIC
         if cls.DATE_REGEX.search(c_low) or any(t in d_low for t in ("date", "time")):
@@ -163,24 +176,39 @@ class SemanticActionValidator:
         context: Optional[CompilerContext] = None,
     ) -> ColumnRole:
         """Resolves the ColumnRole from the SemanticCleaningPlan, dataset profile, or deterministic heuristics."""
+        clean_col = column_name.strip().strip("[]")
+        is_id = cls.is_identifier_column(clean_col)
+
         if semantic_plan and hasattr(semantic_plan, "entities"):
             contracts = semantic_plan.get_cleaning_contracts(dataset_name)
-            if column_name in contracts:
-                return contracts[column_name].role
+            contract = contracts.get(column_name) or contracts.get(clean_col)
+            if contract:
+                role = contract.role
+                if is_id and role in (ColumnRole.CATEGORICAL, ColumnRole.FLAG, ColumnRole.FREE_TEXT):
+                    return ColumnRole.PRIMARY_KEY if clean_col.lower() in ("id", "pk", "customerid", "employeeid") else ColumnRole.IDENTIFIER
+                return role
 
             # Check if column matches canonical_key
             dedup_key = semantic_plan.get_dedup_key(dataset_name)
-            if dedup_key and dedup_key.lower() == column_name.lower():
+            if dedup_key and dedup_key.strip().strip("[]").lower() == clean_col.lower():
                 return ColumnRole.PRIMARY_KEY
 
         # Fallback to dataset profile
         dtype = None
         if context and context.dataset_profiles:
             prof = context.dataset_profiles.get(dataset_name)
+            if not prof:
+                ds_clean = dataset_name.lower().replace("dbo.", "").strip("[]")
+                for d_k, d_p in context.dataset_profiles.items():
+                    if d_k.lower().replace("dbo.", "").strip("[]") == ds_clean:
+                        prof = d_p
+                        break
             if prof:
-                col_p = prof.get_column(column_name)
+                col_p = prof.get_column(column_name) or prof.get_column(clean_col)
                 if col_p:
                     dtype = col_p.dtype
+                    if is_id:
+                        return ColumnRole.PRIMARY_KEY if clean_col.lower() in ("id", "pk", "customerid", "employeeid") else ColumnRole.IDENTIFIER
                     # If column profile already has semantic hints
                     if hasattr(col_p, "semantic_type") and col_p.semantic_type:
                         st = col_p.semantic_type.lower()
@@ -291,6 +319,9 @@ class SemanticActionValidator:
         if target_cols:
             all_categorical = True
             for col in target_cols:
+                if cls.is_identifier_column(col):
+                    all_categorical = False
+                    break
                 role = cls.get_column_role(dataset, col, semantic_plan, context)
                 if role not in (ColumnRole.CATEGORICAL, ColumnRole.FLAG):
                     all_categorical = False

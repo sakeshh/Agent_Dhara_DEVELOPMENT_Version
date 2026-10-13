@@ -8,15 +8,5 @@
         "CreditLimit": "object",
         "CustomerStatus": "object",
         "AccountManagerID": "object"
-    },
-    "dbo.EmployeeMaster": {
-        "EmployeeID": "object",
-        "EmployeeName": "object",
-        "Email": "object",
-        "Phone": "object",
-        "Department": "object",
-        "Salary": "object",
-        "Status": "object",
-        "ManagerID": "object"
     }
 }

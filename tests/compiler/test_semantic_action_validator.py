@@ -225,3 +225,17 @@ def test_compiler_pipeline_blocks_semantic_role_violation():
 
     assert "Semantic validation blocked compilation" in str(exc_info.value)
     assert "cannot be parsed as dates" in str(exc_info.value)
+
+
+def test_deduplicate_with_composite_identifier_keys_allowed():
+    """Verify that columns ending with 'ID' like CustomerID and AccountManagerID are treated as keys/identifiers, not blocked as categorical-only deduplication."""
+    action = StructuredAction(
+        action_id="act_dedup_composite",
+        action_type=ActionType.DEDUPLICATE,
+        dataset_name="dbo.CustomerMaster",
+        target_columns=["CustomerID", "AccountManagerID"],
+        parameters={"survivor_order": "[_DharaStagingRowId] ASC"},
+    )
+    issues = SemanticActionValidator.validate_action(action)
+    assert not any(i.issue_code == "DEDUP_INVALID_CATEGORICAL_KEY" for i in issues)
+

@@ -78,7 +78,7 @@ class ResolutionOrchestrator:
         cache: Optional[Tier3ReplayCache] = None,
     ):
         self.bridge = bridge or IngestionBridge(default_schema="dbo")
-        self.cache = cache or Tier3ReplayCache()
+        self.cache = cache or Tier3ReplayCache.get_instance()
         self.model_client = model_client or OpenAITier3ModelClient()
         self.proposal_service = proposal_service or Tier3ProposalService(
             client=self.model_client,
@@ -545,21 +545,29 @@ class ResolutionOrchestrator:
                 ],
                 "resolution_options": [
                     {
+                        "id": f"approve_{validated_proposal.proposed_action_type.lower()}",
                         "action": validated_proposal.proposed_action_type.lower(),
                         "label": f"Approve AI recommendation: {validated_proposal.proposed_action_type}",
                         "description": validated_proposal.rationale or f"Apply {validated_proposal.proposed_action_type} with validated condition",
+                        "recommended": True,
                         "is_recommended": True,
                         "proposal_id": validated_proposal.proposal_id,
                     },
                     {
-                        "action": "waive",
+                        "id": "waive",
+                        "action": "noop",
                         "label": "Waive issue (accept risk)",
                         "description": "Ignore this finding and continue execution without transformation",
+                        "recommended": False,
+                        "is_recommended": False,
                     },
                     {
-                        "action": "modify",
+                        "id": "modify",
+                        "action": "noop",
                         "label": "Modify parameters or condition",
                         "description": "Adjust action parameters or condition before execution",
+                        "recommended": False,
+                        "is_recommended": False,
                     },
                 ],
             }

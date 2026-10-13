@@ -82,6 +82,12 @@ class SourceSystemDeferral(BaseModel):
 
 
 def tag_option_readiness(opt: Dict[str, Any]) -> Dict[str, Any]:
+    # Defensive synthesis of id and recommendation flags
+    if not opt.get("id"):
+        opt["id"] = opt.get("action") or opt.get("proposal_id") or "keep_as_is"
+    if "is_recommended" in opt and "recommended" not in opt:
+        opt["recommended"] = bool(opt["is_recommended"])
+
     action = str(opt.get("action") or "").strip()
     if opt.get("proposal_eligible") is False or action == "unsupported_action" or opt.get("readiness") == OptionReadiness.ADVISORY_ONLY.value:
         opt["readiness"] = OptionReadiness.ADVISORY_ONLY.value
@@ -154,6 +160,8 @@ RESOLUTION_TO_ACTION_MAP: Dict[str, str] = {
     "ignore_mismatch":   "noop",
     "range_clip":        "range_clip",
     "flag_range_violation": "flag_range_violation",
+    "waive":             "noop",
+    "modify":            "noop",
 }
 
 # Legacy resolution IDs that are ambiguous and must not silently map to any action.
@@ -739,8 +747,8 @@ def enrich_manual_review_item(
         and not llm_recommendation
         and not conflict):
         out["resolution_options"] = [tag_option_readiness(dict(o)) for o in out["resolution_options"]]
-        default = next((o["id"] for o in out["resolution_options"] if o.get("recommended")),
-                       out["resolution_options"][0]["id"] if out["resolution_options"] else "keep_as_is")
+        default = next((o.get("id") for o in out["resolution_options"] if (o.get("recommended") or o.get("is_recommended")) and o.get("id")),
+                       (out["resolution_options"][0].get("id") or out["resolution_options"][0].get("action") or "keep_as_is") if out["resolution_options"] else "keep_as_is")
         out.setdefault("default_resolution", default)
         out.setdefault("status", "pending")
         out.setdefault("selected_resolution", None)
@@ -953,7 +961,8 @@ def enrich_manual_review_item(
 
     opts = [tag_option_readiness(dict(o)) for o in out.get("resolution_options", [])]
     out["resolution_options"] = opts
-    default = next((o["id"] for o in opts if o.get("recommended")), opts[0]["id"] if opts else "keep_as_is")
+    default = next((o.get("id") for o in opts if (o.get("recommended") or o.get("is_recommended")) and o.get("id")),
+                   (opts[0].get("id") or opts[0].get("action") or "keep_as_is") if opts else "keep_as_is")
     out.setdefault("default_resolution", default)
     out.setdefault("status", "pending")
     out.setdefault("selected_resolution", None)
@@ -1060,8 +1069,10 @@ async def enrich_unmapped_items_with_llm(
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for idx, res in zip(unmapped_indices, results):
             if isinstance(res, list) and res:
-                items[idx]["resolution_options"] = res
-                rec = next((o["id"] for o in res if o.get("recommended")), res[0]["id"])
+                res_tagged = [tag_option_readiness(dict(o)) for o in res]
+                items[idx]["resolution_options"] = res_tagged
+                rec = next((o.get("id") for o in res_tagged if (o.get("recommended") or o.get("is_recommended")) and o.get("id")),
+                           (res_tagged[0].get("id") or res_tagged[0].get("action") or "keep_as_is") if res_tagged else "keep_as_is")
                 items[idx]["default_resolution"] = rec
 
     return items

@@ -20,6 +20,14 @@ class Tier3ReplayCache:
         before reuse, ensuring schema drift or policy changes invalidate stale cached proposals.
     """
 
+    _instance: Optional["Tier3ReplayCache"] = None
+
+    @classmethod
+    def get_instance(cls, orchestrator: Optional[Tier3ValidationOrchestrator] = None) -> "Tier3ReplayCache":
+        if cls._instance is None:
+            cls._instance = cls(orchestrator=orchestrator)
+        return cls._instance
+
     def __init__(self, orchestrator: Optional[Tier3ValidationOrchestrator] = None):
         self._cache: Dict[str, Tier3ResolutionProposal] = {}
         self.orchestrator = orchestrator or Tier3ValidationOrchestrator()
