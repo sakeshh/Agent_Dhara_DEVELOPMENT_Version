@@ -15,7 +15,7 @@ sqlalchemy>=2.0.0       # Required for pd.read_sql() with pyodbc (eliminates DBA
 # mssql-python>=1.0.0  # Optional: Microsoft's newer driver (uncomment if preferred)
 
 # Azure OpenAI client support
-openai>=1.0.0
+openai>=3.28.0
 
 # Optional HTTP APIs
 fastapi>=0.100.0
