@@ -29,7 +29,7 @@ pydantic>=2.0.0
 mcp>=1.2.0
 
 # LangGraph — multi-agent orchestration
-langgraph>=0.2.0
+langgraph>=1.2.14
 
 # ── Sprint 1 Upgrades ─────────────────────────────────────────────────────
 
