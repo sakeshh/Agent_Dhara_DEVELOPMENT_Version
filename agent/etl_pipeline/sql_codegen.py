@@ -437,6 +437,72 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
             params = st.get("params") or {}
             cval = str(params.get("constant_value", params.get("fill_value", "unknown"))).replace("'", "''")
             expr = f"COALESCE({expr}, N'{cval}')"
+        elif action == "fill_or_drop":
+            # Fill with evidence value or drop rows where null (handled at row level)
+            params = st.get("params") or {}
+            evidence = st.get("evidence") or {}
+            fill_val = params.get("fill_value") or evidence.get("recommended_fill") or evidence.get("median")
+            if fill_val is not None:
+                if str(fill_val).replace(".", "").replace("-", "").isdigit():
+                    expr = f"COALESCE({expr}, {fill_val})"
+                else:
+                    fill_str = str(fill_val).replace("'", "''")
+                    expr = f"COALESCE({expr}, N'{fill_str}')"
+            else:
+                if _is_numeric_column(col_name, col_meta):
+                    expr = f"COALESCE({expr}, 0)"
+                else:
+                    expr = f"COALESCE({expr}, N'unknown')"
+        elif action == "impute_numeric":
+            # Statistical imputation - mean/median/mode
+            params = st.get("params") or {}
+            strategy = params.get("strategy", "median")
+            evidence = st.get("evidence") or {}
+
+            if strategy == "median" and evidence.get("median") is not None:
+                fill_val = evidence["median"]
+            elif strategy == "mean" and evidence.get("mean") is not None:
+                fill_val = evidence["mean"]
+            elif strategy == "mode" and evidence.get("mode") is not None:
+                fill_val = evidence["mode"]
+            else:
+                fill_val = 0
+
+            if isinstance(fill_val, (int, float)) and not isinstance(fill_val, bool):
+                expr = f"COALESCE({expr}, {fill_val})"
+            else:
+                expr = f"COALESCE({expr}, 0)"
+        elif action == "impute_date":
+            # Date imputation - use min/max or current date
+            params = st.get("params") or {}
+            strategy = params.get("strategy", "min")
+            evidence = st.get("evidence") or {}
+
+            if strategy == "min" and evidence.get("min"):
+                fill_val = f"'{evidence['min']}'"
+            elif strategy == "max" and evidence.get("max"):
+                fill_val = f"'{evidence['max']}'"
+            else:
+                fill_val = "GETDATE()"
+
+            expr = f"COALESCE({expr}, {fill_val})"
+        elif action == "regex_replace":
+            # Regex text cleaning - replace non-word characters
+            params = st.get("params") or {}
+            pattern = params.get("pattern", r"[^\w\s]")
+            replacement = params.get("replacement", "")
+            # T-SQL doesn't have native REGEXP_REPLACE, use nested REPLACE for common cases
+            # For full regex, would need CLR or external function
+            # Simple implementation: remove common special chars
+            pattern_clean = pattern.replace(r"[^\w\s]", "").replace(r"\W", "").replace(r"\D", "")
+            if pattern_clean:
+                # Build nested REPLACE for each special char
+                special_chars = set(pattern_clean)
+                for ch in special_chars:
+                    expr = f"REPLACE({expr}, N'{ch}', N'{replacement}')"
+            else:
+                # Default: remove non-alphanumeric except space
+                expr = f"REPLACE(REPLACE(REPLACE(REPLACE({expr}, N'!', N''), N'@', N''), N'#', N''), N'$', N'')"
         elif action in (
             # Actions that are handled at row-level or table-level, not column expression level
             "deduplicate", "flag_business_key_duplicate", "flag_duplicate_candidates",
@@ -452,8 +518,7 @@ def compile_column_expression(col_name: str, transforms: List[dict], col_meta: d
             # Quarantine actions (handled at row routing level)
             "quarantine_row", "quarantine_null_rows", "quarantine_missing_key",
             "quarantine_orphan_fk", "quarantine_key_null",
-            # Imputation actions (TODO: implement statistical imputation)
-            "impute_numeric", "impute_date", "create_normalized_match_key",
+            "create_normalized_match_key",
             # Administrative actions
             "skip_etl", "skip_requirement", "review_manually", "force_unlock",
             # True no-ops
@@ -487,6 +552,78 @@ def _accumulate_reason(col_clean: str, reason_expr: str) -> str:
         f"THEN [{col_clean}_validation_reason] + '; ' + {reason_expr} "
         f"ELSE [{col_clean}_validation_reason] END"
     )
+
+
+def _validate_generated_sql(sql: str, assessment: Dict[str, Any], plan: Dict[str, Any]) -> List[str]:
+    """Validate generated SQL against assessment schema and best practices."""
+    warnings = []
+
+    if not sql or len(sql.strip()) < 100:
+        warnings.append("SQL too short - likely incomplete generation")
+        return warnings
+
+    import re
+
+    # 1. Extract all table references
+    table_refs = re.findall(r'FROM\s+(\[?[\w.]+\]?)', sql, re.IGNORECASE)
+    table_refs += re.findall(r'JOIN\s+(\[?[\w.]+\]?)', sql, re.IGNORECASE)
+    table_refs += re.findall(r'INTO\s+(\[?[\w.]+\]?)', sql, re.IGNORECASE)
+    table_refs += re.findall(r'UPDATE\s+(\[?[\w.]+\]?)', sql, re.IGNORECASE)
+
+    # Normalize table names from assessment
+    assessment_tables = set()
+    for ds_name in assessment.get("datasets", {}).keys():
+        assessment_tables.add(ds_name.lower())
+        # Also add clean/transformed variants
+        clean_name = _get_clean_table_name(ds_name).lower()
+        trans_name = _get_transformed_table_name(ds_name).lower()
+        assessment_tables.add(clean_name)
+        assessment_tables.add(trans_name)
+        # Infrastructure tables
+        assessment_tables.update(["etl_log", "etl_rejects", "etl_watermark", "etl_default_values", "etl_invalid_values"])
+
+    for tbl in table_refs:
+        clean_tbl = tbl.strip("[]").lower()
+        if clean_tbl not in assessment_tables and not clean_tbl.startswith("tempdb") and not clean_tbl.startswith("#"):
+            warnings.append(f"Table reference '{tbl}' not found in assessment datasets")
+
+    # 2. Check CREATE PROCEDURE before EXEC
+    proc_creates = re.findall(r'CREATE\s+(?:OR\s+ALTER\s+)?PROCEDURE\s+(\[?[\w.]+\]?)', sql, re.IGNORECASE)
+    proc_execs = re.findall(r'EXEC\s+(\[?[\w.]+\]?)', sql, re.IGNORECASE)
+    created_procs = {p.strip("[]").lower() for p in proc_creates}
+    for proc in proc_execs:
+        clean_proc = proc.strip("[]").lower()
+        if clean_proc not in created_procs:
+            warnings.append(f"Procedure '{proc}' executed but not created in this script")
+
+    # 3. Type coercion safety check - don't cast text columns to numeric
+    for ds_name, ds_info in assessment.get("datasets", {}).items():
+        for col_name, col_meta in ds_info.get("columns", {}).items():
+            semantic = str(col_meta.get("semantic_type", "")).lower()
+            dtype = str(col_meta.get("dtype", "")).lower()
+            if semantic in ("name", "email", "phone", "address", "text", "categorical") or "object" in dtype:
+                # Check for TRY_CAST to numeric types on text columns
+                pattern = rf'TRY_CAST\s*\(\s*\[?{re.escape(col_name)}\]?\s+AS\s+(?:BIGINT|INT|SMALLINT|TINYINT|DECIMAL|NUMERIC|FLOAT|REAL|MONEY)'
+                if re.search(pattern, sql, re.IGNORECASE):
+                    warnings.append(f"⚠️ Casting text column '{col_name}' (semantic: {semantic}) to numeric type - likely error")
+
+    # 4. Check for duplicate CREATE statements
+    create_tables = re.findall(r'CREATE\s+TABLE\s+(\[?[\w.]+\]?)', sql, re.IGNORECASE)
+    seen_creates = set()
+    for tbl in create_tables:
+        clean_tbl = tbl.strip("[]").lower()
+        if clean_tbl in seen_creates:
+            warnings.append(f"Duplicate CREATE TABLE for '{tbl}'")
+        seen_creates.add(clean_tbl)
+
+    # 5. Check for missing GO batch separators between CREATE PROC and EXEC
+    if proc_creates and proc_execs:
+        # Simple check: ensure GO exists between CREATE PROC and EXEC
+        proc_section = sql[sql.find("CREATE PROCEDURE"):] if "CREATE PROCEDURE" in sql.upper() else ""
+        if "GO" not in proc_section.upper() and proc_execs:
+            warnings.append("Missing GO batch separator between CREATE PROCEDURE and EXEC statements")
+
+    return warnings
 
 
 def _supplement_steps_with_dq_issues(
@@ -3023,6 +3160,15 @@ def generate_sql_etl(plan: Dict[str, Any], assessment: Dict[str, Any], *, dialec
     full_sql = "\n".join(badge_lines) + full_sql
     full_sql = re.sub(r"#([a-zA-Z0-9_]+?)_Staging_Staging\b", r"#\1_Staging", full_sql, flags=re.IGNORECASE)
     full_sql = re.sub(r"#([a-zA-Z0-9_]+?)_staging_staging\b", r"#\1_Staging", full_sql, flags=re.IGNORECASE)
+    
+    # Run SQL validation pass before returning
+    validation_warnings = _validate_generated_sql(full_sql, assessment, plan)
+    if validation_warnings:
+        warning_header = "\n-- ============================================================\n-- SQL VALIDATION WARNINGS\n"
+        warning_lines = [f"--   - {w}" for w in validation_warnings]
+        warning_footer = "-- ============================================================\n"
+        full_sql = full_sql + "\n" + warning_header + "\n".join(warning_lines) + "\n" + warning_footer
+    
     final_output = full_sql.strip() + "\n"
     _check_forbidden_generator_tokens(final_output)
     return final_output

@@ -1,1698 +1,547 @@
+"""PlannerAgent - Transforms assessment results into executable ETL plans."""
+
 from __future__ import annotations
-
-from enum import Enum
-import hashlib
+import asyncio
+import logging
+import uuid
 import json
-import os
-import time
-import threading
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-_PLANNER_LOCK = threading.Lock()
-
-
-from pydantic import BaseModel
-from typing import Literal
-
-
-class PlanningInputMode(str, Enum):
-    CANONICAL_ONLY = "canonical_only"
-    LEGACY_NOTES_ONLY = "legacy_notes_only"
-    HYBRID_COMPATIBILITY = "hybrid_compatibility"
-
-
-class PlanningModeMetadata(BaseModel):
-    input_mode: PlanningInputMode
-    authoritative_source: Literal["canonical_registry", "legacy_notes"]
-    legacy_shadow_only: bool = False
-
-from agent.transformation_suggester import suggest_transformations
-from agent.etl_pipeline.business_rules import normalize_business_rules, column_is_excluded
-from agent.etl_pipeline.classify_steps import classify_step_bucket
-from agent.etl_pipeline.relationship_planner import build_relationship_plan
-from agent.etl_pipeline.manual_review_catalog import enrich_manual_review_item
-from agent.etl_pipeline.issue_identity import (
-    make_step_id,
-    make_issue_id,
-    step_identity,
-    merge_steps,
+from agent.assessment.models import (
+    AssessmentResult, DatasetProfile, ColumnProfile, QualityIssue,
+    Relationship, SemanticProfile, IssueSeverity, IssueCategory,
+    FixabilityTier, SemanticType
 )
-from agent.etl_pipeline.step_metadata import (
-    build_plan_invariants,
-    enrich_relationship_plan_joins,
-    finalize_dataset_steps,
+from agent.etl_pipeline.models import (
+    ETLPlan, DatasetPlan, PlanStep, CrossDatasetStep,
+    ManualReviewItem, CleaningPlan, CoverageReport,
+    ReconciliationReport, PlanMetadata, PlanStatus, GenerationMode,
+    ReviewResult, GeneratedCode, ExecutionResult
 )
-from agent.etl_pipeline.step_params import build_ri_step_params, build_step_params
+from agent.core.interfaces import MemoryStore
+from agent.logging_setup import get_logger, get_performance_logger
 
-# Lower number = earlier in pipeline (per column / global)
-_ACTION_PRIORITY: Dict[str, int] = {
-    "trim": 5,
-    "lowercase": 8,
-    "uppercase": 8,
-    "zero_to_null": 30,
-    "replace_sentinel_values": 31,
-    "cast_type": 35,
-    "coerce_numeric": 40,
-    "parse_dates": 45,
-    "sanitize_email": 50,
-    "normalize_phone": 55,
-    "hash_phone": 56,
-    "mask_phone": 57,
-    "nullify_future_dates": 48,
-    "nullify_dummy_dates": 48,
-    "nullify_punctuation": 32,
-    "regex_replace": 60,
-    "range_clip": 65,
-    "clip_or_flag": 65,
-    "flag_outliers": 65,
-    "clip_outliers": 65,
-    "cap_outliers": 65,
-    "standardize_boolean": 70,
-    "replace_values": 75,
-    "fill_or_drop": 80,
-    "fill_nulls_simple": 80,
-    "drop_column": 85,
-    "exclude_column": 86,
-    "deduplicate": 200,
-    "validate_referential_integrity_or_stage": 300,
-}
+logger = get_logger("etl_pipeline.planner")
 
 
-def _plan_id() -> str:
-    return f"plan_{int(time.time())}"
-
-
-def _assessment_signature(assessment: Dict[str, Any]) -> str:
-    try:
-        blob = json.dumps(assessment, sort_keys=True, default=str)
-    except Exception:
-        blob = str(assessment)
-    return hashlib.sha256(blob.encode("utf-8", errors="ignore")).hexdigest()[:16]
-
-
-def _dataset_columns(assessment: Dict[str, Any], dataset: str) -> Dict[str, Any]:
-    ds = (assessment.get("datasets") or {}).get(dataset) or {}
-    return ds.get("columns") or {}
-
-
-def _col_stats_for_step(
-    assessment: Dict[str, Any], dataset: str, column: Optional[str]
-) -> Dict[str, Any]:
-    if not dataset or not column:
-        return {}
-    ds_data = (assessment.get("datasets") or {}).get(dataset) or {}
-    stats = dict((ds_data.get("columns") or {}).get(column) or {})
-    total = int(ds_data.get("row_count") or 0)
-    stats["row_count"] = total
-    null_pct = stats.get("null_percentage")
-    if null_pct is not None and total > 0:
-        try:
-            stats["null_count"] = int(round(float(null_pct) * total))
-        except (TypeError, ValueError):
-            pass
-    return stats
-
-
-def _build_evidence(
-    suggestion: Dict[str, Any],
-    col_stats: Dict[str, Any],
-    action: str,
-    rules: Dict[str, Any],
-) -> Dict[str, Any]:
-    """
-    Structured evidence from assessment DQ + column profile (no invented stats).
-    """
-    col = suggestion.get("column")
-    issue_type = str(suggestion.get("issue_type") or "")
-    message = str(suggestion.get("message") or "").strip()
-    affected = suggestion.get("row_count_affected")
-    sev = str(suggestion.get("severity") or "medium").lower()
-
-    stype = col_stats.get("dtype") or col_stats.get("semantic_type") or "unknown"
-    total = int(col_stats.get("row_count") or 0)
-    nulls = col_stats.get("null_count")
-    if nulls is None and col_stats.get("null_percentage") is not None and total > 0:
-        try:
-            nulls = int(round(float(col_stats["null_percentage"]) * total))
-        except (TypeError, ValueError):
-            nulls = 0
-    nulls = int(nulls or 0)
-    null_pct = round((nulls / max(total, 1)) * 100, 2) if nulls else 0.0
-    if col_stats.get("null_percentage") is not None:
-        try:
-            null_pct = round(float(col_stats["null_percentage"]) * 100, 2)
-        except (TypeError, ValueError):
-            pass
-
-    why_parts: List[str] = []
-    alternatives: List[str] = []
-    confidence = 0.55
-
-    if message:
-        why_parts.append(message)
-        confidence += 0.12
-    if affected is not None and isinstance(affected, (int, float)) and affected >= 0:
-        why_parts.append(f"~{int(affected):,} rows affected per DQ scan")
-        confidence += 0.15
-    if issue_type:
-        why_parts.append(f"issue_type={issue_type}")
-
-    mean = col_stats.get("mean")
-    median = col_stats.get("median")
-    std = col_stats.get("std")
-    skew = col_stats.get("skew")
-    p5 = col_stats.get("p5")
-    p95 = col_stats.get("p95")
-    recommended_fill: Optional[str] = None
-
-    act = (action or "").lower()
-    if act in ("fill_nulls_simple", "fill_or_drop"):
-        if null_pct > 0:
-            why_parts.append(f"{nulls:,} nulls ({null_pct}% of {total:,} rows)")
-        if skew is not None and abs(float(skew)) > 1.0 and median is not None:
-            recommended_fill = "median"
-            why_parts.append(
-                f"skewed distribution (skew={round(float(skew), 2)}) — "
-                f"fill with median ({round(float(median), 4)}) not mean"
-            )
-            confidence = min(confidence + 0.1, 0.92)
-        elif median is not None and mean is not None:
-            recommended_fill = "median" if abs(float(skew or 0)) > 0.5 else "mean"
-            why_parts.append(
-                f"near-normal spread — fill with {recommended_fill} "
-                f"(mean={round(float(mean), 4)}, median={round(float(median), 4)})"
-            )
-        if null_pct < 1.0:
-            alternatives.append("Drop rows — null rate is very low, minimal data loss")
-        if null_pct > 20.0:
-            alternatives.append(
-                f"Consider dropping column — {null_pct}% missing may be unreliable"
-            )
-            confidence = min(confidence, 0.62)
-        if col_stats.get("semantic_type"):
-            why_parts.append(f"semantic_type={col_stats['semantic_type']}")
-
-    elif act in ("cast_type", "coerce_numeric"):
-        if col_stats.get("dtype_inference"):
-            why_parts.append(f"inferred type hint: {col_stats['dtype_inference']}")
-        alternatives.append("Use try-cast to preserve rows with conversion errors")
-
-    elif act == "deduplicate":
-        dupes = col_stats.get("duplicate_value_count")
-        if dupes:
-            why_parts.append(f"{int(dupes):,} duplicate values in column")
-        if affected:
-            why_parts.append(f"{int(affected):,} duplicate-related rows flagged")
-        alternatives.append("Keep duplicates if source intentionally produces them (e.g. event logs)")
-
-    elif act in ("flag_outliers", "clip_outliers", "cap_outliers", "clip_or_flag"):
-        if p5 is not None and p95 is not None:
-            why_parts.append(f"outliers outside p5–p95 range [{round(float(p5), 4)}, {round(float(p95), 4)}]")
-        if std is not None and mean is not None:
-            why_parts.append(f"std={round(float(std), 2)}, mean={round(float(mean), 2)}")
-        if issue_type in ("numeric_outliers_iqr", "negative_values", "suspicious_zero"):
-            why_parts.append("numeric outlier pattern detected in assessment")
-        alternatives.append("Flag outliers instead of clipping — preserves values for audit")
-        alternatives.append("Cap at p1/p99 for less aggressive trimming")
-
-    elif act in ("sanitize_email", "normalize_phone"):
-        if affected:
-            why_parts.append(f"{int(affected):,} values failed format checks")
-
-    elif act in ("trim", "lowercase", "uppercase"):
-        if issue_type == "whitespace" or issue_type == "case_inconsistency":
-            why_parts.append("format inconsistency detected in column values")
-
-    elif act == "parse_dates":
-        if col_stats.get("dtype_inference") == "datetime_like":
-            why_parts.append("mixed or string dates inferred from profile")
-        alternatives.append("Specify target date format if downstream requires strict typing")
-
-    if rules.get("never_drop_rows") and act == "fill_nulls_simple":
-        why_parts.append("'never_drop_rows' rule active — drop option removed")
-        confidence = min(confidence + 0.05, 0.95)
-
-    if sev == "high" and act not in ("deduplicate",):
-        confidence = min(confidence, 0.68)
-    if suggestion.get("auto_fixable"):
-        confidence = min(confidence + 0.08, 0.94)
-    if not why_parts:
-        why_parts.append(f"Action '{action}' recommended from assessment profile")
-
-    confidence = round(max(0.35, min(confidence, 0.95)), 2)
-
-    out: Dict[str, Any] = {
-        "null_count": nulls if nulls else None,
-        "null_pct": null_pct if null_pct else None,
-        "dtype": stype,
-        "row_count": total if total else None,
-        "issue_type": issue_type or None,
-        "severity": sev,
-        "why_this_action": " | ".join(why_parts),
-        "alternatives": alternatives,
-        "confidence": confidence,
-        "rule_override": bool(rules.get("never_drop_rows") and act == "fill_nulls_simple"),
-    }
-    if mean is not None:
-        out["mean"] = round(float(mean), 4)
-    if median is not None:
-        out["median"] = round(float(median), 4)
-    if std is not None:
-        out["std"] = round(float(std), 4)
-    if skew is not None:
-        out["skew"] = round(float(skew), 4)
-    if recommended_fill:
-        out["recommended_fill"] = recommended_fill
-    return out
-
-
-def _recommend_engine(
-    source_context: Optional[Dict[str, Any]],
-    assessment: Dict[str, Any],
-) -> Dict[str, Any]:
-    """Engine recommendation from source type + data scale."""
-    ctx = source_context or {}
-    src_type = str(ctx.get("type") or "unknown").lower()
-    target_platform = str(ctx.get("target_platform") or "").lower()
-    target_format = str(ctx.get("target_format") or "").lower()
-    dataset_count = int(ctx.get("dataset_count") or ctx.get("source_count") or len(assessment.get("datasets") or {}) or 1)
-    rels = assessment.get("relationships") or {}
-    if isinstance(rels, list):
-        rels_len = len(rels)
-    else:
-        rels_len = len(rels.get("joins", []))
-    relationship_count = int(ctx.get("relationship_count") or rels_len or 0)
-    size_mb = float(ctx.get("size_mb") or 0)
-    row_count = int(ctx.get("row_count") or 0)
-
-    # Fabric Lakehouse / Delta always requires PySpark
-    if target_platform in ("fabric_lakehouse", "fabric", "delta_lake", "synapse") or target_format in ("delta", "parquet"):
-        return {
-            "engine": "pyspark",
-            "scope": "plan",
-            "dataset_count": dataset_count,
-            "relationship_count": relationship_count,
-            "target_platform": target_platform or "fabric_lakehouse",
-            "reason": (
-                f"Target platform is {target_platform or 'fabric_lakehouse'} with {target_format or 'delta'} format — "
-                f"PySpark is the only supported engine."
-            ),
-            "alternatives": [],
-            "warning": None,
-        }
-
-    # Multi-dataset with relationships always requires PySpark
-    if dataset_count > 1 and relationship_count > 0:
-        return {
-            "engine": "pyspark",
-            "scope": "plan",
-            "dataset_count": dataset_count,
-            "relationship_count": relationship_count,
-            "target_platform": target_platform or "general",
-            "reason": (
-                f"Multi-dataset plan ({dataset_count} sources, {relationship_count} relationship(s)) — "
-                f"PySpark is required for distributed join partitioning."
-            ),
-            "alternatives": ["Python/Pandas — only for single-dataset with no joins"],
-            "warning": None,
-        }
-
-    if row_count == 0:
-        for ds in (assessment.get("datasets") or {}).values():
-            if isinstance(ds, dict):
-                row_count = max(row_count, int(ds.get("row_count") or 0))
-    if size_mb == 0 and row_count > 0:
-        size_mb = round(row_count * 0.0005, 2)
-
-    if src_type in ("sql_server", "azure_sql"):
-        return {
-            "engine": "sql",
-            "dialect": "tsql",
-            "reason": (
-                f"Source is {src_type} — T-SQL runs in-database with no file export."
-            ),
-            "alternatives": [
-                "Python via SQLAlchemy — script-based ETL",
-                "ADF — if part of a larger Azure pipeline",
-            ],
-            "warning": None,
-        }
-
-    if src_type in ("postgres", "mysql"):
-        return {
-            "engine": "sql",
-            "dialect": "ansi",
-            "reason": f"Source is {src_type} — ANSI SQL is portable across engines.",
-            "alternatives": ["Python/Pandas via SQLAlchemy"],
-            "warning": None,
-        }
-
-    if src_type in ("blob_storage", "adls") or size_mb > 500 or row_count > 1_000_000:
-        return {
-            "engine": "pyspark",
-            "dialect": None,
-            "reason": (
-                f"Large or cloud-backed data ({row_count:,} rows, ~{size_mb}MB) — "
-                f"PySpark scales beyond single-node Pandas."
-            ),
-            "alternatives": [
-                "ADF — existing Azure Data Factory pipelines",
-                "Python — only for samples or small subsets",
-            ],
-            "warning": (
-                "PySpark needs a cluster (Databricks, Synapse, or local Spark)."
-            ),
-        }
-
-    if src_type in ("adf_pipeline", "databricks"):
-        return {
-            "engine": "adf",
-            "dialect": None,
-            "reason": "ADF-native source — Mapping Data Flow JSON fits your pipeline.",
-            "alternatives": ["PySpark — notebook-based transforms"],
-            "warning": "ADF JSON needs linked services configured in your factory.",
-        }
-
-    ext = str(ctx.get("extension") or ".csv").lower()
-    file_notes = {
-        ".xlsx": "Excel — pd.read_excel()",
-        ".xls": "Excel — pd.read_excel()",
-        ".json": "JSON — pd.read_json()",
-        ".jsonl": "JSON lines — pd.read_json(lines=True)",
-        ".parquet": "Parquet — pd.read_parquet()",
-        ".csv": "CSV — pd.read_csv()",
-        ".tsv": "TSV — pd.read_csv(sep='\\t')",
-    }
-    file_note = file_notes.get(ext, f"{ext or 'file'} detected")
-
-    warn = None
-    if size_mb >= 200:
-        warn = f"At ~{size_mb}MB, Pandas may be slow — consider PySpark."
-
-    return {
-        "engine": "python",
-        "dialect": None,
-        "reason": (
-            f"{file_note}. {row_count:,} rows (~{size_mb}MB) — "
-            f"suitable for Pandas on a single machine."
-        ),
-        "alternatives": [
-            "PySpark — if data grows past ~500MB or moves to lake storage",
-            "SQL — after loading into a database",
-        ],
-        "warning": warn,
-    }
-
-
-def _steps_from_business_notes(
-    rules: Dict[str, Any],
-    assessment: Dict[str, Any],
-) -> List[Tuple[str, str, str, str]]:
-    """
-    Promote explicit business-note instructions into plan steps, sentence-by-sentence.
-    Explicitly ignore matches if a sentence contains a negation pattern.
-    """
-    import re
-    notes = str(rules.get("notes") or "")
-    sentences = re.split(r'\.(?=\s|$)|[\;\!\n]+', notes)
+class PlanningContext:
+    """Context for planning decisions."""
     
-    out: List[Tuple[str, str, str, str]] = []
-    ds_names = list((assessment.get("datasets") or {}).keys())
+    def __init__(self, dataset_name: str, dataset_profile: DatasetProfile,
+                 assessment_result: Optional[AssessmentResult] = None,
+                 memory: Optional[MemoryStore] = None):
+        self.dataset_name = dataset_name
+        self.dataset_profile = dataset_profile
+        self.assessment_result = assessment_result
+        self.memory = memory
+        
+        # Planning state
+        self.blockers: List[str] = []
+        self.business_keys: List[str] = []
+        self.incremental = False
+        self.incremental_config: Optional[IncrementalConfig] = None
+        self.target_table: Optional[str] = None
+        self.staging_table: Optional[str] = None
+        self.watermark_column: Optional[str] = None
+        self.cross_dataset_dependencies: Dict[str, str] = {}
+
+
+@dataclass
+class PlanSuggestion:
+    """A suggested plan step with reasoning."""
+    step_id: str
+    action: str
+    reason: str
+    confidence: float
+    estimated_rows_impact: int
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+class PlannerAgent:
+    """Transfers assessment findings into a structured ETL plan.
     
-    negation_patterns = [r"don't", r"do not", r"never", r"no ", r"avoid", r"without", r"skip"]
+    Converts QualityIssue -> PlanStep mapping, discovers incremental
+    strategy, and generates cross-dataset steps from relationships.
+    """
     
-    for sentence in sentences:
-        sentence_clean = sentence.strip().lower()
-        if not sentence_clean:
-            continue
-            
-        # Check if this sentence contains negation
-        is_negated = any(re.search(pat, sentence_clean) for pat in negation_patterns)
-        if is_negated:
-            continue
-            
-        # Check privacy targets
-        targets_keywords = []
-        if "phone" in sentence_clean:
-            targets_keywords.append("phone")
-        if "email" in sentence_clean:
-            targets_keywords.append("email")
-        if "ssn" in sentence_clean:
-            targets_keywords.append("ssn")
-        if "credit card" in sentence_clean or "creditcard" in sentence_clean or "cc " in sentence_clean or " cc" in sentence_clean:
-            targets_keywords.append("credit card")
-            
-        if not targets_keywords:
-            continue
-        if not any(w in sentence_clean for w in ("hash", "mask", "privacy", "secure", "protect")):
-            continue
-            
-        use_hash = "hash" in sentence_clean
-        use_mask = "mask" in sentence_clean and not use_hash
-        action = "hash_phone" if use_hash else ("mask_phone" if use_mask else "hash_phone")
+    def __init__(self, config: Any, memory: Optional[MemoryStore] = None):
+        self.config = config
+        self.memory = memory
+        self.min_confidence = getattr(config, 'planner_min_confidence', 0.5)
+        self.min_issue_coverage = getattr(config, 'planner_issue_coverage', 0.7)
+    
+    async def plan_from_assessment(self, assessment_result, dataset_profiles, datasets, feature_flags=None):
+        """Create an ETL plan from assessment results."""
+        feature_flags = feature_flags or {}
         
-        # Match datasets in this sentence
-        targets = []
-        for ds in ds_names:
-            dsl = ds.lower()
-            if dsl in sentence_clean or dsl.replace("_", "") in sentence_clean.replace("_", "").replace(" ", ""):
-                targets.append(ds)
-        if not targets:
-            for ds in ds_names:
-                if ".xml" in ds.lower() and "xml" in sentence_clean:
-                    targets.append(ds)
-        if not targets and len(ds_names) == 1:
-            targets = ds_names
-            
-        for ds in targets:
-            for col in _dataset_columns(assessment, ds).keys():
-                col_lower = str(col).lower()
-                matched_kw = None
-                if "phone" in targets_keywords and "phone" in col_lower:
-                    matched_kw = "phone"
-                elif "email" in targets_keywords and "email" in col_lower:
-                    matched_kw = "email"
-                elif "ssn" in targets_keywords and "ssn" in col_lower:
-                    matched_kw = "ssn"
-                elif "credit card" in targets_keywords and ("credit" in col_lower and ("card" in col_lower or "cc" in col_lower)):
-                    matched_kw = "credit card"
-                    
-                if matched_kw:
-                    out.append(
-                        (
-                            ds,
-                            col,
-                            action,
-                            f"business_rules.notes: {'hash' if use_hash else 'mask'} {matched_kw} for privacy",
-                        )
-                    )
-    return out
-
-
-def _apply_rules_to_action(
-    action: str,
-    column: Optional[str],
-    business_rules: Dict[str, Any],
-) -> Tuple[str, Optional[str]]:
-    """
-    Returns (action, note) where note is a human-readable override reason.
-    """
-    if business_rules.get("never_drop_rows") and action == "fill_or_drop":
-        return "fill_nulls_simple", "never_drop_rows: using fill-only instead of drop/fill choice"
-    return action, None
-
-
-_SUGGESTION_CACHE: Dict[str, dict] = {}
-
-
-class PlanBuilder:
-    def __init__(self, assessment: Dict[str, Any], business_rules_raw: Any, **kwargs):
-        self.assessment = assessment
-        self.business_rules_raw = business_rules_raw
-        self.kwargs = kwargs
-        self.build_warnings = []
-
-    def build(self) -> Dict[str, Any]:
-        import logging
-        logger = logging.getLogger("agent.etl_pipeline.planner")
-
-        assessment = self.assessment
-        business_rules_raw = self.business_rules_raw
-        engine = self.kwargs.get("engine", "python")
-        source_context = self.kwargs.get("source_context")
-        generation_mode = self.kwargs.get("generation_mode", "full")
-        dq_recommendations = self.kwargs.get("dq_recommendations")
-        semantic_context = self.kwargs.get("semantic_context")
-
-        if not isinstance(assessment, dict) or not assessment.get("datasets"):
-            raise ValueError("Invalid assessment: missing datasets")
-
-        rules = normalize_business_rules(business_rules_raw)
-        exclude = set(rules.get("exclude_columns") or [])
-
-        canonical_registry = self.kwargs.get("canonical_registry") or (
-            business_rules_raw.get("canonical_registry") if isinstance(business_rules_raw, dict) else None
-        )
-        raw_mode = self.kwargs.get("planning_input_mode") or (
-            business_rules_raw.get("planning_input_mode") if isinstance(business_rules_raw, dict) else None
-        )
-        if isinstance(raw_mode, PlanningInputMode):
-            planning_input_mode = raw_mode
-        elif isinstance(raw_mode, str):
-            try:
-                planning_input_mode = PlanningInputMode(raw_mode.lower())
-            except ValueError:
-                planning_input_mode = PlanningInputMode.HYBRID_COMPATIBILITY
-        elif canonical_registry:
-            planning_input_mode = PlanningInputMode.CANONICAL_ONLY
-        else:
-            planning_input_mode = PlanningInputMode.LEGACY_NOTES_ONLY
-
-        if planning_input_mode == PlanningInputMode.CANONICAL_ONLY:
-            mode_meta = PlanningModeMetadata(
-                input_mode=planning_input_mode,
-                authoritative_source="canonical_registry",
-                legacy_shadow_only=False,
-            )
-        elif planning_input_mode == PlanningInputMode.LEGACY_NOTES_ONLY:
-            mode_meta = PlanningModeMetadata(
-                input_mode=planning_input_mode,
-                authoritative_source="legacy_notes",
-                legacy_shadow_only=False,
-            )
-        else:
-            # HYBRID_COMPATIBILITY: canonical is authoritative, legacy is shadow-only
-            mode_meta = PlanningModeMetadata(
-                input_mode=planning_input_mode,
-                authoritative_source="canonical_registry",
-                legacy_shadow_only=True,
-            )
-
-        # Build explicit semantic schema layer
-        sem_schema = {}
-        from agent.etl_pipeline.semantic_classifier import classify_column_semantic, SemanticDescriptor
-        from agent.etl_pipeline.semantic_llm_enricher import enrich_low_confidence_columns
-
-        low_conf_cols = {}
-        for ds_name, ds_meta in (assessment.get("datasets") or {}).items():
-            if isinstance(ds_meta, dict):
-                cols = ds_meta.get("columns") or {}
-                for col_name, col in cols.items():
-                    if isinstance(col, dict):
-                        descriptor = classify_column_semantic(col_name, col)
-                        key = f"{ds_name}.{col_name}"
-                        sem_schema[key] = descriptor
-                        if descriptor["confidence"] < 0.75:
-                            low_conf_cols[key] = {
-                                "col_name": col_name,
-                                "col_meta": col,
-                                "descriptor": descriptor
-                            }
-
-        # Layer 2: Optional LLM enrichment
-        if low_conf_cols and os.getenv("ETL_PLAN_SEMANTIC_LLM", "").strip().lower() in ("1", "true", "yes"):
-            try:
-                enriched = enrich_low_confidence_columns(low_conf_cols)
-                for key, enriched_desc in enriched.items():
-                    sem_schema[key] = SemanticDescriptor(enriched_desc)
-            except Exception as e:
-                self.build_warnings.append(f"Semantic LLM enrichment failed: {e}")
-
-        # Layer 3: User overrides from rules.get("semantic_overrides")
-        overrides = rules.get("semantic_overrides") or {}
-        for override_key, override_val in overrides.items():
-            if not isinstance(override_val, dict):
-                continue
-            for key in list(sem_schema.keys()):
-                if key == override_key or key.endswith(f".{override_key}"):
-                    desc_dict = dict(sem_schema[key])
-                    desc_dict.update(override_val)
-                    desc_dict["inferred_by"] = "user_override"
-                    desc_dict["confidence"] = 1.0
-                    sem_schema[key] = SemanticDescriptor(desc_dict)
-
-        # Layer 3b: Governance semantic_context
-        sem_ctx_pkg = assessment.get("semantic_context") or {}
-        for ds_name, ctx in (sem_ctx_pkg.get("by_dataset") or {}).items():
-            if not isinstance(ctx, dict):
-                continue
-            base_conf = float(ctx.get("semantic_confidence") or 0.75)
-            for col_name, term in (ctx.get("business_terms") or {}).items():
-                key = f"{ds_name}.{col_name}"
-                desc = {
-                    "semantic_type": "string",
-                    "sub_type": "",
-                    "confidence": min(0.98, base_conf + 0.05),
-                    "inferred_by": "governance_semantic_context",
-                    "description": str(term)[:500],
-                }
-                if key not in sem_schema:
-                    sem_schema[key] = SemanticDescriptor(desc)
-                elif float(sem_schema[key].get("confidence") or 0) < 0.82:
-                    sem_schema[key]["description"] = str(term)[:500]
-                    sem_schema[key]["inferred_by"] = "governance_semantic_context"
-
-        if semantic_context is None:
-            semantic_context = assessment.get("semantic_context") or {}
-
-        from agent.semantic_context import SemanticCleaningPlan
-        semantic_plan = None
-        if semantic_context:
-            sem_model = semantic_context.get("semantic_model")
-            if isinstance(sem_model, dict) and "entities" in sem_model:
-                try:
-                    semantic_plan = SemanticCleaningPlan(
-                        entities=sem_model.get("entities") or {},
-                        relationships=sem_model.get("relationships") or [],
-                    )
-                except Exception:
-                    pass
-            if semantic_plan is None and "entities" in semantic_context:
-                try:
-                    semantic_plan = SemanticCleaningPlan(
-                        entities=semantic_context.get("entities") or {},
-                        relationships=semantic_context.get("relationships") or [],
-                    )
-                except Exception:
-                    pass
-
-        # 4.7 Cache suggestion package
-        assess_sig = _assessment_signature(assessment)
-        if assess_sig in _SUGGESTION_CACHE:
-            sug_pkg = _SUGGESTION_CACHE[assess_sig]
-        else:
-            try:
-                sug_pkg = suggest_transformations(assessment, semantic_plan=semantic_plan)
-                _SUGGESTION_CACHE[assess_sig] = sug_pkg
-            except Exception as e:
-                self.build_warnings.append(f"suggest_transformations failed: {e}")
-                sug_pkg = {"suggested_transformations": [], "summary": {}}
-
-        suggestions: List[Dict[str, Any]] = list(sug_pkg.get("suggested_transformations") or [])
-        if source_context and "suggestions" in source_context:
-            suggestions.extend(source_context["suggestions"])
-
-        # Load business rules as TaggedRules
-        from agent.etl_pipeline.business_rules import to_tagged_rules
-        business_tagged_rules = []
-        datasets_known = list(assessment.get("datasets") or {})
-        for ds_name in datasets_known:
-            try:
-                business_tagged_rules.extend(to_tagged_rules(rules, ds_name, assessment=assessment))
-            except Exception as e:
-                self.build_warnings.append(f"to_tagged_rules failed for dataset {ds_name}: {e}")
-
-        # Append business rules not in suggestions
-        for r in business_tagged_rules:
-            exists = False
-            for s in suggestions:
-                if s.get("dataset") == r.dataset and s.get("column") == r.column and s.get("suggested_action") == r.action:
-                    exists = True
-                    break
-            if not exists:
-                suggestions.append({
-                    "dataset": r.dataset,
-                    "column": r.column,
-                    "issue_type": r.issue_type,
-                    "severity": "medium",
-                    "message": f"Business rule contract: {r.source_detail}",
-                    "suggested_action": r.action,
-                    "manual_guidance": "",
-                    "row_count_affected": None,
-                    "auto_fixable": True,
-                })
-
-        # Merge LLM recommendations / findings
-        if not dq_recommendations:
-            dq_recommendations = assessment.get("dq_recommendations") or assessment.get("findings")
-
-        if dq_recommendations:
-            try:
-                from agent.etl_pipeline.llm_rec_mapper import map_llm_recommendation_to_action, compute_llm_confidence
-                recs_list = []
-                if isinstance(dq_recommendations, dict):
-                    recs_list = dq_recommendations.get("recommendations") or dq_recommendations.get("findings") or []
-                elif isinstance(dq_recommendations, list):
-                    recs_list = dq_recommendations
-
-                def _norm(v):
-                    return str(v or "").strip().lower()
-
-                sug_map = {}
-                for sug in suggestions:
-                    k = (_norm(sug.get("dataset")), _norm(sug.get("column")), _norm(sug.get("issue_type")))
-                    sug_map[k] = sug
-
-                safe_remediation_actions = {
-                    "range_clip", "replace_sentinel_values", "parse_dates",
-                    "parse_dates_safe", "normalize_phone", "sanitize_email",
-                    "flag_duplicate_candidates", "trim", "trim_preserve_case",
-                    "lowercase", "uppercase", "regex_replace"
-                }
-
-                for rec in recs_list:
-                    if not isinstance(rec, dict):
-                        continue
-                    ds = rec.get("dataset")
-                    col = rec.get("column")
-                    if not col or str(col).strip().lower() in ("unknown", "none", "null", "all", "table", "dataset", "-", "[table-level]", "[row-level]"):
-                        col = "*"
-                    it = rec.get("issue_type") or rec.get("type")
-
-                    mapped_action = map_llm_recommendation_to_action(rec)
-                    confidence = compute_llm_confidence(rec)
-
-                    is_approved = bool(
-                        rec.get("approved")
-                        or rec.get("approval_status") == "approved"
-                        or str(rec.get("status", "")).lower() == "approved"
-                        or rec.get("selected_option_id")
-                    )
-
-                    matched_sug = None
-                    key = (_norm(ds), _norm(col), _norm(it))
-                    if key in sug_map:
-                        matched_sug = sug_map[key]
-                    else:
-                        candidates = [
-                            sug for sug in suggestions
-                            if _norm(sug.get("dataset")) == _norm(ds) and _norm(sug.get("column")) == _norm(col)
-                        ]
-                        if len(candidates) == 1:
-                            matched_sug = candidates[0]
-                        elif len(candidates) > 1:
-                            for cand in candidates:
-                                cit = _norm(cand.get("issue_type"))
-                                rit = _norm(it)
-                                if rit in cit or cit in rit:
-                                    matched_sug = cand
-                                    break
-                            if not matched_sug:
-                                matched_sug = candidates[0]
-
-                    action_is_safe = (mapped_action in safe_remediation_actions)
-                    should_auto_fix = is_approved or (action_is_safe and generation_mode in ("cleanse_only", "cleanse", "full"))
-
-                    if matched_sug:
-                        matched_sug["llm_recommendation"] = rec
-                        matched_sug["llm_confidence"] = confidence
-                        if mapped_action and mapped_action != "noop":
-                            matched_sug["suggested_action"] = mapped_action
-                            matched_sug["auto_fixable"] = should_auto_fix
-                            matched_sug["authority_source"] = "HUMAN_APPROVED" if is_approved else ("SYSTEM_REMEDIATION" if should_auto_fix else "LLM_ADVISORY")
-                            if is_approved:
-                                matched_sug["approval_status"] = "approved"
-                    else:
-                        new_sug = {
-                            "dataset": ds,
-                            "column": col,
-                            "issue_type": it or "llm_inferred_issue",
-                            "severity": rec.get("severity") or "medium",
-                            "message": rec.get("why_it_matters") or rec.get("suggested_fix") or rec.get("message") or "Remediation finding",
-                            "suggested_action": mapped_action or "noop",
-                            "manual_guidance": rec.get("suggested_fix") or "",
-                            "row_count_affected": rec.get("row_count_affected") or rec.get("affected_rows") or rec.get("count"),
-                            "auto_fixable": should_auto_fix,
-                            "authority_source": "HUMAN_APPROVED" if is_approved else ("SYSTEM_REMEDIATION" if should_auto_fix else "LLM_ADVISORY"),
-                            "llm_recommendation": rec,
-                            "llm_confidence": confidence,
-                        }
-                        if is_approved:
-                            new_sug["approval_status"] = "approved"
-                        suggestions.append(new_sug)
-                        new_key = (_norm(ds), _norm(col), _norm(it or "llm_inferred_issue"))
-                        sug_map[new_key] = new_sug
-            except Exception as e:
-                self.build_warnings.append(f"dq_recommendations merge failed: {e}")
-
-        # Run conflict detection on all TaggedRules
-        from agent.etl_pipeline.rule_provenance import TaggedRule, RuleProvenance
-        from agent.etl_pipeline.conflict_detector import detect_conflicts
-        
-        all_tagged_rules = []
-        all_tagged_rules.extend(business_tagged_rules)
-        
-        if semantic_plan:
-            try:
-                all_tagged_rules.extend(semantic_plan.to_tagged_rules())
-            except Exception:
-                pass
-                
-        existing_rule_keys = set()
-        for r in all_tagged_rules:
-            existing_rule_keys.add((r.dataset, r.column, r.issue_type, r.action))
-            
-        for s in suggestions:
-            ds = s.get("dataset") or ""
-            col = s.get("column") or ""
-            it = s.get("issue_type") or ""
-            act = s.get("suggested_action")
-            if act and act != "review_manually":
-                key = (ds, col, it, act)
-                if key not in existing_rule_keys:
-                    all_tagged_rules.append(TaggedRule(
-                        dataset=ds,
-                        column=col,
-                        issue_type=it,
-                        action=act,
-                        provenance=RuleProvenance.AUTO_DETECTED,
-                        source_detail=s.get("message") or "Auto-detected DQ rule"
-                    ))
-                    existing_rule_keys.add(key)
-                    
-        # Detect conflicts and resolve them
-        resolved_rules, conflicts = detect_conflicts(all_tagged_rules)
-        
-        resolved_map = {}
-        for r in resolved_rules:
-            resolved_map[(r.dataset, r.column, r.issue_type)] = r.action
-            
-        # 5.2 Cache evaluate_dq_gate result
-        # Compute dq_gate_summary at plan build time and store it on the plan
-        dq_gate_summary = {"blocking_issues": [], "passed": True}
-        threshold = float(rules.get("dq_threshold", 70.0))
-        if generation_mode == "full":
-            from agent.etl_pipeline.dq_gate import check_dq_gate
-            gate_issues = []
-            gate_passed = True
-            for ds_name in datasets_known:
-                try:
-                    gate_res = check_dq_gate(
-                        assessment, ds_name, 
-                        threshold=threshold, 
-                        force_unlock=ds_name in rules.get("force_unlock", []), 
-                        sem_schema=sem_schema
-                    )
-                    if not gate_res["passed"]:
-                        gate_passed = False
-                        gate_issues.append({
-                            "dataset": ds_name,
-                            "reason": f"Data quality score ({gate_res['score']}) below threshold ({threshold})",
-                            "score": gate_res.get("score")
-                        })
-                except Exception as e:
-                    self.build_warnings.append(f"check_dq_gate failed for {ds_name}: {e}")
-            dq_gate_summary = {"blocking_issues": gate_issues, "passed": gate_passed}
-
-        # Build steps
-        # Compile suggestions to steps
-        from agent.etl_pipeline.issue_to_step_compiler import compile_issues_to_steps
-        
-        # Apply resolved conflict actions back to suggestions
-        for s in suggestions:
-            ds = s.get("dataset") or ""
-            col = s.get("column") or ""
-            it = s.get("issue_type") or ""
-            if (ds, col, it) in resolved_map:
-                s["suggested_action"] = resolved_map[(ds, col, it)]
-
-        datasets_steps, manual_review = compile_issues_to_steps(suggestions, rules, sem_schema)
-        
-        # Check for missing required columns and append to manual_review
-        req_cols = rules.get("required_columns") or []
-        for rc in req_cols:
-            found = False
-            for ds_name in datasets_known:
-                cols_lower = {c.lower() for c in _dataset_columns(assessment, ds_name).keys()}
-                if str(rc).lower() in cols_lower:
-                    found = True
-                    break
-            if not found:
-                manual_review.append(
-                    enrich_manual_review_item({
-                        "dataset": "global",
-                        "column": rc,
-                        "issue_type": "missing_required_column",
-                        "severity": "high",
-                        "message": f"Required column '{rc}' not found in any assessed dataset.",
-                        "guidance": "Provide the column in the source data or remove/correct it in business rules.",
-                    })
-                )
-
-        # Tier 3B Governed Resolution via ResolutionOrchestrator
-        tier3_telemetry = {}
-        tier3_informational = []
-        try:
-            from agent.compiler.resolution import ResolutionOrchestrator
-            from agent.compiler.models.physical import ExecutionEngine
-            t_eng = ExecutionEngine.AZURE_SQL
-            if str(engine).lower() in ("pyspark", "spark"):
-                t_eng = ExecutionEngine.PYSPARK
-
-            res_orchestrator = ResolutionOrchestrator()
-            resolved_mr = (
-                rules.get("resolved_manual_review")
-                or (source_context.get("resolved_manual_review") if isinstance(source_context, dict) else None)
-                or self.kwargs.get("resolved_manual_review")
-            )
-            user_fb = (
-                rules.get("user_feedback_by_issue")
-                or (source_context.get("user_feedback_by_issue") if isinstance(source_context, dict) else None)
-                or self.kwargs.get("user_feedback_by_issue")
-            )
-            appr_recs = (
-                rules.get("cleaning_approval")
-                or (source_context.get("cleaning_approval") if isinstance(source_context, dict) else None)
-                or self.kwargs.get("cleaning_approval")
-            )
-
-            res_result = res_orchestrator.resolve_for_plan(
-                assessment=assessment,
-                suggestions=suggestions,
-                rules=rules,
-                semantic_schema=sem_schema,
-                target_engine=t_eng,
-                resolved_manual_review=resolved_mr,
-                user_feedback_by_issue=user_fb,
-                approval_records=appr_recs,
-            )
-
-            tier3_telemetry = res_result.telemetry
-            tier3_informational = res_result.informational_items
-
-            # 1. Promote auto-approved safe Tier 3 actions into datasets_steps
-            for p_step in res_result.promoted_steps:
-                p_ds = p_step.get("dataset")
-                if p_ds in datasets_steps:
-                    datasets_steps[p_ds].append(p_step)
-                elif p_ds:
-                    datasets_steps.setdefault(p_ds, []).append(p_step)
-
-            # 2. Reconcile manual_review queue:
-            # - Remove items resolved by Tier 3 actions
-            # - Enrich approval-required items with AI recommendations
-            resolved_issue_ids = set()
-            for s_act in res_result.structured_actions:
-                resolved_issue_ids.update(s_act.source_issue_ids)
-
-            orchestrated_mr_by_key = {}
-            for omr in res_result.manual_review:
-                k = (
-                    str(omr.get("dataset") or "").lower(),
-                    str(omr.get("column") or "").strip("[]").lower() if omr.get("column") else None,
-                    str(omr.get("issue_type") or "").lower(),
-                )
-                orchestrated_mr_by_key[k] = omr
-
-            info_keys = {
-                (
-                    str(inf.get("dataset") or "").lower(),
-                    str(inf.get("column") or "").strip("[]").lower() if inf.get("column") else None,
-                    str(inf.get("issue_type") or "").lower(),
-                )
-                for inf in tier3_informational
-            }
-
-            reconciled_manual_review = []
-            for mr_item in manual_review:
-                mr_ds = str(mr_item.get("dataset") or "").lower()
-                mr_col = str(mr_item.get("column") or "").strip("[]").lower() if mr_item.get("column") else None
-                mr_it = str(mr_item.get("issue_type") or "").lower()
-                mr_k = (mr_ds, mr_col, mr_it)
-                mr_id = str(mr_item.get("id") or mr_item.get("issue_id") or "")
-
-                # Skip if already resolved by auto-approved Tier 3 action
-                if mr_id in resolved_issue_ids or any(sid in resolved_issue_ids for sid in mr_item.get("source_issue_ids") or []):
-                    continue
-
-                # Mark non-blocking if informational observation
-                if mr_k in info_keys:
-                    mr_item["is_blocking"] = False
-                    mr_item["reason_code"] = "INFORMATIONAL"
-
-                # If orchestrated item exists, enrich with recommendation and approval metadata
-                if mr_k in orchestrated_mr_by_key:
-                    omr = orchestrated_mr_by_key[mr_k]
-                    if omr.get("llm_recommendation"):
-                        mr_item["llm_recommendation"] = omr["llm_recommendation"]
-                        mr_item["validation_status"] = omr.get("validation_status", "VALIDATED")
-                        mr_item["approval_required"] = omr.get("approval_required", True)
-                        mr_item["allowed_user_actions"] = omr.get("allowed_user_actions", [])
-                        if omr.get("resolution_options"):
-                            mr_item["resolution_options"] = omr["resolution_options"]
-                    if omr.get("reason_code"):
-                        mr_item["reason_code"] = omr["reason_code"]
-                    if "is_blocking" in omr:
-                        mr_item["is_blocking"] = omr["is_blocking"]
-
-                reconciled_manual_review.append(mr_item)
-
-            manual_review = reconciled_manual_review
-        except Exception as tier3_err:
-            logger.warning("ResolutionOrchestrator failed during planning, falling back to deterministic review: %s", tier3_err)
-
-        blocked = []
-
-        step_map = {}
-        for ds_name, steps in datasets_steps.items():
-            for st in steps:
-                col = st.get("column")
-                action = st.get("action")
-                it = st.get("source_issue_type")
-                sev = st.get("severity") or "medium"
-                row_est = st.get("estimated_affected_rows")
-                pri = _ACTION_PRIORITY.get(action, 80)
-                key = step_identity(ds_name, col, action)
-
-                sug_dict = {
-                    "dataset": ds_name,
-                    "column": col,
-                    "issue_type": it,
-                    "severity": sev,
-                    "message": st.get("message"),
-                    "row_count_affected": row_est,
-                }
-                col_stats = _col_stats_for_step(assessment, ds_name, col)
-                evidence = _build_evidence(sug_dict, col_stats, action, rules)
-                if st.get("llm_recommendation"):
-                    evidence["llm_recommendation"] = st["llm_recommendation"]
-
-                params = build_step_params(
-                    action,
-                    column=col,
-                    col_stats=col_stats,
-                    evidence=evidence,
-                    rules=rules,
-                    issue_type=it,
-                )
-
-                if st.get("params"):
-                    params.update(st["params"])
-
-                entry = {
-                    "step_id": st.get("step_id") or make_step_id(ds_name, col, action),
-                    "dataset": ds_name or "_global",
-                    "column": col,
-                    "action": action,
-                    "source_issue_type": it,
-                    "source_issue_types": st.get("source_issue_types") or ([it] if it else []),
-                    "source_issue_ids": st.get("source_issue_ids") or ([make_issue_id(ds_name, col, it)] if it else []),
-                    "severity": sev,
-                    "estimated_affected_rows": row_est,
-                    "priority": pri,
-                    "note": st.get("note"),
-                    "params": params,
-                    "evidence": evidence,
-                    "message": st.get("message"),
-                }
-                if st.get("llm_recommendation"):
-                    entry["llm_recommendation"] = st["llm_recommendation"]
-
-                if key in step_map:
-                    step_map[key] = merge_steps(step_map[key], entry)
-                else:
-                    step_map[key] = entry
-
-        # 1. Canonical Rules Intake
-        if canonical_registry and planning_input_mode != PlanningInputMode.LEGACY_NOTES_ONLY:
-            rule_dict = getattr(canonical_registry, "rules", None)
-            if isinstance(rule_dict, dict):
-                rules_iter = list(rule_dict.values())
-            elif isinstance(canonical_registry, (list, tuple)):
-                rules_iter = list(canonical_registry)
-            else:
-                rules_iter = []
-
-            for rule in rules_iter:
-                mat = getattr(rule, "material", None)
-                if not mat:
-                    continue
-                # CRITICAL INVARIANT: Condition-only assertions NEVER generate transformation steps!
-                act_enum = getattr(mat, "action", None)
-                act_str = str(getattr(act_enum, "value", act_enum) or "").lower()
-                if act_str in ("assert", "assertion"):
-                    continue
-
-                rule_id = str(getattr(rule, "rule_id", None) or getattr(rule, "id", "rule"))
-                params_dict = dict(getattr(mat, "normalized_parameters", {}) or {})
-                etl_action = str(params_dict.get("action") or act_str)
-                if etl_action == "replace":
-                    etl_action = "replace_values"
-                elif etl_action == "impute":
-                    etl_action = "fill_nulls_simple"
-                elif etl_action == "standardize":
-                    etl_action = str(params_dict.get("standardize_type") or "trim")
-                elif etl_action == "drop":
-                    etl_action = "drop_column"
-                elif etl_action == "quarantine":
-                    etl_action = "quarantine_missing_key"
-
-                scope = getattr(mat, "scope", None)
-                ds_target = getattr(scope, "dataset", None) if scope else "_global"
-                target_cols = getattr(scope, "columns", None) or ("all",)
-
-                target_datasets = [ds_target] if ds_target and ds_target != "_global" and ds_target in datasets_known else datasets_known
-
-                for ds in target_datasets:
-                    cols_to_process = [c for c in target_cols if c != "all"]
-                    if not cols_to_process:
-                        cols_to_process = list(_dataset_columns(assessment, ds).keys())
-
-                    for col in cols_to_process:
-                        if column_is_excluded(col, exclude):
-                            continue
-                        key = step_identity(ds, col, etl_action)
-                        cstats = _col_stats_for_step(assessment, ds, col)
-                        ev = {
-                            "why_this_action": f"Canonical rule {rule_id}: {getattr(rule, 'name', rule_id)}",
-                            "confidence": 1.0,
-                            "rule_id": rule_id,
-                        }
-                        can_entry = {
-                            "step_id": make_step_id(ds, col, etl_action),
-                            "dataset": ds,
-                            "column": col,
-                            "action": etl_action,
-                            "source_issue_type": "canonical_rule",
-                            "source_issue_types": ["canonical_rule"],
-                            "source_issue_ids": [f"rule_{rule_id}"],
-                            "rule_id": rule_id,
-                            "supporting_rule_ids": [rule_id],
-                            "severity": "medium",
-                            "priority": _ACTION_PRIORITY.get(etl_action, 50),
-                            "note": f"Canonical rule: {getattr(rule, 'name', rule_id)}",
-                            "params": build_step_params(etl_action, column=col, col_stats=cstats, evidence=ev, rules=rules),
-                            "evidence": ev,
-                            "message": f"Canonical rule {rule_id} enforced",
-                        }
-                        if key in step_map:
-                            step_map[key] = merge_steps(step_map[key], can_entry)
-                        else:
-                            step_map[key] = can_entry
-
-        # 2. Legacy Free-Text Notes Intake (bypassed in CANONICAL_ONLY mode)
-        legacy_shadow_steps: List[Dict[str, Any]] = []
-        if planning_input_mode != PlanningInputMode.CANONICAL_ONLY:
-            for ds, col, act, note in _steps_from_business_notes(rules, assessment):
-                if column_is_excluded(col, exclude):
-                    continue
-                key = step_identity(ds, col, act)
-                cstats = _col_stats_for_step(assessment, ds, col)
-                if ds and col:
-                    col_key = f"{ds}.{col}"
-                    desc = sem_schema.get(col_key)
-                    if desc:
-                        cstats = dict(cstats)
-                        cstats["semantic_type"] = desc.get("semantic_type")
-                        cstats["sub_type"] = desc.get("sub_type")
-                        cstats["pii_level"] = desc.get("pii_level")
-                        cstats["fill_strategy"] = desc.get("fill_strategy")
-                ev = {"why_this_action": note, "confidence": 0.9}
-                b_entry = {
-                    "step_id": make_step_id(ds, col, act),
-                    "dataset": ds or "_global",
-                    "column": col,
-                    "action": act,
-                    "source_issue_type": "business_notes",
-                    "source_issue_types": ["business_notes"],
-                    "source_issue_ids": [make_issue_id(ds, col, "business_notes")],
-                    "severity": "medium",
-                    "priority": _ACTION_PRIORITY.get(act, 56),
-                    "note": note,
-                    "params": build_step_params(act, column=col, col_stats=cstats, evidence=ev, rules=rules),
-                    "evidence": ev,
-                    "message": note,
-                }
-                if mode_meta.legacy_shadow_only:
-                    legacy_shadow_steps.append(b_entry)
-                else:
-                    if key in step_map:
-                        step_map[key] = merge_steps(step_map[key], b_entry)
-                    else:
-                        step_map[key] = b_entry
-
-        # Per-dataset ordered steps
-        datasets_out: Dict[str, Any] = {ds: [] for ds in datasets_known}
-        global_steps: List[Dict[str, Any]] = []
-
-        for key, st in step_map.items():
-            ds_name = st.get("dataset")
-            if not ds_name or ds_name == "_global":
-                global_steps.append(
-                    {
-                        "step_id": st.get("step_id") or make_step_id("_global", st.get("column"), st["action"]),
-                        "order": st["priority"],
-                        "column": st.get("column"),
-                        "action": st["action"],
-                        "estimated_affected_rows": st.get("estimated_affected_rows"),
-                        "note": st.get("note"),
-                    }
-                )
-                continue
-            datasets_out.setdefault(ds_name, []).append(st)
-
-        rel_plan = build_relationship_plan(assessment)
-        if rules.get("never_drop_rows"):
-            for j in rel_plan.get("joins") or []:
-                if str(j.get("join_type") or "").lower() == "inner":
-                    j["join_type"] = "left"
-                    j["note"] = (
-                        (j.get("note") or "")
-                        + " Upgraded inner→left: never_drop_rows business rule."
-                    ).strip()
-        for rstep in rel_plan.get("relationship_steps") or []:
-            act = str(rstep.get("action") or "")
-            if act == "validate_referential_integrity_or_stage":
-                ds = rstep.get("dataset") or "_global"
-                col = rstep.get("column")
-                key = step_identity(ds, col, act)
-                ri_ev = rstep.get("evidence") or {}
-                r_entry = {
-                    "step_id": make_step_id(ds, col, act),
-                    "dataset": ds,
-                    "column": col,
-                    "action": act,
-                    "source_issue_type": "referential_integrity",
-                    "source_issue_types": ["referential_integrity"],
-                    "source_issue_ids": [make_issue_id(ds, col, "referential_integrity")],
-                    "severity": "high",
-                    "estimated_affected_rows": rstep.get("estimated_affected_rows"),
-                    "priority": _ACTION_PRIORITY.get(act, 300),
-                    "note": f"FK to {rstep.get('related_dataset')}.{rstep.get('related_column')}",
-                    "params": build_ri_step_params(rstep, rules),
-                    "evidence": ri_ev,
-                    "message": ri_ev.get("why_this_action"),
-                }
-                if key in step_map:
-                    step_map[key] = merge_steps(step_map[key], r_entry)
-                else:
-                    step_map[key] = r_entry
-                    if ds and ds != "_global":
-                        datasets_out.setdefault(ds, []).append(step_map[key])
-
-        global_steps.sort(key=lambda x: x.get("order") or 0)
-        for i, st in enumerate(global_steps, start=1):
-            st["order"] = i
-
-        for ds_name, steps in datasets_out.items():
-            # ✅ CRITICAL FIX: Supplement steps with DQ issues from assessment BEFORE finalization
-            # This ensures ALL assessment findings are translated to plan steps at planning time
-            from agent.etl_pipeline.sql_codegen import _supplement_steps_with_dq_issues
-            ds_info = (assessment.get("datasets") or {}).get(ds_name) or {}
-            if not ds_info:
-                ds_clean = ds_name.replace("dbo.", "").strip()
-                ds_info = (assessment.get("datasets") or {}).get(ds_clean) or {}
-            cols_info = ds_info.get("columns") or {}
-            known_cols = set(c.strip("[]").lower() for c in cols_info.keys())
-
-            # Ensure plan dictionary exists before passing to _supplement
-            temp_plan = {"datasets": datasets_out, "manual_review": manual_review}
-            steps = _supplement_steps_with_dq_issues(steps, ds_name, assessment, temp_plan, known_cols=known_cols)
-
-            # Deduplicate steps using merge_steps if any duplicate identities still exist
-            step_identity_map = {}
-            for st in steps:
-                if not st.get("dataset"):
-                    st["dataset"] = ds_name
-                if not st.get("step_id"):
-                    st["step_id"] = make_step_id(ds_name, st.get("column"), st.get("action"))
-                s_ident = step_identity(ds_name, st.get("column"), st.get("action"))
-                if s_ident in step_identity_map:
-                    merged_st = merge_steps(step_identity_map[s_ident], st)
-                    merged_st["dataset"] = ds_name
-                    merged_st["step_id"] = make_step_id(ds_name, merged_st.get("column"), merged_st.get("action"))
-                    step_identity_map[s_ident] = merged_st
-                else:
-                    step_identity_map[s_ident] = st
-            steps = list(step_identity_map.values())
-            # Ensure all steps have priority field (default to 50 for supplemented steps)
-            for st in steps:
-                if "priority" not in st:
-                    st["priority"] = 50
-            steps.sort(key=lambda x: (x.get("priority", 50), str(x.get("column") or "")))
-            enriched_steps: List[Dict[str, Any]] = []
-            for i, st in enumerate(steps, start=1):
-                st["order"] = i
-                col = st.get("column")
-                cstats = _col_stats_for_step(assessment, ds_name, col)
-                null_pct = None
-                if cstats.get("null_percentage") is not None:
-                    try:
-                        null_pct = float(cstats["null_percentage"]) * 100.0
-                    except (TypeError, ValueError):
-                        pass
-                res = classify_step_bucket(
-                    str(st.get("action") or ""),
-                    severity=str(st.get("severity") or "medium"),
-                    null_percentage=null_pct,
-                    never_drop_rows=bool(rules.get("never_drop_rows")),
-                )
-                st["bucket"] = res["bucket"]
-                st["phase"] = res["phase"]
-                enriched_steps.append(st)
-            datasets_out[ds_name] = finalize_dataset_steps(enriched_steps, assessment, rules)
-
-        rel_plan = enrich_relationship_plan_joins(rel_plan, rules)
-
-        engine_rec = _recommend_engine(source_context, assessment)
-        if rel_plan.get("join_count", 0) > 0 and engine_rec.get("engine") not in ("pyspark", "adf"):
-            ds_count = len(datasets_known)
-            if ds_count > 1:
-                engine_rec = dict(engine_rec)
-                engine_rec["engine"] = "pyspark"
-                engine_rec["scope"] = "plan"
-                engine_rec["dataset_count"] = ds_count
-                engine_rec["relationship_count"] = rel_plan.get("join_count", 0)
-                engine_rec["reason"] = (
-                    f"Multi-dataset ({ds_count} sources, {rel_plan['join_count']} join(s) detected) — "
-                    f"PySpark required for distributed join partitioning."
-                )
-
-        # Append DQ warning blocker if failed
-        if not dq_gate_summary["passed"]:
-            for blocking_ds in dq_gate_summary["blocking_issues"]:
-                ds_name = blocking_ds["dataset"]
-                score_str = f" ({blocking_ds['score']})" if blocking_ds.get("score") is not None else ""
-                manual_review.append(
-                    enrich_manual_review_item({
-                        "dataset": ds_name,
-                        "column": None,
-                        "issue_type": "dq_gate_warning",
-                        "severity": "high",
-                        "message": f"Data quality score{score_str} is below threshold ({threshold}). Phase 2 transformations are blocked for dataset '{ds_name}'. Please resolve errors in Phase 1 (cleanse) first.",
-                        "guidance": "Resolve data quality issues or lower/override the threshold in business rules.",
-                    })
-                )
-
-        # Build coverage report
-        def _clean(val: Any, default: str = "") -> str:
-            if val is None or str(val).strip() == "":
-                return default
-            return str(val).strip()
-
-        all_issues = set()
-        for s in suggestions:
-            ds = _clean(s.get("dataset"), "_global")
-            col = _clean(s.get("column"), "*")
-            it = _clean(s.get("issue_type"))
-            all_issues.add((ds, col, it))
-
-        covered_by_steps = set()
-        for ds_name, steps in datasets_out.items():
-            for st in steps:
-                col = _clean(st.get("column"), "*")
-                it = _clean(st.get("source_issue_type"))
-                covered_by_steps.add((_clean(ds_name), col, it))
-
-        in_manual = set()
-        for m in manual_review:
-            ds = _clean(m.get("dataset"), "_global")
-            col = _clean(m.get("column"), "*")
-            it = _clean(m.get("issue_type"))
-            in_manual.add((ds, col, it))
-
-        covered = covered_by_steps | in_manual
-        uncovered = all_issues - covered
-
-        tier_counts = {"standard": 0, "complex": 0, "non_fixable": 0}
-        for m in manual_review:
-            tier = m.get("risk_tier", "standard")
-            tier_counts[tier] = tier_counts.get(tier, 0) + 1
-
-        coverage_summary = {
-            "total_issues": len(all_issues),
-            "covered_by_steps": len(covered_by_steps),
-            "manual_review_total": len(in_manual),
-            "manual_review_by_tier": tier_counts,
-            "uncovered": len(uncovered),
-            "uncovered_items": [{"dataset": d, "column": c, "issue_type": i} for d, c, i in uncovered],
-        }
-
-        logger.info(
-            "Plan coverage: total=%d, steps=%d, manual_total=%d, by_tier=%s, uncovered=%d",
-            coverage_summary["total_issues"],
-            coverage_summary["covered_by_steps"],
-            coverage_summary["manual_review_total"],
-            str(coverage_summary["manual_review_by_tier"]),
-            coverage_summary["uncovered"],
-        )
-
+        # Initialize plan
+        plan_id = f"plan_{uuid.uuid4().hex[:8]}"
         plan = {
-            "plan_version": 1,
-            "plan_id": _plan_id(),
-            "engine": (engine or "python").lower(),
-            "generation_mode": generation_mode or "full",
-            "created_at": time.time(),
-            "assessment_signature": _assessment_signature(assessment),
-            "business_rules": rules,
-            "datasets": {k: {"steps": v} for k, v in datasets_out.items()},
-            "global_steps": global_steps,
-            "manual_review": manual_review,
-            "blocked": blocked,
-            "coverage": coverage_summary,
-            "invariants": build_plan_invariants(rules),
-            "suggestions_summary": sug_pkg.get("summary") or {},
-            "engine_recommendation": engine_rec,
-            "relationships": rel_plan,
-            "semantic_schema": {k: v for k, v in sem_schema.items()},
-            "dq_gate_summary": dq_gate_summary,
-            "build_warnings": self.build_warnings,
-            "tier3_telemetry": tier3_telemetry,
-            "tier3_summary": {
-                "canonical_unresolved_count": tier3_telemetry.get("unresolved_received", 0),
-                "eligible_count": tier3_telemetry.get("eligible", 0),
-                "model_call_count": tier3_telemetry.get("model_called", 0),
-                "cache_hit_count": tier3_telemetry.get("cache_hit", 0),
-                "validated_count": tier3_telemetry.get("validated", 0),
-                "auto_approved_count": tier3_telemetry.get("auto_approved", 0),
-                "approval_required_count": tier3_telemetry.get("approval_required", 0),
-                "invalid_count": tier3_telemetry.get("validation_failed", 0),
+            "plan_id": plan_id,
+            "assessment_signature": "",
+            "datasets": {},
+            "cross_dataset_steps": [],
+            "manual_review": [],
+            "cleaning_plan": None,
+            "coverage_report": None,
+            "reconciliation": None,
+            "engine": "sql",
+            "generation_mode": "full",
+            "status": "draft",
+            "business_rules": {},
+            "blocked": False,
+            "blocking_reasons": [],
+            "metadata": {
+                "created_at": datetime.utcnow().isoformat(),
+                "engine": "sql",
             },
-            "informational_observations": tier3_informational,
-        }
-        # Provenance signature block
-        prov_data = {
-            "business_rules": rules,
-            "semantic_schema": sem_schema,
-            "assessment_signature": plan.get("assessment_signature")
-        }
-        try:
-            prov_blob = json.dumps(prov_data, sort_keys=True, default=str)
-        except Exception:
-            prov_blob = str(prov_data)
-        plan["provenance_signature"] = "sha256:" + hashlib.sha256(prov_blob.encode("utf-8", errors="ignore")).hexdigest()
-
-        # Calculate dataset-level readiness scores scorecard
-        readiness_scorecard = {}
-        total_rows = 0
-        weighted_score_sum = 0.0
-        
-        from agent.etl_pipeline.dq_gate import calculate_dataset_dq_score
-        for ds_name in datasets_known:
-            row_count = float((assessment.get("datasets") or {}).get(ds_name, {}).get("row_count") or 1000)
-            score_res = calculate_dataset_dq_score(assessment, ds_name)
-            score = round(score_res.get("score") or 0.0, 1)
-            
-            # Determine readiness status
-            has_high_gating = False
-            for mr in plan.get("manual_review", []):
-                if mr.get("dataset") == ds_name and mr.get("severity") == "high":
-                    has_high_gating = True
-                    break
-            
-            if score < 70.0 or has_high_gating:
-                readiness = "NEEDS_WORK"
-                reason = "Required datasets include gating HIGH failures" if has_high_gating else f"DQ score ({score}) below threshold (70.0)"
-            elif score < 90.0:
-                readiness = "READY_WITH_WARNINGS"
-                reason = "No HIGH findings, but extensive MEDIUM findings"
-            else:
-                readiness = "READY"
-                reason = "Dataset meets quality standards"
-                
-            readiness_scorecard[ds_name] = {
-                "score": score,
-                "readiness": readiness,
-                "primary_reason": reason,
-                "row_count": row_count
-            }
-            total_rows += row_count
-            weighted_score_sum += score * row_count
-            
-        overall_score = round(weighted_score_sum / max(total_rows, 1), 1)
-        any_needs_work = any(card["readiness"] == "NEEDS_WORK" for card in readiness_scorecard.values())
-        overall_readiness = "NEEDS_WORK" if any_needs_work else ("READY_WITH_WARNINGS" if any(card["readiness"] == "READY_WITH_WARNINGS" for card in readiness_scorecard.values()) else "READY")
-        
-        readiness_scorecard["Overall"] = {
-            "score": overall_score,
-            "readiness": overall_readiness,
-            "primary_reason": "Required datasets include gating HIGH failures" if any_needs_work else "All datasets ready or with warnings",
-            "row_count": total_rows
         }
         
-        plan["readiness_scorecard"] = readiness_scorecard
+        # Process per-dataset plans
+        total_issues = 0
+        covered_issues = 0
         
-        # Calculate projected column-level readiness certificates and Phase 2 gates
-        try:
-            from agent.etl_pipeline.readiness_engine import (
-                build_projected_column_certificates,
-                evaluate_all_operation_gates
+        for ds_name, profile in dataset_profiles.items():
+            ds_steps, ds_covered, ds_total = await self._plan_dataset(
+                ds_name, profile, assessment_result, datasets, plan
             )
-            approved_waivers = rules.get("approved_waivers") or []
-            projected_certs = build_projected_column_certificates(plan, assessment)
-            plan["projected_column_readiness"] = projected_certs
-            
-            joins_list = (plan.get("relationships") or {}).get("joins") or []
-            projected_gates = evaluate_all_operation_gates(projected_certs, joins_list, approved_waivers)
-            plan["projected_phase2_gates"] = projected_gates
-            
-            blocked_gates = [g for g in projected_gates if g["gate_status"] == "BLOCKED"]
-            plan["overall_gate_status"] = "BLOCKED" if blocked_gates else "READY"
-        except Exception as e:
-            self.build_warnings.append(f"Failed to calculate projected column readiness/gates: {e}")
-        # 4.4 Resolution errors for auto_resolve_pending
-        if rules.get("auto_resolve_pending") and plan.get("manual_review"):
-            try:
-                from agent.etl_pipeline.manual_review_promote import apply_manual_resolutions
-                resolutions = []
-                for m in plan["manual_review"]:
-                    resolutions.append({
-                        "item_id": m.get("id"),
-                        "resolution_id": m.get("default_resolution")
-                    })
-                plan, _ = apply_manual_resolutions(plan, resolutions, business_rules=rules, assessment=assessment)
-            except Exception as e:
-                self.build_warnings.append(f"auto_resolve_pending failed: {e}")
-
-        # Baseline steps for zero-issue columns (B1)
-        for ds_name, ds_block in plan.get("datasets", {}).items():
-            existing_cols = {s.get("column") for s in (ds_block.get("steps") or []) if s.get("column")}
-            cols_info = _dataset_columns(assessment, ds_name)
-            for col_name, col_meta in cols_info.items():
-                if col_name in existing_cols:
-                    continue
-                dtype = str(col_meta.get("dtype") or "").lower()
-                steps_list = ds_block.setdefault("steps", [])
-                
-                if any(x in dtype for x in ("varchar","nvarchar","char","text","string")):
-                    max_order = max((s.get("order", 0) for s in steps_list), default=0)
-                    steps_list.append({
-                        "step_id": make_step_id(ds_name, col_name, "trim"),
-                        "dataset": ds_name,
-                        "column": col_name,
-                        "action": "trim",
-                        "auto_fixable": True,
-                        "params": {},
-                        "evidence": {"why_this_action": "Baseline: trim whitespace on string column", "confidence": 0.95},
-                        "order": max_order + 1,
-                        "priority": 5,
-                        "bucket": "cleanse",
-                        "phase": "cleanse",
-                        "source_issue_type": "baseline_string_trim",
-                        "source_issue_types": ["baseline_string_trim"],
-                        "source_issue_ids": [make_issue_id(ds_name, col_name, "baseline_string_trim")],
-                        "severity": "low",
-                        "note": "Baseline B1: trim string column with no detected issues",
-                    })
-
-                max_order = max((s.get("order", 0) for s in steps_list), default=0)
-                steps_list.append({
-                    "step_id": make_step_id(ds_name, col_name, "cast_type"),
-                    "dataset": ds_name,
-                    "column": col_name,
-                    "action": "cast_type",
-                    "auto_fixable": True,
-                    "params": {"target_type": "string", "preserve_raw": True},
-                    "evidence": {"why_this_action": "Baseline: enforce schema type on column", "confidence": 0.90},
-                    "order": max_order + 1,
-                    "priority": 35,
-                    "bucket": "cleanse",
-                    "phase": "cleanse",
-                    "source_issue_type": "baseline_type_enforcement",
-                    "source_issue_types": ["baseline_type_enforcement"],
-                    "source_issue_ids": [make_issue_id(ds_name, col_name, "baseline_type_enforcement")],
-                    "severity": "low",
-                    "note": "Baseline B1: cast_type for column with no detected issues",
-                })
-
-        # Consolidate and freeze step specifications (Phase 1 PlanSpec Contract)
-        try:
-            from agent.etl_pipeline.llm_codegen import _consolidate_and_filter_datasets
-            source_metadata_filt = {}
-            sem_schema_filt = plan.get("semantic_schema") or {}
-            for ds_n, meta in (assessment.get("datasets") or {}).items():
-                if not isinstance(meta, dict):
-                    continue
-                cols = meta.get("columns") or {}
-                source_metadata_filt[ds_n] = {
-                    "row_count": meta.get("row_count"),
-                    "columns": {
-                        col: {
-                            "dtype": cmeta.get("dtype") or cmeta.get("inferred_type"),
-                            "null_percentage": cmeta.get("null_percentage"),
-                            "semantic_type": (sem_schema_filt.get(f"{ds_n}.{col}") or {}).get("semantic_type") or cmeta.get("semantic_type", "unknown"),
-                            "sub_type": (sem_schema_filt.get(f"{ds_n}.{col}") or {}).get("sub_type") or cmeta.get("sub_type", "unknown"),
-                            "pii_level": (sem_schema_filt.get(f"{ds_n}.{col}") or {}).get("pii_level") or "none",
-                        }
-                        for col, cmeta in cols.items()
-                        if isinstance(cmeta, dict)
-                    },
-                }
-            strict = bool(
-                plan.get("strict_mode")
-                or plan.get("settings", {}).get("strict_mode", False)
-                or (plan.get("business_rules") or {}).get("strict_mode", False)
-            )
-            plan["datasets"] = _consolidate_and_filter_datasets(
-                plan.get("datasets") or {}, source_metadata_filt, sem_schema_filt, strict_mode=strict
-            )
-            from agent.etl_pipeline.manual_review_promote import canonicalize_promoted_plan
-            # Build a normalised assessment view for canonicalization so that
-            # dataset name differences (e.g. dbo.Table vs Table) don't lose dtype info.
-            normalised_assessment = dict(assessment)
-            normalised_datasets = {}
-            for ds_n, ds_meta_filt in source_metadata_filt.items():
-                orig_meta = (assessment.get("datasets") or {}).get(ds_n) or {}
-                merged_meta = dict(orig_meta)
-                merged_meta["columns"] = {
-                    col: {**((orig_meta.get("columns") or {}).get(col) or {}), **ds_meta_filt.get("columns", {}).get(col, {})}
-                    for col in ds_meta_filt.get("columns", {})
-                }
-                normalised_datasets[ds_n] = merged_meta
-            # Fall back to original dataset entries not present in the filtered view
-            for ds_n, ds_meta in (assessment.get("datasets") or {}).items():
-                if ds_n not in normalised_datasets:
-                    normalised_datasets[ds_n] = ds_meta
-            normalised_assessment["datasets"] = normalised_datasets
-            plan = canonicalize_promoted_plan(plan, normalised_assessment, rules)
-        except Exception as e:
-            logger.warning(f"Plan step consolidation/canonicalization during build_etl_plan skipped: {e}")
-
-        plan["planning_input_mode"] = planning_input_mode.value if isinstance(planning_input_mode, PlanningInputMode) else str(planning_input_mode)
-        plan["planning_mode_metadata"] = mode_meta.model_dump()
-        if legacy_shadow_steps:
-            plan["legacy_shadow_steps"] = legacy_shadow_steps
+            plan["datasets"][ds_name] = {"steps": ds_steps, "complexity": "low"}
+            total_issues += ds_total
+            covered_issues += ds_covered
+        
+        # Generate cross-dataset steps from relationships
+        cross_steps = await self._plan_cross_dataset(assessment_result, dataset_profiles, plan)
+        plan["cross_dataset_steps"] = cross_steps
+        
+        # Generate manual review items
+        manual_review = await self._generate_review_items(assessment_result, dataset_profiles, plan)
+        plan["manual_review"] = manual_review
+        
+        # Create cleaning plan
+        plan["cleaning_plan"] = await self._create_cleaning_plan(assessment_result, dataset_profiles, plan)
+        
+        # Create coverage report
+        plan["coverage_report"] = await self._create_coverage_report(assessment_result, dataset_profiles, plan)
+        
+        # Create reconciliation
+        plan["reconciliation"] = await self._create_reconciliation(assessment_result, dataset_profiles, plan)
+        
+        # Set status based on coverage
+        coverage_pct = plan["coverage_report"]["coverage_pct"] if plan["coverage_report"] else 1.0
+        if coverage_pct >= 0.8:
+            plan["status"] = "approved"
+        elif coverage_pct >= 0.5:
+            plan["status"] = "in_review"
+        else:
+            plan["status"] = "blocked"
+        
+        # Add assessment signature
+        if isinstance(assessment_result, dict) and assessment_result.get("signature"):
+            plan["assessment_signature"] = assessment_result["signature"]
+        
+        logger.info(f"Plan built: {plan_id}, coverage: {coverage_pct:.1f}%, issues: {total_issues}")
         return plan
-
-
-
-def build_etl_plan(
-    assessment: Dict[str, Any],
-    business_rules_raw: Any,
-    *,
-    engine: str = "python",
-    source_context: Optional[Dict[str, Any]] = None,
-    generation_mode: Optional[str] = "full",
-    dq_recommendations: Optional[Dict[str, Any]] = None,
-    semantic_context: Optional[Dict[str, Any]] = None,
-    planning_input_mode: Optional[PlanningInputMode | str] = None,
-    canonical_registry: Optional[Any] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    """
-    Build versioned ETL plan JSON from assessment + normalized business rules.
-    """
-    with _PLANNER_LOCK:
-        builder = PlanBuilder(
-            assessment, business_rules_raw,
-            engine=engine,
-            source_context=source_context,
-            generation_mode=generation_mode,
-            dq_recommendations=dq_recommendations,
-            semantic_context=semantic_context,
-            planning_input_mode=planning_input_mode,
-            canonical_registry=canonical_registry,
-            **kwargs,
-        )
-        return builder.build()
-
-
-def get_unacknowledged_blockers(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Returns list of manual_review items that MUST be resolved before ETL generates.
-    complex and non_fixable items with status=pending are blockers.
-    """
-    blockers = []
-    for item in (plan.get("manual_review") or []):
-        tier = item.get("risk_tier", "standard")
-        status = item.get("status", "pending")
-        if tier in ("complex", "non_fixable") and status == "pending":
-            blockers.append({
-                "id": item.get("id"),
-                "dataset": item.get("dataset"),
-                "column": item.get("column"),
-                "issue_type": item.get("issue_type"),
-                "risk_tier": tier,
-                "message": item.get("message"),
+    
+    def _plan_dataset(self, ds_name, profile, assessment_result, datasets, plan):
+        """Plan transformations for a single dataset."""
+        steps = []
+        covered = 0
+        total = len(assessment_result.get("quality_issues", [])) if assessment_result else 0
+        
+        if total == 0:
+            steps.append({
+                "step_id": f"confirm_clean_{ds_name}",
+                "action": "noop",
+                "reason": "No quality issues detected",
+                "confidence": 1.0,
+                "metadata": {"source": "assessment"}
             })
-    return blockers
+            return steps, 0, 0
+        
+        # Group issues by category
+        issue_groups = {}
+        for issue in assessment_result.get("quality_issues", []):
+            cat = issue.get("category", "unknown")
+            if cat not in issue_groups:
+                issue_groups[cat] = []
+            issue_groups[cat].append(issue)
+        
+        # Process each group
+        for category, issues in issue_groups.items():
+            for issue in issues:
+                step = self._issue_to_step(issue, ds_name, profile)
+                if step and step.get("confidence", 0) >= self.min_confidence:
+                    steps.append(step)
+                    covered += 1
+        
+        # Add incremental processing if configured
+        if self._should_use_incremental(ds_name, profile):
+            steps.append({
+                "step_id": f"incremental_{ds_name}",
+                "action": "incremental_read",
+                "reason": "Enable incremental processing",
+                "confidence": 0.9,
+                "metadata": {"source": "incremental_config"}
+            })
+        
+        # Add semantic enrichment step if needed
+        if self._needs_semantic_enrichment(assessment_result, profile):
+            steps.append({
+                "step_id": f"semantic_enrich_{ds_name}",
+                "action": "refine_semantic_type",
+                "reason": "Enrich semantic types based on assessment",
+                "confidence": 0.7,
+                "metadata": {"source": "semantic"}
+            })
+        
+        return steps, covered, total
+    
+    def _issue_to_step(self, issue, ds_name, profile):
+        """Convert a quality issue to a plan step."""
+        col = issue.get("column")
+        itype = str(issue.get("issue_type", "")).lower()
+        sev = str(issue.get("severity", "low")).lower()
+        
+        if not col:
+            return None
+        
+        # Map issue type to action
+        action_map = {
+            "missing_values": "fill_nulls_simple",
+            "null_exceeded": "fill_nulls_simple",
+            "invalid_email": "sanitize_email",
+            "invalid_phone": "normalize_phone",
+            "format_mismatch": "lowercase",
+            "date_format_inconsistency": "parse_dates",
+            "email_format_inconsistency": "sanitize_email",
+            "numeric_outliers_iqr": "range_clip",
+            "negative_values": "range_clip",
+            "implausible_age": "range_clip",
+            "outlier": "range_clip",
+            "business_rule": "replace_values",
+            "replace_sentinel": "replace_sentinel_values",
+            "placeholder_detected": "replace_sentinel_values",
+            "type_mismatch": "cast_type",
+            "coerce_numeric": "coerce_numeric",
+            "impossible_date": "parse_dates",
+            "date_format": "parse_dates",
+            "invalid_value": "validate_value",
+            "missing_value": "fill_nulls_simple",
+        }
+        
+        action = action_map.get(itype)
+        if not action:
+            if "null" in itype:
+                action = "fill_nulls_simple"
+            elif "price" in ds_name.lower() and "negative" in itype:
+                action = "range_clip"
+            else:
+                action = "review_manually"
+        
+        # Build params
+        params = {
+            "issue_id": issue.get("id", ""),
+            "category": itype,
+            "severity": sev,
+            "column": col,
+            "dataset": ds_name,
+        }
+        
+        if action == "fill_nulls_simple":
+            evidence = issue.get("evidence", {})
+            fill_val = evidence.get("recommended_fill")
+            if fill_val:
+                params["fill_value"] = fill_val
+            else:
+                dtype = profile.get(col, {}).get("dtype", "string") if profile else "string"
+                if "int" in str(dtype).lower():
+                    params["fill_strategy"] = "mean"
+                elif "float" in str(dtype).lower():
+                    params["fill_strategy"] = "mean"
+                else:
+                    params["fill_strategy"] = "unknown"
+        
+        elif action == "range_clip":
+            params["lower_bound"] = 0.0
+            params["min_value"] = 0.0
+            if any(k in ds_name.lower() for k in ("price", "cost", "revenue")):
+                params["lower_bound"] = 0.0
+                params["min_value"] = 0.0
+        
+        elif action == "sanitize_email":
+            params["target_format"] = "canonical"
+        
+        elif action == "normalize_phone":
+            params["strategy"] = "digits"
+        
+        elif action == "cast_type":
+            semantic = profile.get(col, {}).get("semantic_type", "") if profile else ""
+            if semantic and "date" in semantic.lower():
+                params["target_type"] = "DATE"
+            elif semantic and "id" in semantic.lower():
+                params["target_type"] = "BIGINT"
+            elif semantic and "float" in semantic.lower():
+                params["target_type"] = "DECIMAL(18, 2)"
+            else:
+                params["target_type"] = "NVARCHAR(256)"
+        
+        elif action == "coerce_numeric":
+            col_lower = col.lower()
+            is_price = any(k in col_lower for k in ("price", "cost", "amount", "rate", "total", "balance", "tax"))
+            params["cast_target"] = "DECIMAL(18, 2)" if is_price else "BIGINT"
+        
+        elif action == "parse_dates":
+            params["filter_impossible"] = True
+        
+        elif action == "review_manually":
+            # Generate manual review item
+            pass
+        
+        step = {
+            "step_id": f"fix_{itype}_{ds_name}_{col.strip('[]').lower()}",
+            "action": action,
+            "reason": issue.get("message", f"Fix {itype} on {col}"),
+            "confidence": 0.8,
+            "params": params,
+            "source_issue_type": itype,
+            "source_issue_id": issue.get("id"),
+            "evidence_id": issue.get("id"),
+        }
+        
+        return step
+    
+    def _should_use_incremental(self, ds_name, ds_data):
+        """Determine if incremental processing should be used."""
+        row_count = ds_data.get("row_count", 0) if ds_data else 0
+        if row_count > 10000:
+            return True
+        
+        columns = ds_data.get("columns", {}) if ds_data else {}
+        if any(c.get("name") in ("watermark", "last_modified") for c in columns.values()):
+            return True
+        
+        return False
+    
+    def _needs_semantic_enrichment(self, assessment_result, ds_name):
+        """Determine if semantic enrichment is needed."""
+        ds_info = assessment_result.get("datasets", {}).get(ds_name) if assessment_result else {}
+        if ds_info:
+            columns = ds_info.get("columns", {})
+            unknown_count = sum(1 for c in columns.values() if str(c.get("semantic_type", "")) == "unknown")
+            total_cols = len(columns)
+            if total_cols > 0 and unknown_count / total_cols > 0.3:
+                return True
+        return False
+    
+    async def _plan_cross_dataset(self, assessment_result, dataset_profiles, plan):
+        """Generate cross-dataset steps from relationships."""
+        steps = []
+        relationships = assessment_result.get("relationships", []) if assessment_result else []
+        
+        for rel in relationships:
+            rel_str = str(rel).lower()
+            step = {
+                "step_id": f"validate_rel_{uuid.uuid4().hex[:4]}",
+                "action": "validate_relationship",
+                "datasets": [rel.get("parent_dataset", ""), rel.get("child_dataset", "")],
+                "join_keys": {
+                    rel.get("parent_dataset", ""): rel.get("parent_column", ""),
+                    rel.get("child_dataset", ""): rel.get("child_column", ""),
+                },
+                "order": 1,
+                "params": {
+                    "relationship_id": rel.get("id", ""),
+                    "confidence": rel.get("confidence", 0.5),
+                },
+            }
+            steps.append(step)
+        
+        datasets = list(dataset_profiles.keys()) if dataset_profiles else []
+        if len(datasets) > 1:
+            steps.append({
+                "step_id": "cross_dataset_aggregation",
+                "action": "cross_dataset_agg",
+                "datasets": datasets,
+                "order": 1,
+                "params": {"type": "cross_dataset_summary"},
+            })
+        
+        return steps
+    
+    async def _generate_review_items(self, assessment_result, dataset_profiles, plan):
+        """Generate manual review items."""
+        items = []
+        dq_issues = assessment_result.get("data_quality_issues", {}).get("datasets", {}) if assessment_result else {}
+        
+        for issue in dq_issues.values():
+            for issue_item in issue.get("issues", []):
+                sev = str(issue_item.get("severity", "low")).lower()
+                if sev in ["critical", "high"]:
+                    col = issue_item.get("column", "")
+                    itype = str(issue_item.get("issue_type", "")).lower()
+                    msg = issue_item.get("message", "")
+                    items.append({
+                        "id": f"review_{issue_item.get('id')}",
+                        "type": "blocker",
+                        "dataset": issue_item.get("dataset_name", ""),
+                        "column": col,
+                        "issue_type": itype,
+                        "severity": sev,
+                        "message": msg,
+                        "guidance": f"Review {itype} on {col}",
+                        "resolution_options": [
+                            {"label": "Auto-fix", "action": "auto"},
+                            {"label": "Manual fix", "action": "manual"},
+                            {"label": "Skip", "action": "skip"},
+                        ],
+                    })
+        
+        for ds_name, ds_plan in plan.get("datasets", {}).items():
+            for step in ds_plan.get("steps", []):
+                if step.get("action") in ["drop_table", "drop_column", "purge_data"]:
+                    items.append({
+                        "id": f"destructive_{step.get('step_id')}",
+                        "type": "destructive_operation",
+                        "dataset": ds_name,
+                        "column": step.get("column"),
+                        "issue_type": "destructive_operation",
+                        "severity": "high",
+                        "message": f"Step {step.get('step_id')} performs destructive operation",
+                        "guidance": "Review before executing destructive operation",
+                        "resolution_options": [
+                            {"label": "Approve", "action": "approve"},
+                            {"label": "Reject", "action": "reject"},
+                        ],
+                    })
+        
+        return items
+    
+    async def _create_cleaning_plan(self, assessment_result, dataset_profiles, plan):
+        """Create cleaning plan from assessment."""
+        if not assessment_result or not assessment_result.get("data_quality_issues"):
+            return None
+        
+        cleaning_mode = "cleanse_with_audit"
+        business_keys = {}
+        duplicate_policies = {}
+        output_contracts = {}
+        
+        for ds_name, ds_data in dataset_profiles.items():
+            business_keys[ds_name] = []
+            duplicate_policies[ds_name] = {}
+            
+            dq_issues = assessment_result.get("data_quality_issues", {}).get("datasets", {}).get(ds_name, {}).get("issues", [])
+            
+            for issue in dq_issues:
+                col = issue.get("column")
+                if col:
+                    itype = str(issue.get("issue_type", "")).lower()
+                    if itype in ["duplicate", "exact_duplicate_rows", "business_key_duplicate"]:
+                        if col not in business_keys[ds_name]:
+                            business_keys[ds_name].append(col)
+                    
+                    if itype == "duplicate":
+                        duplicate_policies[ds_name][col] = {
+                            "policy": "deduplicate",
+                            "strategy": "keep_last",
+                        }
+                    
+                    if itype in ["invalid_email", "format_mismatch", "date_format_inconsistency"] and col:
+                        output_contracts[f"{ds_name}_{col}_format"] = {
+                            "target_format": "canonical",
+                            "strict": True,
+                        }
+        
+        return {
+            "cleaning_mode": cleaning_mode,
+            "business_keys": business_keys,
+            "duplicate_policies": duplicate_policies,
+            "output_contracts": output_contracts,
+        }
+    
+    async def _create_coverage_report(self, assessment_result, dataset_profiles, plan):
+        """Create coverage report."""
+        total_issues = 0
+        covered_issues = 0
+        per_dataset = {}
+        unmatched_issues = []
+        
+        for ds_name, ds_plan in plan.get("datasets", {}).items():
+            dq_issues = assessment_result.get("data_quality_issues", {}).get("datasets", {}).get(ds_name, {}).get("issues", []) if assessment_result else []
+            ds_total = len(dq_issues)
+            ds_covered = len([s for s in ds_plan.get("steps", []) if s.get("evidence_id")])
+            
+            total_issues += ds_total
+            covered_issues += ds_covered
+            
+            matched_step_ids = {s.get("step_id") for s in ds_plan.get("steps", []) if s.get("evidence_id")}
+            for issue in dq_issues:
+                if issue.get("id") not in matched_step_ids:
+                    unmatched_issues.append({
+                        "issue_id": issue.get("id"),
+                        "category": issue.get("issue_type"),
+                        "severity": issue.get("severity"),
+                        "column": issue.get("column"),
+                        "dataset": ds_name,
+                    })
+            
+            per_dataset[ds_name] = {
+                "total_issues": ds_total,
+                "covered_issues": ds_covered,
+                "coverage_pct": ds_covered / ds_total if ds_total > 0 else 1.0,
+                "step_count": len(ds_plan.get("steps", [])),
+            }
+        
+        overall_pct = covered_issues / total_issues if total_issues > 0 else 1.0
+        
+        return {
+            "total_issues": total_issues,
+            "covered_issues": covered_issues,
+            "coverage_pct": overall_pct,
+            "per_dataset": per_dataset,
+            "unmatched_issues": unmatched_issues,
+        }
+    
+    async def _create_reconciliation(self, assessment_result, dataset_profiles, plan):
+        """Reconcile assessment issues with plan steps."""
+        total_issues = 0
+        total_steps = 0
+        per_dataset = {}
+        unmatched_issues = []
+        
+        for ds_name, ds_plan in plan.get("datasets", {}).items():
+            dq_issues = assessment_result.get("data_quality_issues", {}).get("datasets", {}).get(ds_name, {}).get("issues", []) if assessment_result else []
+            ds_total = len(dq_issues)
+            ds_steps = len(ds_plan.get("steps", []))
+            
+            total_issues += ds_total
+            total_steps += ds_steps
+            
+            matched_issue_ids = {s.get("source_issue_id") for s in ds_plan.get("steps", []) if s.get("source_issue_id")}
+            for issue in dq_issues:
+                if issue.get("id") not in matched_issue_ids:
+                    unmatched_issues.append({
+                        "issue_id": issue.get("id"),
+                        "category": issue.get("issue_type"),
+                        "severity": issue.get("severity"),
+                        "column": issue.get("column"),
+                        "dataset": ds_name,
+                    })
+            
+            per_dataset[ds_name] = {
+                "total_issues": ds_total,
+                "total_steps": ds_steps,
+                "coverage_pct": len([s for s in ds_plan.get("steps", []) if s.get("source_issue_id")]) / ds_steps if ds_steps > 0 else 1.0,
+            }
+        
+        overall_pct = covered_issues / total_issues if total_issues > 0 else 1.0
+        
+        return {
+            "total_issues": total_issues,
+            "total_steps": total_steps,
+            "coverage_pct": overall_pct,
+            "per_dataset": per_dataset,
+            "unmatched_issues": unmatched_issues,
+        }

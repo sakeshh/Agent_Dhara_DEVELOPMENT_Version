@@ -125,7 +125,7 @@ def test_assessment_to_plan_mapping():
 
         plan = build_etl_plan(
             assessment=assessment,
-            business_rules_raw={},
+            business_rules={},
             engine="sql"
         )
 
@@ -222,7 +222,7 @@ def test_sql_generation():
         from agent.etl_pipeline import build_etl_plan
         from agent.etl_pipeline.sql_codegen import generate_sql_etl
 
-        plan = build_etl_plan(assessment=assessment, business_rules_raw={}, engine="sql")
+        plan = build_etl_plan(assessment=assessment, business_rules={}, engine="sql")
         sql = generate_sql_etl(plan, assessment, dialect="tsql")
 
         print(f"\n✓ SQL Generated: {len(sql)} characters")
@@ -313,7 +313,7 @@ def test_sql_syntax():
         from agent.etl_pipeline import build_etl_plan
         from agent.etl_pipeline.sql_codegen import generate_sql_etl
 
-        plan = build_etl_plan(assessment=assessment, business_rules_raw={}, engine="sql")
+        plan = build_etl_plan(assessment=assessment, business_rules={}, engine="sql")
         sql = generate_sql_etl(plan, assessment, dialect="tsql")
 
         # Basic syntax checks
@@ -398,7 +398,7 @@ def test_traceability():
         from agent.etl_pipeline import build_etl_plan
         from agent.etl_pipeline.sql_codegen import generate_sql_etl
 
-        plan = build_etl_plan(assessment=assessment, business_rules_raw={}, engine="sql")
+        plan = build_etl_plan(assessment=assessment, business_rules={}, engine="sql")
         sql = generate_sql_etl(plan, assessment, dialect="tsql")
 
         print("\n🔍 Tracing Issue: trace_issue_1 (ProductName null values)")
